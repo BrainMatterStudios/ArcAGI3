@@ -41,8 +41,52 @@ def run_game(game_id: str, games_dir: str, budget: int, seed: int = 0,
     env = client.make(game_id=game_id, scorecard_id=f"sc-{game_id}")
     if env is None:
         raise RuntimeError(f"could not make env for {game_id}")
+    if agent_name == "reactive":
+        return run_reactive(env, game_id, budget, seed)
     agent = AGENTS[agent_name](max_actions=budget, seed=seed)
     return agent.play(env, game_id=game_id)
+
+
+def run_reactive(env, game_id: str, budget: int, seed: int = 0) -> PlayResult:
+    """Drive HybridPolicy one action at a time, exactly like the Kaggle framework does."""
+    from arcengine import GameAction, GameState
+
+    from .policy import HybridPolicy
+
+    pol = HybridPolicy(seed=seed)
+    obs = env.reset()
+    actions = 0
+    prev_levels = int(obs.levels_completed or 0)
+    win_levels = int(obs.win_levels or 0)
+    reason = "budget"
+    while actions < budget:
+        if obs.state == GameState.WIN:
+            reason = "win"
+            break
+        grid = P_to_grid(obs.frame)
+        token = pol.decide(
+            grid,
+            gstate_terminal=(obs.state == GameState.GAME_OVER),
+            gstate_notplayed=(obs.state == GameState.NOT_PLAYED),
+            levels=int(obs.levels_completed or 0),
+            available=list(obs.available_actions or []),
+        )
+        if token[0] == "reset":
+            obs = env.reset()
+        elif token[0] == "S":
+            obs = env.step(GameAction.from_id(token[1]))
+        else:  # click
+            obs = env.step(GameAction.ACTION6, data={"x": token[1], "y": token[2]})
+        actions += 1
+        prev_levels = int(obs.levels_completed or 0)
+    return PlayResult(game_id, prev_levels, win_levels, actions,
+                      obs.state == GameState.WIN, len(pol.gs.wm) if pol.gs else 0, reason)
+
+
+def P_to_grid(frame):
+    from . import perception as P
+
+    return P.to_grid(frame)
 
 
 def main() -> None:
@@ -51,7 +95,7 @@ def main() -> None:
     ap.add_argument("--game", default=None, help="single game id (default: all)")
     ap.add_argument("--budget", type=int, default=4000)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--agent", default="hybrid", choices=list(AGENTS))
+    ap.add_argument("--agent", default="reactive", choices=list(AGENTS) + ["reactive"])
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 

@@ -43,3 +43,16 @@ def test_push_makes_progress():
 def test_explorer_baseline_still_solves_clicks():
     r = _run("btnc", 2000, agent_name="explorer")
     assert r.won
+
+
+# --- reactive policy (the submission-shaped, one-action-per-call interface) ---
+
+def test_reactive_solves_all_local_games():
+    for gid in ("navg", "btnc", "push"):
+        r = _run(gid, 4000, agent_name="reactive")
+        assert r.won, f"reactive failed to win {gid}: {r}"
+
+
+def test_reactive_navg_efficient():
+    r = _run("navg", 4000, agent_name="reactive")
+    assert r.actions < 600
