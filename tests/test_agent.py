@@ -15,15 +15,17 @@ os.environ.setdefault("ARC_API_KEY", "local-dev")
 GAMES_DIR = str(Path(__file__).parent.parent / "src" / "arcagi3" / "games")
 
 
-def _run(game_id, budget):
+def _run(game_id, budget, agent_name="hybrid"):
     from arcagi3.runner import run_game
 
-    return run_game(game_id, GAMES_DIR, budget)
+    return run_game(game_id, GAMES_DIR, budget, agent_name=agent_name)
 
 
-def test_navg_wins():
-    r = _run("navg", 30000)
+def test_navg_wins_efficiently():
+    # motion model + coordinate navigation must solve nav cheaply (not blind BFS)
+    r = _run("navg", 4000)
     assert r.won and r.levels_completed == r.win_levels
+    assert r.actions < 600
 
 
 def test_btnc_wins_efficiently():
@@ -33,6 +35,11 @@ def test_btnc_wins_efficiently():
 
 
 def test_push_makes_progress():
-    # blind baseline clears at least the first level; efficiency improved later
+    # sokoban planning not yet implemented; ensure no regression below 1 level
     r = _run("push", 6000)
     assert r.levels_completed >= 1
+
+
+def test_explorer_baseline_still_solves_clicks():
+    r = _run("btnc", 2000, agent_name="explorer")
+    assert r.won

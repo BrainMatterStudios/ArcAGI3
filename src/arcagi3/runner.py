@@ -17,7 +17,9 @@ os.environ.setdefault("ARC_API_KEY", "local-dev")
 
 from arc_agi import Arcade, OperationMode  # noqa: E402
 
-from .agent import ExplorerAgent, PlayResult  # noqa: E402
+from .agent import ExplorerAgent, HybridAgent, PlayResult  # noqa: E402
+
+AGENTS = {"explorer": ExplorerAgent, "hybrid": HybridAgent}
 
 
 def discover_games(games_dir: str) -> list[str]:
@@ -30,7 +32,8 @@ def discover_games(games_dir: str) -> list[str]:
     return out
 
 
-def run_game(game_id: str, games_dir: str, budget: int, seed: int = 0) -> PlayResult:
+def run_game(game_id: str, games_dir: str, budget: int, seed: int = 0,
+             agent_name: str = "hybrid") -> PlayResult:
     logger = logging.getLogger("arcagi3.runner")
     client = Arcade(
         operation_mode=OperationMode.OFFLINE, environments_dir=games_dir, logger=logger
@@ -38,7 +41,7 @@ def run_game(game_id: str, games_dir: str, budget: int, seed: int = 0) -> PlayRe
     env = client.make(game_id=game_id, scorecard_id=f"sc-{game_id}")
     if env is None:
         raise RuntimeError(f"could not make env for {game_id}")
-    agent = ExplorerAgent(max_actions=budget, seed=seed)
+    agent = AGENTS[agent_name](max_actions=budget, seed=seed)
     return agent.play(env, game_id=game_id)
 
 
@@ -48,6 +51,7 @@ def main() -> None:
     ap.add_argument("--game", default=None, help="single game id (default: all)")
     ap.add_argument("--budget", type=int, default=4000)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--agent", default="hybrid", choices=list(AGENTS))
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
@@ -61,7 +65,7 @@ def main() -> None:
     rows = []
     t0 = time.time()
     for gid in games:
-        r = run_game(gid, args.games_dir, args.budget, args.seed)
+        r = run_game(gid, args.games_dir, args.budget, args.seed, args.agent)
         rows.append(r)
         print(
             f"{r.game_id:>10}  levels {r.levels_completed}/{r.win_levels}  "
