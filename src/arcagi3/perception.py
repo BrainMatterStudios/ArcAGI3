@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import numpy as np
 
@@ -75,13 +76,24 @@ def connected_components(
     background: int | None = None,
     include_background: bool = False,
 ) -> list[Obj]:
-    """4-connectivity connected components of equal color.
+    """4-connectivity connected components of equal color (memoized per grid).
 
-    Background color components are skipped unless include_background is True.
+    Background color components are skipped unless include_background is True. Results are
+    cached on the raw grid bytes: a single decision step calls this several times on the
+    SAME grid (state hashing, click targets, nav targeting), so memoizing is a pure
+    speedup (identical results) that buys more actions/sec — i.e. more levels at eval.
     """
     if background is None:
         background = detect_background(grid)
-    h, w = grid.shape
+    return _connected_components_cached(
+        np.ascontiguousarray(grid).tobytes(), grid.shape, int(background), include_background
+    )
+
+
+@lru_cache(maxsize=16)
+def _connected_components_cached(grid_bytes, shape, background, include_background) -> list[Obj]:
+    grid = np.frombuffer(grid_bytes, dtype=np.int8).reshape(shape)
+    h, w = shape
     seen = np.zeros((h, w), dtype=bool)
     objs: list[Obj] = []
     for r in range(h):
