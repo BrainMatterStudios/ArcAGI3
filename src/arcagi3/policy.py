@@ -33,7 +33,7 @@ class HybridPolicy:
         self.vt = P.VolatilityTracker()
         self.root_key: bytes | None = None
         self.gs: GraphStrategy | None = None
-        self.bg = 0
+        self.bg: int | None = None
         self.prev_key: bytes | None = None
         self.prev_action: Action | None = None
         self.prev_levels = 0
@@ -59,11 +59,12 @@ class HybridPolicy:
         return candidates_for(grid, available, self.use_clicks, self.max_click_targets, False)
 
     def _key(self, grid: np.ndarray) -> bytes:
-        """State key with volatile (counter) cells and animated-distractor colors masked."""
-        mask = self.vt.mask()
-        if self.distractor_colors:
-            mask = mask | np.isin(grid, list(self.distractor_colors))
-        return P.state_hash(grid, mask)
+        """Object-structure state key (robust to pixel noise), ignoring animated distractors.
+
+        Object-level hashing collapses irrelevant per-pixel jitter that would otherwise
+        explode the state graph on real games; animated-distractor colors are excluded.
+        """
+        return P.object_state_key(grid, background=self.bg, ignore_colors=self.distractor_colors)
 
     def _new_level(self, levels: int) -> None:
         self.level = levels
@@ -72,6 +73,7 @@ class HybridPolicy:
         self._votes = {}
         self._changed_colors = set()
         self.distractor_colors = set()
+        self.bg = None
         self._probe_queue = None
         self._probe_before = None
         self._probe_aid = None
@@ -82,6 +84,8 @@ class HybridPolicy:
     def decide(self, grid: np.ndarray, gstate_terminal: bool, gstate_notplayed: bool,
                levels: int, available: list[int]) -> Action:
         self.vt.update(grid)
+        if self.bg is None:
+            self.bg = P.detect_background(grid)
         cur_key = self._key(grid)
 
         # terminal / not-played -> RESET
@@ -100,8 +104,8 @@ class HybridPolicy:
             self.root_key = cur_key
             self.gs = GraphStrategy(self.root_key)
             self.gs.wm.observe(self.root_key, self._cands(grid, available))
-            self.bg = P.detect_background(grid)
             self._new_level(levels)
+            self.bg = P.detect_background(grid)
 
         if self.expect_reset:
             self.expect_reset = False

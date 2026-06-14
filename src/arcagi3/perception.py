@@ -133,6 +133,30 @@ def state_hash(grid: np.ndarray, mask: np.ndarray | None = None) -> bytes:
     return np.ascontiguousarray(grid).tobytes()
 
 
+def object_state_key(grid: np.ndarray, background: int | None = None,
+                     ignore_colors: set[int] | None = None) -> bytes:
+    """Coarse, robust state key from OBJECT structure (not raw pixels).
+
+    Each non-background, non-ignored connected component is summarised as
+    (color, r0, c0, r1, c1, size). Sorting + serialising these is far more stable than a
+    pixel hash: it collapses within-object jitter and irrelevant single-pixel noise that
+    would otherwise explode the state graph on real games, while still distinguishing
+    object moves, appearances/disappearances, and shape changes. Matches the SOTA's
+    object-segmentation approach.
+    """
+    if background is None:
+        background = detect_background(grid)
+    ignore = ignore_colors or set()
+    parts = []
+    for o in connected_components(grid, background=background):
+        if o.color in ignore:
+            continue
+        r0, c0, r1, c1 = o.bbox
+        parts.append((o.color, r0, c0, r1, c1, o.size))
+    parts.sort()
+    return repr(parts).encode()
+
+
 class VolatilityTracker:
     """Tracks which cells change frequently across steps to mask status bars/counters.
 

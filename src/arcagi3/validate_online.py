@@ -69,9 +69,9 @@ def main() -> None:
             r = run_reactive(env, gid, args.budget, args.seed)
             rows.append(r)
             print(f"{r.game_id:>14}  levels {r.levels_completed}/{r.win_levels}  "
-                  f"actions {r.actions:>5}  won={r.won}  ({r.reason})")
+                  f"actions {r.actions:>5}  won={r.won}  ({r.reason})", flush=True)
         except Exception as e:
-            print(f"{gid:>14}  ERROR: {e}")
+            print(f"{gid:>14}  ERROR: {e}", flush=True)
 
     if rows:
         print("-" * 60)
