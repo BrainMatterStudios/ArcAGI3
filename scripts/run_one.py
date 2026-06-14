@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.ERROR)
 prefix = sys.argv[1] if len(sys.argv) > 1 else "vc33"
 budget = int(sys.argv[2]) if len(sys.argv) > 2 else 4000
 
-client = Arcade(operation_mode=OperationMode.ONLINE, logger=logging.getLogger("t"))
+client = Arcade(operation_mode=OperationMode.NORMAL, logger=logging.getLogger("t"))
 gid = next(e.game_id for e in client.get_environments() if e.game_id.startswith(prefix))
 card = client.open_scorecard(tags=["run-one"])
 env = client.make(game_id=gid, scorecard_id=card)
@@ -49,7 +49,7 @@ while n < budget:
         best = lv
         print(f"  LEVEL UP -> {lv}/{win_levels} at action {n} (t={time.time()-t0:.0f}s, "
               f"phase={pol.phase}, states={len(pol.gs.wm) if pol.gs else 0})", flush=True)
-    if n % 400 == 0:
+    if n % 100 == 0:
         print(f"  ...action {n}, best {best}/{win_levels}, phase={pol.phase}, "
               f"avatar={pol.mm.avatar_color if pol.mm else None}, "
               f"states={len(pol.gs.wm) if pol.gs else 0}, t={time.time()-t0:.0f}s", flush=True)

@@ -39,7 +39,7 @@ def main() -> None:
 
     logging.basicConfig(level=logging.ERROR)
     logger = logging.getLogger("arcagi3.validate_online")
-    client = Arcade(operation_mode=OperationMode.ONLINE, logger=logger)
+    client = Arcade(operation_mode=OperationMode.NORMAL, logger=logger)
 
     try:
         envs = client.get_environments()
