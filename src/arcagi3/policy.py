@@ -21,7 +21,7 @@ from .world_model import Action
 
 
 class HybridPolicy:
-    def __init__(self, use_clicks: bool = True, max_click_targets: int = 48,
+    def __init__(self, use_clicks: bool = True, max_click_targets: int = 96,
                  nav_step_cap: int = 200, seed: int = 0) -> None:
         self.use_clicks = use_clicks
         self.max_click_targets = max_click_targets

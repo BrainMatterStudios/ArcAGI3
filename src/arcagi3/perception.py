@@ -208,24 +208,35 @@ def salient_click_targets(
     """
     if background is None:
         background = detect_background(grid)
+    h, w = grid.shape
     objs = connected_components(grid, background=background)
+    # color rarity: rarer colors are more likely interactive (buttons/items)
+    color_counts: dict[int, int] = {}
+    for o in objs:
+        color_counts[o.color] = color_counts.get(o.color, 0) + 1
     targets: list[tuple[int, int, int]] = []
     for o in objs:
         r, c = o.centroid
         cr, cc = int(round(r)), int(round(c))
-        # smaller objects are likely buttons/agents/items -> higher priority (lower num)
-        if o.size <= 2:
-            prio = 0
-        elif o.size <= 8:
-            prio = 1
-        elif o.size <= 32:
-            prio = 2
+        r0, c0, r1, c1 = o.bbox
+        # SOTA-style 5 salience tiers (lower = try first): small + rare-color objects are
+        # the most likely interactive elements; wide flat edge-hugging blobs (status bars)
+        # go last.
+        is_status_bar = (o.height <= 2 or o.width <= 2) and (o.width >= w * 0.6 or o.height >= h * 0.6)
+        rare = color_counts.get(o.color, 9) <= 2
+        if is_status_bar:
+            prio = 4
+        elif o.size <= 4:
+            prio = 0 if rare else 1
+        elif o.size <= 16:
+            prio = 1 if rare else 2
+        elif o.size <= 64:
+            prio = 2 if rare else 3
         else:
             prio = 3
         targets.append((cc, cr, prio))
-        # corners of larger objects (handles/edges)
-        if o.size > 4:
-            r0, c0, r1, c1 = o.bbox
+        # corners of larger objects (handles/edges), one tier lower
+        if o.size > 8 and not is_status_bar:
             for (yy, xx) in ((r0, c0), (r0, c1), (r1, c0), (r1, c1)):
                 targets.append((xx, yy, prio + 1))
     # coarse lattice fallback for large click spaces (lowest priority)
