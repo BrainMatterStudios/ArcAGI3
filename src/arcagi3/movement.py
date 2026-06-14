@@ -96,20 +96,24 @@ def infer_all_translations(before: np.ndarray, after: np.ndarray, background: in
 
 @dataclass
 class MotionModel:
-    avatar_color: int | None = None
+    avatar_color: int | None = None  # primary color (for delta lookup)
     deltas: dict[int, tuple[int, int]] = field(default_factory=dict)  # action_id -> (dr,dc)
+    avatar_colors: frozenset = field(default_factory=frozenset)  # all colors moving as the avatar
 
     @property
     def ok(self) -> bool:
         return self.avatar_color is not None and len(self.deltas) > 0
 
+    def _mask(self, grid: np.ndarray) -> np.ndarray:
+        cols = self.avatar_colors or ({self.avatar_color} if self.avatar_color is not None else set())
+        return np.isin(grid, list(cols))
+
     def avatar_centroid(self, grid: np.ndarray):
-        if self.avatar_color is None:
-            return None
-        cells = np.argwhere(grid == self.avatar_color)
+        """Centroid (row,col) over ALL avatar colors (multi-color avatars move together)."""
+        cells = np.argwhere(self._mask(grid))
         if len(cells) == 0:
             return None
-        return tuple(cells.mean(axis=0))  # (row, col) float
+        return tuple(cells.mean(axis=0))
 
     def avatar_cells(self, grid: np.ndarray) -> np.ndarray:
-        return np.argwhere(grid == self.avatar_color)
+        return np.argwhere(self._mask(grid))

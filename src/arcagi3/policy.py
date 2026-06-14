@@ -157,7 +157,13 @@ class HybridPolicy:
                     deltas = self._votes[c]
                     return (len(set(deltas.values())), len(deltas))
                 color = max(self._votes, key=_score)
-                self.mm = MV.MotionModel(avatar_color=color, deltas=self._votes[color])
+                # the avatar may span MULTIPLE colors that move together (action-correlated,
+                # i.e. >=2 distinct deltas); track them all for centroid + target exclusion.
+                avatar_colors = frozenset(
+                    c for c, d in self._votes.items() if len(set(d.values())) >= 2
+                ) or frozenset({color})
+                self.mm = MV.MotionModel(avatar_color=color, deltas=self._votes[color],
+                                         avatar_colors=avatar_colors)
                 # Animated distractor = a color that RIGIDLY TRANSLATES with a constant
                 # delta regardless of the action (a counter/animation), NOT merely a color
                 # whose cells changed (that also flags structural cells the avatar moves
@@ -210,7 +216,7 @@ class HybridPolicy:
             return None
         cands = []
         for o in objs:
-            if o.color == self.mm.avatar_color or o.color in self.distractor_colors:
+            if o.color in self.mm.avatar_colors or o.color in self.distractor_colors:
                 continue
             r, c = int(round(o.centroid[0])), int(round(o.centroid[1]))
             if (r, c) in self.tried_targets:
