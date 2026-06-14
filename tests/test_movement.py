@@ -36,6 +36,17 @@ def test_infer_translation_none_when_static():
     assert res is None
 
 
+def test_infer_all_translations_reports_every_mover():
+    b = _g()
+    b[5, 5] = 7   # avatar
+    b[0, 0] = 9   # counter
+    a = b.copy()
+    a[5, 5] = 0; a[5, 6] = 7   # avatar right
+    a[0, 0] = 0; a[0, 1] = 9   # counter right (independent)
+    res = M.infer_all_translations(b, a, background=0)
+    assert res[7] == (0, 1) and res[9] == (0, 1)
+
+
 def test_avatar_centroid():
     mm = M.MotionModel(avatar_color=4, deltas={1: (-1, 0)})
     g = _g()

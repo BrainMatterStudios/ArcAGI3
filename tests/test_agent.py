@@ -48,9 +48,16 @@ def test_explorer_baseline_still_solves_clicks():
 # --- reactive policy (the submission-shaped, one-action-per-call interface) ---
 
 def test_reactive_solves_all_local_games():
-    for gid in ("navg", "btnc", "push", "maze", "clickbig"):
+    for gid in ("navg", "btnc", "push", "maze", "clickbig", "navgc"):
         r = _run(gid, 4000, agent_name="reactive")
         assert r.won, f"reactive failed to win {gid}: {r}"
+
+
+def test_reactive_robust_to_animated_distractor():
+    # navgc has an independent moving counter; action-correlated avatar detection +
+    # distractor masking must keep it solvable (was 0/3 before the fix).
+    r = _run("navgc", 4000, agent_name="reactive")
+    assert r.won and r.actions < 500
 
 
 def test_reactive_maze_routes_around_walls():

@@ -66,6 +66,34 @@ def infer_translation(before: np.ndarray, after: np.ndarray, background: int):
     return (best[0], best[1], best[2])
 
 
+def infer_all_translations(before: np.ndarray, after: np.ndarray, background: int) -> dict:
+    """Return {color: (dr, dc)} for every non-background color that rigidly translated.
+
+    Unlike infer_translation (single best mover), this reports all movers so the caller
+    can distinguish the avatar (motion varies with the action) from independent
+    animations/counters (motion is constant regardless of the action).
+    """
+    out: dict[int, tuple[int, int]] = {}
+    if before.shape != after.shape:
+        return out
+    for c in set(np.unique(before)).union(np.unique(after)):
+        c = int(c)
+        if c == background:
+            continue
+        b = np.argwhere(before == c)
+        a = np.argwhere(after == c)
+        if len(b) == 0 or len(a) == 0 or len(b) != len(a):
+            continue
+        shift = a.mean(axis=0) - b.mean(axis=0)
+        sr, sc = int(round(shift[0])), int(round(shift[1]))
+        if (sr, sc) == (0, 0):
+            continue
+        shifted = b + np.array([sr, sc])
+        if set(map(tuple, shifted.tolist())) == set(map(tuple, a.tolist())):
+            out[c] = (sr, sc)
+    return out
+
+
 @dataclass
 class MotionModel:
     avatar_color: int | None = None

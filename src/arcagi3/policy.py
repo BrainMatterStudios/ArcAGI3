@@ -43,6 +43,8 @@ class HybridPolicy:
         self.phase = "probe"
         self.mm: MV.MotionModel | None = None
         self._votes: dict[int, dict[int, tuple[int, int]]] = {}
+        self._changed_colors: set[int] = set()
+        self.distractor_colors: set[int] = set()  # animated/counter colors to mask + ignore
         self._probe_queue: list[int] | None = None
         self._probe_before: np.ndarray | None = None
         self._probe_aid: int | None = None
@@ -56,11 +58,20 @@ class HybridPolicy:
     def _cands(self, grid, available):
         return candidates_for(grid, available, self.use_clicks, self.max_click_targets, False)
 
+    def _key(self, grid: np.ndarray) -> bytes:
+        """State key with volatile (counter) cells and animated-distractor colors masked."""
+        mask = self.vt.mask()
+        if self.distractor_colors:
+            mask = mask | np.isin(grid, list(self.distractor_colors))
+        return P.state_hash(grid, mask)
+
     def _new_level(self, levels: int) -> None:
         self.level = levels
         self.phase = "probe"
         self.mm = None
         self._votes = {}
+        self._changed_colors = set()
+        self.distractor_colors = set()
         self._probe_queue = None
         self._probe_before = None
         self._probe_aid = None
@@ -71,7 +82,7 @@ class HybridPolicy:
     def decide(self, grid: np.ndarray, gstate_terminal: bool, gstate_notplayed: bool,
                levels: int, available: list[int]) -> Action:
         self.vt.update(grid)
-        cur_key = P.state_hash(grid, self.vt.mask())
+        cur_key = self._key(grid)
 
         # terminal / not-played -> RESET
         if gstate_terminal or gstate_notplayed:
@@ -102,9 +113,14 @@ class HybridPolicy:
             self.gs.update(self.prev_key, self.prev_action, cur_key, reward,
                            self._cands(grid, available), terminal=False)
             if self.phase == "probe" and self._probe_before is not None and self._probe_aid is not None:
-                res = MV.infer_translation(self._probe_before, grid, self.bg)
-                if res is not None:
-                    self._votes.setdefault(res[0], {})[self._probe_aid] = (res[1], res[2])
+                trans = MV.infer_all_translations(self._probe_before, grid, self.bg)
+                for color, (dr, dc) in trans.items():
+                    self._votes.setdefault(color, {})[self._probe_aid] = (dr, dc)
+                # any non-background color whose cells changed this step
+                for c in set(np.unique(self._probe_before)).union(np.unique(grid)):
+                    c = int(c)
+                    if c != self.bg and not np.array_equal(self._probe_before == c, grid == c):
+                        self._changed_colors.add(c)
 
         # new level -> relearn
         if levels != self.level:
@@ -130,10 +146,18 @@ class HybridPolicy:
                 self._probe_before = grid
                 self._probe_aid = aid
                 return ("S", aid)
-            # finished probing
+            # finished probing: the avatar is the object whose motion CORRELATES with the
+            # action (most distinct delta vectors); counters/animations move constantly.
             if self._votes:
-                color = max(self._votes, key=lambda c: len(self._votes[c]))
+                def _score(c):
+                    deltas = self._votes[c]
+                    return (len(set(deltas.values())), len(deltas))
+                color = max(self._votes, key=_score)
                 self.mm = MV.MotionModel(avatar_color=color, deltas=self._votes[color])
+                # everything else that moved/changed during probing is an animated
+                # distractor -> mask from state hashing and ignore as a nav target.
+                self.distractor_colors = {c for c in self._changed_colors
+                                          if c != color and c != self.bg}
                 self.phase = "navigate"
                 self.target = None
             else:
@@ -177,7 +201,7 @@ class HybridPolicy:
             return None
         cands = []
         for o in objs:
-            if o.color == self.mm.avatar_color:
+            if o.color == self.mm.avatar_color or o.color in self.distractor_colors:
                 continue
             r, c = int(round(o.centroid[0])), int(round(o.centroid[1]))
             if (r, c) in self.tried_targets:
