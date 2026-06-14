@@ -53,7 +53,9 @@ def candidates_for(grid: np.ndarray, available: list[int], use_clicks: bool,
         if aid in available and (aid != 7 or use_undo):
             cands.append(("S", aid))
     if use_clicks and 6 in available:
-        for x, y, _prio in P.salient_click_targets(grid, max_targets=max_click_targets):
+        for x, y, _prio in P.salient_click_targets(
+            grid, max_targets=max_click_targets, coarse_grid_step=8
+        ):
             cands.append(("C", int(x), int(y)))
     return tuple(cands)
 

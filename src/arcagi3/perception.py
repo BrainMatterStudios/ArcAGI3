@@ -162,13 +162,18 @@ class VolatilityTracker:
 
 
 def salient_click_targets(
-    grid: np.ndarray, background: int | None = None, max_targets: int = 64
+    grid: np.ndarray, background: int | None = None, max_targets: int = 64,
+    coarse_grid_step: int = 0,
 ) -> list[tuple[int, int, int]]:
     """Propose (x, y, priority) click targets from object geometry.
 
     Object-centric instead of brute-forcing all 4096 pixels. Priority is a salience
     tier (lower = try first): small distinct objects and their corners are most likely
     interactive. Returns (x=col, y=row, priority).
+
+    If coarse_grid_step > 0, also add a coarse lattice of low-priority fallback targets
+    (every `coarse_grid_step` pixels) so large click action-spaces (e.g. ft09's ~4096
+    positions) where the goal cell isn't an object centroid are still reachable.
     """
     if background is None:
         background = detect_background(grid)
@@ -192,6 +197,13 @@ def salient_click_targets(
             r0, c0, r1, c1 = o.bbox
             for (yy, xx) in ((r0, c0), (r0, c1), (r1, c0), (r1, c1)):
                 targets.append((xx, yy, prio + 1))
+    # coarse lattice fallback for large click spaces (lowest priority)
+    if coarse_grid_step and coarse_grid_step > 0:
+        h, w = grid.shape
+        off = coarse_grid_step // 2
+        for yy in range(off, h, coarse_grid_step):
+            for xx in range(off, w, coarse_grid_step):
+                targets.append((xx, yy, 9))
     # dedup keeping best (lowest) priority
     best: dict[tuple[int, int], int] = {}
     for x, y, p in targets:
