@@ -27,8 +27,9 @@ from .runner import run_reactive  # noqa: E402
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--game", default=None, help="single game id (default: all available)")
-    ap.add_argument("--budget", type=int, default=4000)
+    ap.add_argument("--budget", type=int, default=600)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--max-games", type=int, default=0, help="cap number of games (0=all)")
     args = ap.parse_args()
 
     if not os.getenv("ARC_API_KEY"):
@@ -36,7 +37,7 @@ def main() -> None:
               "Register at https://three.arcprize.org")
         return
 
-    logging.basicConfig(level=logging.WARNING)
+    logging.basicConfig(level=logging.ERROR)
     logger = logging.getLogger("arcagi3.validate_online")
     client = Arcade(operation_mode=OperationMode.ONLINE, logger=logger)
 
@@ -46,25 +47,31 @@ def main() -> None:
     except Exception as e:
         print(f"Could not list games from the API: {e}")
         return
-    print(f"Available games: {all_games}")
+    print(f"{len(all_games)} games available: {all_games}")
 
-    games = [args.game] if args.game else all_games
-    games = [g for g in games if g in all_games] or games
+    if args.game:
+        prefix = args.game
+        games = [g for g in all_games if g.startswith(prefix)] or [args.game]
+    else:
+        games = all_games
+    if args.max_games:
+        games = games[: args.max_games]
 
+    card = client.open_scorecard(tags=["dev-validate"])
     rows = []
     t0 = time.time()
     for gid in games:
         try:
-            env = client.make(game_id=gid, scorecard_id=f"sc-{gid}")
+            env = client.make(game_id=gid, scorecard_id=card)
             if env is None:
-                print(f"{gid:>12}  (could not make env)")
+                print(f"{gid:>14}  (could not make env)")
                 continue
             r = run_reactive(env, gid, args.budget, args.seed)
             rows.append(r)
-            print(f"{r.game_id:>12}  levels {r.levels_completed}/{r.win_levels}  "
+            print(f"{r.game_id:>14}  levels {r.levels_completed}/{r.win_levels}  "
                   f"actions {r.actions:>5}  won={r.won}  ({r.reason})")
         except Exception as e:
-            print(f"{gid:>12}  ERROR: {e}")
+            print(f"{gid:>14}  ERROR: {e}")
 
     if rows:
         print("-" * 60)
@@ -72,6 +79,10 @@ def main() -> None:
               f"actions {sum(r.actions for r in rows)}  "
               f"wins {sum(1 for r in rows if r.won)}/{len(rows)}  "
               f"elapsed {time.time()-t0:.1f}s")
+    try:
+        client.close_scorecard(card)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
