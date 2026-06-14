@@ -144,20 +144,27 @@ class VolatilityTracker:
     def __init__(self, threshold: float = 0.9, min_steps: int = 8) -> None:
         self.threshold = threshold
         self.min_steps = min_steps
-        self.changes = np.zeros((GRID, GRID), dtype=np.int32)
+        self.changes: np.ndarray | None = None  # lazily sized to the actual frame
+        self.shape: tuple[int, int] = (GRID, GRID)
         self.steps = 0
         self._prev: np.ndarray | None = None
 
     def update(self, grid: np.ndarray) -> None:
-        if self._prev is not None:
+        # Lazily adopt the real frame shape; reset if it ever changes (defensive).
+        if self.changes is None or grid.shape != self.shape:
+            self.shape = grid.shape
+            self.changes = np.zeros(self.shape, dtype=np.int32)
+            self.steps = 0
+            self._prev = None
+        if self._prev is not None and self._prev.shape == grid.shape:
             self.changes += (grid != self._prev).astype(np.int32)
             self.steps += 1
         self._prev = grid.copy()
 
     def mask(self) -> np.ndarray:
         """Boolean mask of cells to ignore (True = volatile)."""
-        if self.steps < self.min_steps:
-            return np.zeros((GRID, GRID), dtype=bool)
+        if self.changes is None or self.steps < self.min_steps:
+            return np.zeros(self.shape, dtype=bool)
         return (self.changes / max(self.steps, 1)) >= self.threshold
 
 
