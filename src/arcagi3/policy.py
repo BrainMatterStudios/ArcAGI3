@@ -158,10 +158,15 @@ class HybridPolicy:
                     return (len(set(deltas.values())), len(deltas))
                 color = max(self._votes, key=_score)
                 self.mm = MV.MotionModel(avatar_color=color, deltas=self._votes[color])
-                # everything else that moved/changed during probing is an animated
-                # distractor -> mask from state hashing and ignore as a nav target.
-                self.distractor_colors = {c for c in self._changed_colors
-                                          if c != color and c != self.bg}
+                # Animated distractor = a color that RIGIDLY TRANSLATES with a constant
+                # delta regardless of the action (a counter/animation), NOT merely a color
+                # whose cells changed (that also flags structural cells the avatar moves
+                # over, e.g. maze walls — which would blind us to doors opening).
+                self.distractor_colors = {
+                    c for c, d in self._votes.items()
+                    if c != color and c != self.bg
+                    and len(d) >= 2 and len(set(d.values())) == 1
+                }
                 self.phase = "navigate"
                 self.target = None
             else:
