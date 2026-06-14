@@ -48,7 +48,7 @@ def test_explorer_baseline_still_solves_clicks():
 # --- reactive policy (the submission-shaped, one-action-per-call interface) ---
 
 def test_reactive_solves_all_local_games():
-    for gid in ("navg", "btnc", "push", "maze", "clickbig", "navgc"):
+    for gid in ("navg", "btnc", "push", "maze", "clickbig", "navgc", "collect", "switchdoor"):
         r = _run(gid, 4000, agent_name="reactive")
         assert r.won, f"reactive failed to win {gid}: {r}"
 
