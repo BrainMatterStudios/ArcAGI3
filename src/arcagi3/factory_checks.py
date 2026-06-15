@@ -102,16 +102,19 @@ class KaggleScoreCollector:
         if not rows:
             return [CheckResult(self.name, CheckVerdict.WARN, {"note": "no submissions parsed"})]
         scored = [r for r in rows if r["score"] is not None]
-        pending = [r for r in rows if r["status"] and "COMPLETE" not in r["status"].upper()
-                   and r["score"] is None]
+        unscored = [r for r in rows if r["score"] is None and r["status"]]
+        errored = [r for r in unscored if "ERROR" in r["status"].upper()]
+        pending = [r for r in unscored if "ERROR" not in r["status"].upper()
+                   and "COMPLETE" not in r["status"].upper()]
         if not scored:
             return [CheckResult(self.name, CheckVerdict.WARN,
-                                {"note": "no scored submission yet", "pending": len(pending)})]
+                                {"note": "no scored submission yet",
+                                 "pending": len(pending), "errored": len(errored)})]
         latest = scored[0]                      # submissions list is newest-first
         best = max(r["score"] for r in scored)
         ev = {"latest_ref": latest["ref"], "latest_score": latest["score"],
               "best_score": best, "delta_vs_best": round(latest["score"] - best, 6),
-              "pending": len(pending), "scored_count": len(scored)}
+              "pending": len(pending), "errored": len(errored), "scored_count": len(scored)}
         if latest["score"] < best:             # banked a worse agent than a prior best
             return [CheckResult(self.name, CheckVerdict.FAIL, ev)]
         return [CheckResult(self.name, CheckVerdict.PASS, ev)]
