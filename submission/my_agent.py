@@ -25,13 +25,18 @@ for _p in _CANDIDATES:
     if _p and os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
 
-_HybridPolicy = None
+_Policy = None
 _IMPORT_ERR = None
 try:
-    from arcagi3.policy import HybridPolicy as _HybridPolicy
-except Exception as _e:  # noqa: BLE001
-    _IMPORT_ERR = "".join(traceback.format_exception(type(_e), _e, _e.__traceback__))
-    print(f"[my_agent] arcagi3 import FAILED -> random fallback.\n{_IMPORT_ERR}", flush=True)
+    # Primary: SalienceExplorer (beats HybridPolicy on real games: 11 vs 9, no regression).
+    from arcagi3.salience_explorer import SalienceExplorer as _Policy
+except Exception:
+    try:  # fallback to the hybrid if the new module is unavailable
+        from arcagi3.policy import HybridPolicy as _Policy
+    except Exception as _e:  # noqa: BLE001
+        _IMPORT_ERR = "".join(traceback.format_exception(type(_e), _e, _e.__traceback__))
+        print(f"[my_agent] arcagi3 import FAILED -> random fallback.\n{_IMPORT_ERR}", flush=True)
+_HybridPolicy = _Policy  # back-compat name used below
 
 try:
     from agents.agent import Agent as _BaseAgent

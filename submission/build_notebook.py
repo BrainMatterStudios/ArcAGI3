@@ -17,7 +17,7 @@ MY_AGENT = (HERE / "my_agent.py").read_text()
 
 # Core modules the agent needs at eval (skip runner/validate_online/games — unused there).
 CORE = ["__init__.py", "perception.py", "world_model.py", "movement.py", "agent.py",
-        "policy.py", "spatial.py"]
+        "policy.py", "spatial.py", "salience_explorer.py"]
 PKG = {name: base64.b64encode((SRC / name).read_bytes()).decode() for name in CORE}
 
 INSTALL = """\
