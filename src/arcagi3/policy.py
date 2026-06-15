@@ -15,6 +15,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import events as EVT
+from . import goals as GOALS
 from . import movement as MV
 from . import perception as P
 from .agent import ACT, RESET, STOP, GraphStrategy, candidates_for
@@ -24,7 +25,8 @@ from .world_model import Action
 class HybridPolicy:
     def __init__(self, use_clicks: bool = True, max_click_targets: int = 96,
                  nav_step_cap: int = 200, seed: int = 0,
-                 emit_events: bool = False, enable_affordance: bool = True) -> None:
+                 emit_events: bool = False, enable_affordance: bool = True,
+                 infer_goals: bool = True) -> None:
         self.use_clicks = use_clicks
         self.max_click_targets = max_click_targets
         self.nav_step_cap = nav_step_cap
@@ -44,6 +46,15 @@ class HybridPolicy:
         # Consumers (C4/C6) read self.aff via the query API; do not route C3 output into the
         # decision path until C7's selector gates a new policy.
         self.enable_affordance = enable_affordance
+        # C5 goal inference (observe-only, default-ON but non-load-bearing). When True,
+        # decide() feeds each transition to self.gi and credits a typed GoalHypothesis on
+        # every level-up; NOTHING in the decision path reads self.gi in M1, so the action
+        # stream is byte-identical whether this is True or False (proven by the golden trace
+        # test). Env ARCAGI3_GOAL_INFER=0 disables it without touching code. Consumers
+        # (C6/C7) read self.gi.current_goal()/goal_target_cells(); do not route goal output
+        # into the decision path until C7's selector gates a new policy.
+        import os
+        self.infer_goals = infer_goals and os.environ.get("ARCAGI3_GOAL_INFER", "1") != "0"
         self.reset_all()
 
     def reset_all(self) -> None:
@@ -82,6 +93,9 @@ class HybridPolicy:
         self.aff = AffordanceModel()
         self._prev_grid: np.ndarray | None = None  # before-grid for the next observe_step
         self._t = 0  # affordance step counter
+        # C5 goal inference state (observe-only). Always constructed (cheap) so consumers
+        # can query unconditionally; only fed when self.infer_goals.
+        self.gi = GOALS.GoalInference()
 
     def _cands(self, grid, available):
         return candidates_for(grid, available, self.use_clicks, self.max_click_targets, False)
@@ -94,7 +108,7 @@ class HybridPolicy:
         """
         return P.object_state_key(grid, background=self.bg, ignore_colors=self.distractor_colors)
 
-    def _new_level(self, levels: int) -> None:
+    def _new_level(self, levels: int, grid: np.ndarray | None = None) -> None:
         self.level = levels
         self.phase = "probe"
         self.mm = None
@@ -118,6 +132,11 @@ class HybridPolicy:
             self.last_step_events = None
             if self.ev is not None:
                 self.ev.reset()
+        # C5: snapshot the new level's per-color census and clear the per-level ring; the
+        # learned goal model persists across levels (refinement). Observe-only. bg is reset
+        # to None just above, so recompute it from the new grid for the census.
+        if self.infer_goals and grid is not None:
+            self.gi.on_level_start(grid, P.detect_background(grid), levels)
 
     # main entry: given the latest observation, return the next action token
     def decide(self, grid: np.ndarray, gstate_terminal: bool, gstate_notplayed: bool,
@@ -154,7 +173,7 @@ class HybridPolicy:
             self.root_key = cur_key
             self.gs = GraphStrategy(self.root_key)
             self.gs.wm.observe(self.root_key, self._cands(grid, available))
-            self._new_level(levels)
+            self._new_level(levels, grid)
             self.bg = P.detect_background(grid)
 
         if self.expect_reset:
@@ -191,6 +210,22 @@ class HybridPolicy:
                     bg=self.bg, distractor_colors=self.distractor_colors, click_xy=click_xy,
                 )
                 self.events.append(self.last_step_events)
+            # C5 (observe-only): feed this transition to the goal-inference model. Reward is
+            # the level delta; on reward>0 it credits a typed GoalHypothesis from buffered
+            # PRE-swap records (never the rebuilt next-level frame). Writes ONLY self.gi;
+            # read by NOTHING in the decision path in M1. prev_action is non-None here, so we
+            # are not crossing a reset (the reset block above nulls it). try/except => a C5
+            # bug degrades to "no inference", never a policy exception.
+            if self.infer_goals and self._prev_grid is not None and not self.expect_reset:
+                try:
+                    self.gi.observe_step(
+                        prev_grid=self._prev_grid, cur_grid=grid,
+                        prev_action=self.prev_action, reward=reward,
+                        bg=self.bg, distractor_colors=self.distractor_colors,
+                        avatar=self.mm, events=None,
+                    )
+                except Exception:
+                    pass
             if self.phase == "probe" and self._probe_before is not None and self._probe_aid is not None:
                 trans = MV.infer_all_translations(self._probe_before, grid, self.bg)
                 for color, (dr, dc) in trans.items():
@@ -203,7 +238,7 @@ class HybridPolicy:
 
         # new level -> relearn
         if levels != self.level:
-            self._new_level(levels)
+            self._new_level(levels, grid)
 
         self.prev_levels = levels
         action = self._choose(grid, cur_key, available)
@@ -220,6 +255,10 @@ class HybridPolicy:
             # advance the affordance step counter (observe-only; never affects `action`).
             self._prev_grid = grid
             self._t += 1
+        elif self.infer_goals:
+            # C5 needs the before-grid too; keep it current when C3 isn't doing it for us
+            # (observe-only; never affects `action`).
+            self._prev_grid = grid
         return action
 
     def _choose(self, grid, cur_key, available, _depth: int = 0) -> Action:
