@@ -58,10 +58,18 @@ class _Node:
 
 class SalienceExplorer:
     def __init__(self, max_click_targets: int = 96, seed: int = 0,
-                 max_stuck_resets: int = 200, trust_threshold: int = 3) -> None:
+                 max_stuck_resets: int = 200, trust_threshold: int = 3,
+                 border_mask: int = 1) -> None:
         self.max_click_targets = max_click_targets
         self.rng = np.random.default_rng(seed)
         self.max_stuck_resets = max_stuck_resets
+        # border_mask > 0 enables the dynamic-border (HUD/progress-bar) mask: cells within
+        # this many rows/cols of the grid edge that have EVER changed are dropped from the
+        # state key. Monotonic bottom-edge progress bars (re86/wa30) change each cell only
+        # once, so the cell-frequency VolatilityTracker never catches them -> every state is
+        # forever-unique -> graph explodes (re86 1.1 act/state). Masking the dynamic edge band
+        # restores state revisits without touching the interior play area. 0 == off.
+        self.border_mask = max(0, int(border_mask))
         # trust_threshold > 1 enables suspicious-transition filtering: a NEW transition that
         # conflicts with an already-recorded edge (the signature of animation/frame noise on
         # real games) must repeat this many times before it overwrites the trusted edge. The
@@ -107,10 +115,23 @@ class SalienceExplorer:
 
     def _key(self, grid):
         m = self.vt.mask()
+        bm = self._border_mask()
+        if bm is not None:
+            m = m | bm
         if m.any():
             grid = grid.copy()
             grid[m] = self.bg if self.bg is not None else 0
         return P.object_state_key(grid, background=self.bg)
+
+    def _border_mask(self):
+        """Edge cells (within border_mask of the grid edge) that have ever changed -> HUD."""
+        b = self.border_mask
+        if b <= 0 or self.vt.changes is None or self.vt.steps < self.vt.min_steps:
+            return None
+        edge = np.zeros(self.vt.shape, dtype=bool)
+        edge[:b] = edge[-b:] = True
+        edge[:, :b] = edge[:, -b:] = True
+        return edge & (self.vt.changes > 0)
 
     def _observe(self, key, cands, terminal=False):
         n = self.nodes.get(key)

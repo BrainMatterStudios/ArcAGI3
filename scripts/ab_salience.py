@@ -29,7 +29,8 @@ PREFIXES = sys.argv[3:]
 
 import os  # noqa: E402
 
-TRUST = int(os.getenv("TRUST", "1"))
+TRUST = int(os.getenv("TRUST", "3"))
+BORDER = int(os.getenv("BORDER", "0"))
 
 
 def make_policy():
@@ -37,7 +38,7 @@ def make_policy():
         from arcagi3.policy import HybridPolicy
         return HybridPolicy()
     from arcagi3.salience_explorer import SalienceExplorer
-    return SalienceExplorer(trust_threshold=TRUST)
+    return SalienceExplorer(trust_threshold=TRUST, border_mask=BORDER)
 
 
 client = Arcade(operation_mode=OperationMode.NORMAL, logger=logging.getLogger("t"))
@@ -46,7 +47,8 @@ if PREFIXES:
     envs = [e for e in envs if any(e.game_id.startswith(p) for p in PREFIXES)]
 card = client.open_scorecard(tags=[f"ab-{POLICY}"])
 
-print(f"policy={POLICY} trust={TRUST} budget={BUDGET} games={len(envs)}", flush=True)
+print(f"policy={POLICY} trust={TRUST} border={BORDER} budget={BUDGET} games={len(envs)}",
+      flush=True)
 rows = []
 t_all = time.time()
 for e in envs:
@@ -74,9 +76,10 @@ for e in envs:
         n += 1
         best = max(best, int(obs.levels_completed or 0))
     dt = time.time() - t0
+    states = len(pol) if hasattr(pol, "__len__") else -1
     rows.append((gid, best, win_levels, n, dt))
-    print(f"  {gid:>12}  {best}/{win_levels}  actions={n}  {dt:.0f}s  "
-          f"({n/max(dt,1e-9):.0f} act/s)", flush=True)
+    print(f"  {gid:>12}  {best}/{win_levels}  actions={n}  states={states}  "
+          f"({n/max(states,1):.1f} act/state)  {dt:.0f}s", flush=True)
 
 total = sum(b for _, b, _, _, _ in rows)
 won = sum(1 for _, b, w, _, _ in rows if w and b >= w)
