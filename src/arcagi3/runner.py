@@ -21,6 +21,9 @@ from .agent import ExplorerAgent, HybridAgent, PlayResult  # noqa: E402
 
 AGENTS = {"explorer": ExplorerAgent, "hybrid": HybridAgent}
 
+# Lazy import so that wm_policy.py is only loaded when needed (avoids import cost on
+# hot paths). The 'wm' agent name is the only entry point for WorldModelPolicy.
+
 
 def discover_games(games_dir: str) -> list[str]:
     out = []
@@ -42,18 +45,30 @@ def run_game(game_id: str, games_dir: str, budget: int, seed: int = 0,
     if env is None:
         raise RuntimeError(f"could not make env for {game_id}")
     if agent_name == "reactive":
-        return run_reactive(env, game_id, budget, seed)
+        from .policy import HybridPolicy as _HP
+        return run_reactive(env, game_id, budget, seed, policy_cls=_HP)
+    if agent_name == "wm":
+        # policy_cls=None -> make_policy() -> respects ARCAGI3_WORLDMODEL env var
+        return run_reactive(env, game_id, budget, seed, policy_cls=None)
     agent = AGENTS[agent_name](max_actions=budget, seed=seed)
     return agent.play(env, game_id=game_id)
 
 
-def run_reactive(env, game_id: str, budget: int, seed: int = 0) -> PlayResult:
-    """Drive HybridPolicy one action at a time, exactly like the Kaggle framework does."""
+def run_reactive(env, game_id: str, budget: int, seed: int = 0,
+                 policy_cls=None) -> PlayResult:
+    """Drive a reactive policy one action at a time, exactly like the Kaggle framework does.
+
+    policy_cls: if None, uses make_policy() (respects ARCAGI3_WORLDMODEL env var);
+                if provided, must be a callable(seed=seed) returning a policy instance.
+                Defaults to HybridPolicy when ARCAGI3_WORLDMODEL is unset (D0 gate).
+    """
     from arcengine import GameAction, GameState
 
-    from .policy import HybridPolicy
-
-    pol = HybridPolicy(seed=seed)
+    if policy_cls is not None:
+        pol = policy_cls(seed=seed)
+    else:
+        from .wm_policy import make_policy
+        pol = make_policy(seed=seed)
     obs = env.reset()
     actions = 0
     prev_levels = int(obs.levels_completed or 0)
@@ -95,7 +110,7 @@ def main() -> None:
     ap.add_argument("--game", default=None, help="single game id (default: all)")
     ap.add_argument("--budget", type=int, default=4000)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--agent", default="reactive", choices=list(AGENTS) + ["reactive"])
+    ap.add_argument("--agent", default="reactive", choices=list(AGENTS) + ["reactive", "wm"])
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
