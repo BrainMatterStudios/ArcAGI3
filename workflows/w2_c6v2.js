@@ -47,12 +47,14 @@ const review = impl ? await agent(
 ) : null
 
 const measure = (review && review.pass) ? await agent(
-  `Measure C6 v2 via venv: \`cd ${REPO} && uv run pytest -q\`; \`cd ${REPO} && PYTHONPATH=src uv run python -m arcagi3.runner --agent reactive --budget 4000 --quiet\`. Report tests_pass, local TOTAL levels (expect 27), push (expect 3), and whether the planner (ARCAGI3_WORLDMODEL=1 ARCAGI3_PLANNER=1, --agent wm) emitted >0 actions on a quick run.`,
+  `Measure C6 v2 NO-REGRESSION via venv. The numbers MUST come from the DEFAULT REACTIVE agent (NO env flags):\n  cd ${REPO} && uv run pytest -q\n  cd ${REPO} && PYTHONPATH=src uv run python -m arcagi3.runner --agent reactive --budget 4000 --quiet\nReport tests_pass, and from THAT reactive run: local TOTAL levels (expect 27, which already includes push 3/3) and the push game's levels (expect 3). Do NOT report the wm/planner run's numbers for these fields.`,
   { label: 'measure:C6v2', phase: 'Measure', model: 'haiku', schema: MEASURE, agentType: 'general-purpose' }
 ) : null
 
+// reactive local_levels==27 already requires push 3/3 (else total<27), so don't separately
+// gate on the (previously mis-sourced) push field.
 const ok = review && review.pass && review.not_inert && review.no_occ_gate &&
-           measure && measure.tests_pass && measure.local_levels >= 27 && measure.push_levels >= 3
+           measure && measure.tests_pass && measure.local_levels >= 27
 if (ok) {
   await agent(`Commit: \`cd ${REPO} && git add -A && git commit -q -m "feat(rebuild): C6 planner v2 (plans over C4 forward model; not inert; judge-gated)"\`; show \`git log --oneline -1\`.`,
     { label: 'commit:C6v2', phase: 'Measure', model: 'haiku', agentType: 'general-purpose' })
