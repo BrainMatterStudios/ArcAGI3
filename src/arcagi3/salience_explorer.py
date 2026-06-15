@@ -58,10 +58,16 @@ class _Node:
 
 class SalienceExplorer:
     def __init__(self, max_click_targets: int = 96, seed: int = 0,
-                 max_stuck_resets: int = 200) -> None:
+                 max_stuck_resets: int = 200, trust_threshold: int = 3) -> None:
         self.max_click_targets = max_click_targets
         self.rng = np.random.default_rng(seed)
         self.max_stuck_resets = max_stuck_resets
+        # trust_threshold > 1 enables suspicious-transition filtering: a NEW transition that
+        # conflicts with an already-recorded edge (the signature of animation/frame noise on
+        # real games) must repeat this many times before it overwrites the trusted edge. The
+        # first observation of any edge, and any reward-bearing transition, is trusted at once
+        # (so deterministic games are not slowed). trust_threshold == 1 == original behaviour.
+        self.trust_threshold = max(1, int(trust_threshold))
         self.reset_all()
 
     # expose .gs.wm-like length for the runner's states_seen (duck-typing)
@@ -86,6 +92,7 @@ class SalienceExplorer:
         self.prev_levels = 0
         self.expect_reset = False
         self.stuck_resets = 0
+        self.pending: dict = {}  # (key, action) -> (candidate_next_key, count) for suspicion filter
 
     def _candidates(self, grid, available):
         cands = []
@@ -176,7 +183,22 @@ class SalienceExplorer:
 
     def _record(self, key, action, next_key, reward, cands, terminal):
         node = self.nodes.get(key) or self._observe(key, cands)
-        node.edges[action] = (next_key, reward)
+        existing = node.edges.get(action)
+        if (self.trust_threshold <= 1 or reward > 0 or existing is None
+                or existing[0] == next_key):
+            # trust at once: filtering off, reward-bearing, first observation, or consistent
+            node.edges[action] = (next_key, reward)
+            self.pending.pop((key, action), None)
+        else:
+            # conflict with a trusted edge -> require the new target to repeat before overwriting
+            pk = (key, action)
+            cand, cnt = self.pending.get(pk, (next_key, 0))
+            cand, cnt = (next_key, cnt + 1) if cand == next_key else (next_key, 1)
+            if cnt >= self.trust_threshold:
+                node.edges[action] = (next_key, reward)
+                self.pending.pop(pk, None)
+            else:
+                self.pending[pk] = (cand, cnt)
         self._observe(next_key, cands, terminal=terminal)
         self._expect = next_key if self.plan else None
 
