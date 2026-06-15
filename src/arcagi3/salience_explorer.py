@@ -59,7 +59,7 @@ class _Node:
 class SalienceExplorer:
     def __init__(self, max_click_targets: int = 96, seed: int = 0,
                  max_stuck_resets: int = 200, trust_threshold: int = 3,
-                 border_mask: int = 1) -> None:
+                 border_mask: int = 2) -> None:
         self.max_click_targets = max_click_targets
         self.rng = np.random.default_rng(seed)
         self.max_stuck_resets = max_stuck_resets
@@ -68,7 +68,9 @@ class SalienceExplorer:
         # state key. Monotonic bottom-edge progress bars (re86/wa30) change each cell only
         # once, so the cell-frequency VolatilityTracker never catches them -> every state is
         # forever-unique -> graph explodes (re86 1.1 act/state). Masking the dynamic edge band
-        # restores state revisits without touching the interior play area. 0 == off.
+        # restores state revisits without touching the interior play area. 0 == off. Default 2
+        # catches 2-wide edge bars (sc25 right-edge cols 62-63, sk48) that band=1 half-masks;
+        # band=2 measured 33 levels @30k (strict superset of band=1's 32, +sk48, no regressions).
         self.border_mask = max(0, int(border_mask))
         # trust_threshold > 1 enables suspicious-transition filtering: a NEW transition that
         # conflicts with an already-recorded edge (the signature of animation/frame noise on
