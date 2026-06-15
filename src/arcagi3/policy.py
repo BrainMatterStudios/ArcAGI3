@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from . import events as EVT
 from . import movement as MV
 from . import perception as P
 from .agent import ACT, RESET, STOP, GraphStrategy, candidates_for
@@ -22,11 +23,18 @@ from .world_model import Action
 
 class HybridPolicy:
     def __init__(self, use_clicks: bool = True, max_click_targets: int = 96,
-                 nav_step_cap: int = 200, seed: int = 0) -> None:
+                 nav_step_cap: int = 200, seed: int = 0,
+                 emit_events: bool = False) -> None:
         self.use_clicks = use_clicks
         self.max_click_targets = max_click_targets
         self.nav_step_cap = nav_step_cap
         self.rng = np.random.default_rng(seed)
+        # C2 causal event extraction (read-only, default-OFF). When False the entire C2
+        # block is skipped and decide() returns byte-identical action tokens. When True it
+        # ONLY writes the event log (self.events / self.last_step_events); nothing in the
+        # default decision path reads it. Consumers (C3/C5/C7) read those attributes; do not
+        # enable emit_events in the submission path until C7 gates a new policy.
+        self.emit_events = emit_events
         self.reset_all()
 
     def reset_all(self) -> None:
@@ -54,6 +62,11 @@ class HybridPolicy:
         self.nav_steps = 0
         self.nav_stale = 0
         self.nav_last: tuple[float, float] | None = None
+        # C2 event extraction state (only used when self.emit_events) -- read-only output
+        self.ev = EVT.EventExtractor() if self.emit_events else None
+        self.events = EVT.EventLog()
+        self.last_step_events: EVT.StepEvents | None = None
+        self.prev_grid: np.ndarray | None = None
 
     def _cands(self, grid, available):
         return candidates_for(grid, available, self.use_clicks, self.max_click_targets, False)
@@ -79,6 +92,12 @@ class HybridPolicy:
         self._probe_aid = None
         self.target = None
         self.tried_targets = set()
+        # C2: a level change is a fresh scene; clear the per-level event log (read-only).
+        if self.emit_events:
+            self.events.clear()
+            self.last_step_events = None
+            if self.ev is not None:
+                self.ev.reset()
 
     # main entry: given the latest observation, return the next action token
     def decide(self, grid: np.ndarray, gstate_terminal: bool, gstate_notplayed: bool,
@@ -116,6 +135,18 @@ class HybridPolicy:
             reward = float(levels - self.prev_levels)
             self.gs.update(self.prev_key, self.prev_action, cur_key, reward,
                            self._cands(grid, available), terminal=False)
+            # C2 (read-only, default-OFF): extract the causal event stream for the previous
+            # action BEFORE the level-relearn block below, so reward-triggering transitions
+            # are logged even when crossing a level boundary. Writes self.events /
+            # self.last_step_events only; consulted by NOTHING in the decision path.
+            if self.emit_events and self.ev is not None and self.prev_grid is not None:
+                click_xy = (self.prev_action[1], self.prev_action[2]) \
+                    if self.prev_action[0] == "C" else None
+                self.last_step_events = self.ev.extract(
+                    self.prev_grid, grid, self.prev_action, reward, mm=self.mm,
+                    bg=self.bg, distractor_colors=self.distractor_colors, click_xy=click_xy,
+                )
+                self.events.append(self.last_step_events)
             if self.phase == "probe" and self._probe_before is not None and self._probe_aid is not None:
                 trans = MV.infer_all_translations(self._probe_before, grid, self.bg)
                 for color, (dr, dc) in trans.items():
@@ -134,6 +165,12 @@ class HybridPolicy:
         action = self._choose(grid, cur_key, available)
         self.prev_key = cur_key
         self.prev_action = None if action[0] == "reset" else action
+        if self.emit_events:
+            # keep the C2 extractor's motion model current and remember this grid for the
+            # next step's before/after pair (read-only; never affects `action`).
+            if self.ev is not None:
+                self.ev.update_model(self.mm)
+            self.prev_grid = grid
         return action
 
     def _choose(self, grid, cur_key, available, _depth: int = 0) -> Action:
