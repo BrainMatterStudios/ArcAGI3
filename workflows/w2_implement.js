@@ -71,7 +71,7 @@ for (const c of ORDER) {
   phase('Implement')
   const impl = await agent(
     `Implement component ${c.id} of the ARC-AGI-3 rebuild.\nREAD: ${REPO}/rebuild/design/${c.id}.md (the judged blueprint), ${REPO}/REBUILD_PLAN.md, and the relevant src/arcagi3/*.py.\nWrite the code + offline unit tests following the blueprint's implementation_checklist. Match the existing code style.\n${GUARD}\nReturn a concise summary of exactly what files/functions you added/changed and how it's gated.`,
-    { label: `impl:${c.id}`, phase: 'Implement', model: MODEL[c.tier], agentType: 'feature-dev:feature-dev' }
+    { label: `impl:${c.id}`, phase: 'Implement', model: MODEL[c.tier], agentType: 'general-purpose' }
   )
   if (!impl) { results.push({ id: c.id, status: 'impl-failed' }); continue }
 
@@ -84,23 +84,29 @@ for (const c of ORDER) {
   phase('Measure')
   const measure = await agent(
     `Measure no-regression for ${c.id}. Run:\n  cd ${REPO} && uv run pytest -q\n  cd ${REPO} && PYTHONPATH=src uv run python -m arcagi3.runner --agent reactive --budget 4000 --quiet\nReport whether tests pass and the local TOTAL levels (expect 27) and push levels (expect 3).`,
-    { label: `measure:${c.id}`, phase: 'Measure', model: 'haiku', schema: MEASURE }
+    { label: `measure:${c.id}`, phase: 'Measure', model: 'haiku', schema: MEASURE, agentType: 'general-purpose' }
   )
 
   const ok = review && review.pass && measure && measure.tests_pass &&
              measure.local_levels >= 27 && measure.push_levels >= 3
   if (!ok) {
-    // revert this component's changes so it can't poison later components
+    // revert ONLY this component's (uncommitted) changes; prior passed components are
+    // already committed, so checkout+clean of src/tests cannot touch them.
     await agent(
-      `Revert the uncommitted changes from the failed ${c.id} implementation: \`cd ${REPO} && git checkout -- src/ tests/\` (keep rebuild/design/ and untracked test files only if they are green). Confirm \`uv run pytest -q\` is green afterwards.`,
-      { label: `revert:${c.id}`, phase: 'Measure', model: 'haiku' }
+      `Discard the uncommitted changes from the failed ${c.id} implementation so they cannot poison later components: run exactly \`cd ${REPO} && git checkout -- src tests 2>/dev/null; git clean -fdq src tests\`. Then confirm \`cd ${REPO} && uv run pytest -q\` is green and \`git status --short\` is clean. Report the final git status.`,
+      { label: `revert:${c.id}`, phase: 'Measure', model: 'haiku', agentType: 'general-purpose' }
     )
     results.push({ id: c.id, status: 'gate-failed', review, measure })
     log(`${c.id} FAILED gate -> reverted. feedback: ${review ? review.feedback : 'n/a'}`)
     continue
   }
+  // commit the passed component so later components build on it and reverts stay scoped
+  await agent(
+    `Commit the passed ${c.id} implementation: run \`cd ${REPO} && git add -A && git commit -q -m "feat(rebuild): ${c.id} (W2 judge-gated, no-regression verified)"\`. Confirm with \`git log --oneline -1\`.`,
+    { label: `commit:${c.id}`, phase: 'Measure', model: 'haiku', agentType: 'general-purpose' }
+  )
   results.push({ id: c.id, status: 'passed', impl, review, measure })
-  log(`${c.id} PASSED gate (local ${measure.local_levels} levels, push ${measure.push_levels}).`)
+  log(`${c.id} PASSED gate + committed (local ${measure.local_levels} levels, push ${measure.push_levels}).`)
 }
 
 return { results, passed: results.filter((r) => r.status === 'passed').map((r) => r.id) }
