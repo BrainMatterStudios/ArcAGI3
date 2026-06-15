@@ -15,14 +15,16 @@ SRC_PKG = ROOT / "src" / "arcagi3"
 OUT = HERE / "dataset"
 OWNER = "ahmedmobasher86"
 
-# Fresh copy of the package (exclude caches and local dev games are fine to include —
-# they are tiny and harmless; the eval imports only policy/perception/etc.).
+# Fresh copy of the package under a wrapper dir `lib/`. We upload with `--dir-mode zip`,
+# which strips exactly one top folder level on extraction — so `lib/arcagi3/...` extracts to
+# `arcagi3/...` at the dataset root (preserving the package dir). Uploading `arcagi3/`
+# directly would flatten the package to the root and break `import arcagi3`.
 if OUT.exists():
     shutil.rmtree(OUT)
-(OUT / "arcagi3").mkdir(parents=True)
+(OUT / "lib" / "arcagi3").mkdir(parents=True)
 for p in SRC_PKG.rglob("*.py"):
     rel = p.relative_to(SRC_PKG)
-    dst = OUT / "arcagi3" / rel
+    dst = OUT / "lib" / "arcagi3" / rel
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(p, dst)
 
