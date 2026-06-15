@@ -1,15 +1,24 @@
-"""Generate submission/notebook.ipynb — the one-click Kaggle submission notebook.
+"""Generate submission/notebook.ipynb — self-contained one-click ARC-AGI-3 submission.
 
-Embeds the verified submission/my_agent.py and replicates the official harness from the
-"ARC3 Sample Submission" notebook (offline wheel install, gateway-served games, official
-ARC-AGI-3-Agents framework run). Run:  python submission/build_notebook.py
+Embeds the arcagi3 core package (base64) directly in the notebook, written to
+/kaggle/working/arcagi3 at runtime, so the agent has NO external dataset/path dependency
+(the earlier dataset-packaging route ERRORed). Replicates the official sample harness
+(offline wheels, gateway-served games, official framework run). Run:
+  python submission/build_notebook.py
 """
 
+import base64
 import json
 from pathlib import Path
 
 HERE = Path(__file__).parent
+SRC = HERE.parent / "src" / "arcagi3"
 MY_AGENT = (HERE / "my_agent.py").read_text()
+
+# Core modules the agent needs at eval (skip runner/validate_online/games — unused there).
+CORE = ["__init__.py", "perception.py", "world_model.py", "movement.py", "agent.py",
+        "policy.py", "spatial.py"]
+PKG = {name: base64.b64encode((SRC / name).read_bytes()).decode() for name in CORE}
 
 INSTALL = """\
 # Install the ARC-AGI-3 toolkit + engine offline from the competition wheels.
@@ -18,38 +27,35 @@ INSTALL = """\
     arc-agi python-dotenv
 """
 
+WRITE_PKG = (
+    "# Write the self-contained arcagi3 package to /kaggle/working/arcagi3 (no dataset dep).\n"
+    "import base64, os, pathlib\n"
+    "os.makedirs('/kaggle/working/arcagi3', exist_ok=True)\n"
+    "PKG = " + repr(PKG) + "\n"
+    "for _name, _b in PKG.items():\n"
+    "    pathlib.Path('/kaggle/working/arcagi3', _name).write_bytes(base64.b64decode(_b))\n"
+    "print('wrote arcagi3 package:', sorted(PKG))\n"
+)
+
 WRITE_AGENT = "%%writefile /kaggle/working/my_agent.py\n" + MY_AGENT
 
-# Harness: at competition rerun, the gateway serves the private games. We run our agent
-# through the official framework against the gateway (ONLINE mode). The arcagi3 package
-# must be attached to this notebook as the Kaggle dataset "arcagi3-agent"; my_agent.py
-# adds /kaggle/input/arcagi3-agent[/src] to sys.path automatically.
 RUN = """\
-import os, shutil, glob
+import os
 
 if os.getenv('KAGGLE_IS_COMPETITION_RERUN'):
-    # 1) Wait for the gateway that serves the private games.
+    # 1) wait for the gateway that serves the private games
     !curl --fail --retry 999 --retry-all-errors --retry-delay 5 \\
           --retry-max-time 600 http://gateway:8001/api/games
 
-    # 2) Copy the official agents framework to a writable location.
+    # 2) copy the official agents framework to a writable location
     !cp -r /kaggle/input/competitions/arc-prize-2026-arc-agi-3/ARC-AGI-3-Agents \\
            /kaggle/working/ARC-AGI-3-Agents
 
-    # 3) Drop our agent + the arcagi3 package next to the framework templates so it
-    #    imports cleanly even if the dataset attach path differs.
+    # 3) drop our agent into the framework templates (it imports arcagi3 from /kaggle/working)
     !cp /kaggle/working/my_agent.py \\
         /kaggle/working/ARC-AGI-3-Agents/agents/templates/my_agent.py
-    for cand in ['/kaggle/input/arcagi3-agent/src/arcagi3',
-                 '/kaggle/input/arcagi3-agent/arcagi3',
-                 '/kaggle/input/arcagi3/arcagi3']:
-        if os.path.isdir(cand):
-            dst = '/kaggle/working/ARC-AGI-3-Agents/agents/templates/arcagi3'
-            if not os.path.isdir(dst):
-                shutil.copytree(cand, dst)
-            break
 
-    # 4) Minimal __init__.py: register only what we need (avoid heavy template imports).
+    # 4) minimal agents/__init__.py: register only what we need (avoid heavy template imports)
     with open('/kaggle/working/ARC-AGI-3-Agents/agents/__init__.py', 'w') as f:
         f.write('''from typing import Type
 from dotenv import load_dotenv
@@ -66,7 +72,7 @@ AVAILABLE_AGENTS: dict[str, Type[Agent]] = {
 }
 ''')
 
-    # 5) .env pointing the framework at the gateway (ONLINE mode, no local env files).
+    # 5) .env pointing the framework at the gateway (online mode, no local env files)
     with open('/kaggle/working/ARC-AGI-3-Agents/.env', 'w') as f:
         f.write('''SCHEME=http
 HOST=gateway
@@ -78,14 +84,13 @@ ENVIRONMENTS_DIR=
 RECORDINGS_DIR=/kaggle/working/server_recording
 ''')
 
-    # 6) Play all games. The gateway records the scorecard -> submission.
+    # 6) play all games; the gateway records the scorecard -> submission
     !cd /kaggle/working/ARC-AGI-3-Agents && MPLBACKEND=agg python main.py --agent myagent
 """
 
 DUMMY = """\
 import os
 if not os.getenv('KAGGLE_IS_COMPETITION_RERUN'):
-    # Local/commit run: emit a placeholder submission so the notebook saves cleanly.
     import pandas as pd
     submission = pd.DataFrame(
         data=[['1_0', '1', True, 0]],
@@ -95,14 +100,13 @@ if not os.getenv('KAGGLE_IS_COMPETITION_RERUN'):
 """
 
 MD = """\
-# ARC-AGI-3 — Hybrid Explorer Agent
+# ARC-AGI-3 — Hybrid Explorer Agent (self-contained)
 
-General, training-free interactive agent (MIT-0). Motion model (avatar + per-action
-displacement) + coordinate navigation to candidate goals, with graph-based
-exploration/exploitation fallback. Runs through the official ARC-AGI-3-Agents framework
-against the gateway-served games.
-
-**Setup:** attach the `arcagi3-agent` dataset (this repo's `src/`) to the notebook.
+General, training-free interactive agent (MIT-0): perception (object segmentation,
+counter/distractor masking) -> state-transition graph exploration -> motion-model avatar
+navigation -> 5-tier click salience. The arcagi3 package is embedded in this notebook
+(written to /kaggle/working) so there is no external dependency; the agent is fail-safe
+(random fallback) so it always acts.
 """
 
 
@@ -116,21 +120,16 @@ def cell_md(src):
 
 
 nb = {
-    "cells": [
-        cell_md(MD),
-        cell_code(INSTALL),
-        cell_code(WRITE_AGENT),
-        cell_code(RUN),
-        cell_code(DUMMY),
-    ],
+    "cells": [cell_md(MD), cell_code(INSTALL), cell_code(WRITE_PKG),
+              cell_code(WRITE_AGENT), cell_code(RUN), cell_code(DUMMY)],
     "metadata": {
         "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
         "language_info": {"name": "python", "version": "3.12"},
     },
-    "nbformat": 4,
-    "nbformat_minor": 5,
+    "nbformat": 4, "nbformat_minor": 5,
 }
 
 out = HERE / "notebook.ipynb"
 out.write_text(json.dumps(nb, indent=1))
-print(f"wrote {out} ({out.stat().st_size} bytes, {len(nb['cells'])} cells)")
+print(f"wrote {out} ({out.stat().st_size} bytes, {len(nb['cells'])} cells, "
+      f"{len(PKG)} embedded modules)")
