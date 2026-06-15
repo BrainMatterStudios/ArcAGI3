@@ -145,6 +145,24 @@ def state_hash(grid: np.ndarray, mask: np.ndarray | None = None) -> bytes:
     return np.ascontiguousarray(grid).tobytes()
 
 
+def _object_tuples(objs: list[Obj], ignore_colors: set[int] | None = None) -> list[tuple]:
+    """Sorted [(color, r0, c0, r1, c1, size)] summary of connected components.
+
+    Single source of truth for the object-level state summary, shared by
+    ``object_state_key`` and ``forward_model.Scene.key`` so the two are byte-identical
+    (the C4 linchpin: a correct prediction's key must equal the real next key exactly).
+    """
+    ignore = ignore_colors or set()
+    parts = []
+    for o in objs:
+        if o.color in ignore:
+            continue
+        r0, c0, r1, c1 = o.bbox
+        parts.append((o.color, r0, c0, r1, c1, o.size))
+    parts.sort()
+    return parts
+
+
 def object_state_key(grid: np.ndarray, background: int | None = None,
                      ignore_colors: set[int] | None = None) -> bytes:
     """Coarse, robust state key from OBJECT structure (not raw pixels).
@@ -158,14 +176,7 @@ def object_state_key(grid: np.ndarray, background: int | None = None,
     """
     if background is None:
         background = detect_background(grid)
-    ignore = ignore_colors or set()
-    parts = []
-    for o in connected_components(grid, background=background):
-        if o.color in ignore:
-            continue
-        r0, c0, r1, c1 = o.bbox
-        parts.append((o.color, r0, c0, r1, c1, o.size))
-    parts.sort()
+    parts = _object_tuples(connected_components(grid, background=background), ignore_colors)
     return repr(parts).encode()
 
 
