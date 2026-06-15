@@ -37,6 +37,11 @@ factory:
     verify_cmd: "PYTHONPATH=src uv run python -m pytest -q"   # fast deterministic gate
     max_revise: 2
 
+  scheduler:                   # unattended nightly health check (launchd, macOS)
+    provider: launchd
+    cron: "23 3 * * *"         # 03:23 local; off-peak, non-round minute
+    command: "PYTHONPATH=src factory observe"   # runs the offline + kaggle_score collectors
+
   routing:
     thresholds:                # NOTE: size under-rates risk here — a few lines in
       large_files: 5           # salience_explorer.py / perception.py moves the scored
