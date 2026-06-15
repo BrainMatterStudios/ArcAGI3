@@ -24,7 +24,7 @@ from .world_model import Action
 class HybridPolicy:
     def __init__(self, use_clicks: bool = True, max_click_targets: int = 96,
                  nav_step_cap: int = 200, seed: int = 0,
-                 emit_events: bool = False) -> None:
+                 emit_events: bool = False, enable_affordance: bool = True) -> None:
         self.use_clicks = use_clicks
         self.max_click_targets = max_click_targets
         self.nav_step_cap = nav_step_cap
@@ -35,6 +35,15 @@ class HybridPolicy:
         # default decision path reads it. Consumers (C3/C5/C7) read those attributes; do not
         # enable emit_events in the submission path until C7 gates a new policy.
         self.emit_events = emit_events
+        # C3 affordance model (observe-only, default-ON but non-load-bearing). When True,
+        # decide() learns per-color interaction effects into self.aff after each real step;
+        # NOTHING in the decision path reads self.aff in this PR, so the action stream is
+        # byte-identical whether this is True or False (proven by the golden trace test).
+        # Setting False recovers the exact same behaviour and disables learning. Wrapped in
+        # try/except in decide() so a C3 bug degrades to "no learning", never a crash.
+        # Consumers (C4/C6) read self.aff via the query API; do not route C3 output into the
+        # decision path until C7's selector gates a new policy.
+        self.enable_affordance = enable_affordance
         self.reset_all()
 
     def reset_all(self) -> None:
@@ -67,6 +76,12 @@ class HybridPolicy:
         self.events = EVT.EventLog()
         self.last_step_events: EVT.StepEvents | None = None
         self.prev_grid: np.ndarray | None = None
+        # C3 affordance state (observe-only). self.aff is always created (cheap, empty) so
+        # consumers can query it unconditionally; it is only written when enable_affordance.
+        from .affordance import AffordanceModel
+        self.aff = AffordanceModel()
+        self._prev_grid: np.ndarray | None = None  # before-grid for the next observe_step
+        self._t = 0  # affordance step counter
 
     def _cands(self, grid, available):
         return candidates_for(grid, available, self.use_clicks, self.max_click_targets, False)
@@ -92,6 +107,11 @@ class HybridPolicy:
         self._probe_aid = None
         self.target = None
         self.tried_targets = set()
+        # C3: keep per-color affordance priors across levels (votes outweigh stale colors),
+        # clear per-object stats, and drop the before-grid so we don't pair frames across the
+        # level boundary. Observe-only; never affects the action stream.
+        self.aff.reset_level()
+        self._prev_grid = None
         # C2: a level change is a fresh scene; clear the per-level event log (read-only).
         if self.emit_events:
             self.events.clear()
@@ -112,6 +132,17 @@ class HybridPolicy:
             if gstate_terminal and self.prev_action is not None and self.prev_key is not None and self.gs:
                 self.gs.update(self.prev_key, self.prev_action, cur_key, 0.0,
                                self._cands(grid, available), terminal=True)
+                # C3 (observe-only): the previous action ended the level -> learn HARM for
+                # whatever it contacted. Writes ONLY self.aff; try/except => never crashes.
+                if self.enable_affordance and self._prev_grid is not None:
+                    try:
+                        self.aff.observe_step(
+                            self._prev_grid, grid, self.prev_action, self.mm, self.bg,
+                            0.0, True, step=self._t,
+                            distractor_colors=frozenset(self.distractor_colors),
+                        )
+                    except Exception:
+                        pass
             self.prev_action = None
             self.expect_reset = True
             if self.gs:
@@ -135,6 +166,19 @@ class HybridPolicy:
             reward = float(levels - self.prev_levels)
             self.gs.update(self.prev_key, self.prev_action, cur_key, reward,
                            self._cands(grid, available), terminal=False)
+            # C3 (observe-only, OUTSIDE the probe guard so it learns in navigate/graph too):
+            # learn the affordance of whatever the previous action contacted. Writes ONLY
+            # self.aff; read by nothing in the decision path. try/except => a C3 bug degrades
+            # to "no learning", never a policy exception.
+            if self.enable_affordance and self._prev_grid is not None:
+                try:
+                    self.aff.observe_step(
+                        self._prev_grid, grid, self.prev_action, self.mm, self.bg,
+                        reward, False, step=self._t,
+                        distractor_colors=frozenset(self.distractor_colors),
+                    )
+                except Exception:
+                    pass
             # C2 (read-only, default-OFF): extract the causal event stream for the previous
             # action BEFORE the level-relearn block below, so reward-triggering transitions
             # are logged even when crossing a level boundary. Writes self.events /
@@ -171,6 +215,11 @@ class HybridPolicy:
             if self.ev is not None:
                 self.ev.update_model(self.mm)
             self.prev_grid = grid
+        if self.enable_affordance:
+            # remember this grid as the before-grid for the next step's observe_step, and
+            # advance the affordance step counter (observe-only; never affects `action`).
+            self._prev_grid = grid
+            self._t += 1
         return action
 
     def _choose(self, grid, cur_key, available, _depth: int = 0) -> Action:
