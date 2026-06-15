@@ -1,33 +1,53 @@
-# factory.config.yaml — everything specific to THIS project lives here.
-# The `factory` command finds this by walking up from your cwd, so keep it at
-# your project root. Run `factory doctor` after editing. Full reference:
-# the factory repo's factory.config.example.yaml.
+# factory.config.yaml — software-factory manifest, tuned for ArcAGI3.
+# This is an OFFLINE algorithms-research project: no live service, no PR-to-prod.
+# The real quality gate is the 25-game real-game A/B sweep + 174 tests + 8 local
+# games; the real prod boundary is the Kaggle submission (1/day, human-gated).
 factory:
   name: ArcAGI3
 
-  source:                      # VCS + the issue board that is the work queue
-    provider: github           # or `memory` to try everything offline first
+  # Project-local persona pack: domain roles the generic catalog lacks
+  # (algorithms-researcher, measurement-engineer, perception-specialist,
+  # reproducibility-auditor, generalization-skeptic, submission-engineer).
+  personas:
+    packs: [factory/personas]
+
+  source:
+    provider: github
     repo: BrainMatterStudios/ArcAGI3
     ready_label: ready
 
-  runner:                      # spawns agents at a model tier
-    provider: claude_code      # or `echo` for offline
+  runner:                      # model tiering — the tier->model map (was missing)
+    provider: claude_code
+    models:
+      opus: claude-opus-4-8
+      sonnet: claude-sonnet-4-6
+      haiku: claude-haiku-4-5-20251001
 
-  observe:                     # read-only health/data signals
-    provider: "null"           # swap for k8s/datadog/ssh; null = no live checks
-    # collectors: myproject.factory_checks:collectors   # your own data checks
+  observe:                     # health signal = the offline agent gate, not ops logs
+    provider: "null"
+    # Fast offline health check (8 local games + import-safety). The full real-game
+    # sweep is a scheduled/manual gate (slow, needs ARC_API_KEY), not per-observe.
+    collectors: arcagi3.factory_checks:collectors
 
   alert:
-    provider: stdout           # or slack/telegram (set *_env to the secret env var)
+    provider: stdout
 
-  build:                       # how `factory build <id>` turns an issue into a PR
-    dev_branch: factory/experiment   # never target main/prod directly
-    verify_cmd: "PYTHONPATH=src pytest -q"   # 174-test gate; must pass before a PR
+  build:                       # `factory build <id>` -> PR
+    dev_branch: factory/experiment   # never main; main/Kaggle-submit are human-gated
+    verify_cmd: "PYTHONPATH=src uv run python -m pytest -q"   # fast deterministic gate
     max_revise: 2
+
+  routing:
+    thresholds:                # NOTE: size under-rates risk here — a few lines in
+      large_files: 5           # salience_explorer.py / perception.py moves the scored
+      large_lines: 150         # number, so treat hot-path edits as >=T1 regardless.
 
   budget:
     per_task_usd: 50
     monthly_usd: 200
 
   governance:
-    require_branch_protection: false   # set true before UNATTENDED autonomy
+    # Prod boundary for THIS project = the Kaggle submission (1/day) + merge to main,
+    # both human-gated. No autonomous submit/merge. The 1/day limit + the approval
+    # gate already enforce this.
+    require_branch_protection: false
