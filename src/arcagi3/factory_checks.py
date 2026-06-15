@@ -77,4 +77,63 @@ class LocalGamesCollector:
                              "floor": _LOCAL_MIN_TOTAL})]
 
 
-collectors = [ImportSafetyCollector(), LocalGamesCollector()]
+class KaggleScoreCollector:
+    """Read the competition leaderboard score (read-only; no submit) and emit a signal.
+
+    Closes the submit->score->improve loop: parses `kaggle competitions submissions`,
+    finds the latest COMPLETE public score and the best prior, and flags regressions or
+    pending submissions. WARN (not FAIL) on transient/auth/network issues so a flaky
+    network can't abort an observe pass (conventions §8 degrade-to-WARN).
+    """
+
+    name = "kaggle_score"
+    COMP = "arc-prize-2026-arc-agi-3"
+
+    def scan(self, data) -> list[CheckResult]:  # noqa: ARG002
+        try:
+            rc, out = _run(["kaggle", "competitions", "submissions", self.COMP, "--csv"],
+                           timeout=120)
+        except Exception as e:  # noqa: BLE001
+            return [CheckResult(self.name, CheckVerdict.WARN, {"error": repr(e)})]
+        if rc != 0:
+            return [CheckResult(self.name, CheckVerdict.WARN,
+                                {"returncode": rc, "tail": out[-300:]})]
+        rows = self._parse_csv(out)
+        if not rows:
+            return [CheckResult(self.name, CheckVerdict.WARN, {"note": "no submissions parsed"})]
+        scored = [r for r in rows if r["score"] is not None]
+        pending = [r for r in rows if r["status"] and "COMPLETE" not in r["status"].upper()
+                   and r["score"] is None]
+        if not scored:
+            return [CheckResult(self.name, CheckVerdict.WARN,
+                                {"note": "no scored submission yet", "pending": len(pending)})]
+        latest = scored[0]                      # submissions list is newest-first
+        best = max(r["score"] for r in scored)
+        ev = {"latest_ref": latest["ref"], "latest_score": latest["score"],
+              "best_score": best, "delta_vs_best": round(latest["score"] - best, 6),
+              "pending": len(pending), "scored_count": len(scored)}
+        if latest["score"] < best:             # banked a worse agent than a prior best
+            return [CheckResult(self.name, CheckVerdict.FAIL, ev)]
+        return [CheckResult(self.name, CheckVerdict.PASS, ev)]
+
+    @staticmethod
+    def _parse_csv(text: str) -> list[dict]:
+        import csv
+        import io
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+        if not lines:
+            return []
+        out = []
+        for row in csv.DictReader(io.StringIO("\n".join(lines))):
+            keys = {k.lower(): k for k in row}
+            sc = row.get(keys.get("publicscore", ""), "")
+            try:
+                score = float(sc) if sc not in ("", None) else None
+            except ValueError:
+                score = None
+            out.append({"ref": row.get(keys.get("ref", ""), ""),
+                        "status": row.get(keys.get("status", ""), ""), "score": score})
+        return out
+
+
+collectors = [ImportSafetyCollector(), LocalGamesCollector(), KaggleScoreCollector()]
