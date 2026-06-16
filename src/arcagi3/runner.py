@@ -50,6 +50,9 @@ def run_game(game_id: str, games_dir: str, budget: int, seed: int = 0,
     if agent_name == "salience":
         from .salience_explorer import SalienceExplorer as _SE
         return run_reactive(env, game_id, budget, seed, policy_cls=_SE)
+    if agent_name == "online":
+        from .online_explorer import OnlineLearningExplorer as _OLE
+        return run_reactive(env, game_id, budget, seed, policy_cls=_OLE)
     if agent_name == "wm":
         # policy_cls=None -> make_policy() -> respects ARCAGI3_WORLDMODEL env var
         return run_reactive(env, game_id, budget, seed, policy_cls=None)
@@ -113,7 +116,8 @@ def main() -> None:
     ap.add_argument("--game", default=None, help="single game id (default: all)")
     ap.add_argument("--budget", type=int, default=4000)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--agent", default="reactive", choices=list(AGENTS) + ["reactive", "wm", "salience"])
+    ap.add_argument("--agent", default="reactive",
+                    choices=list(AGENTS) + ["reactive", "wm", "salience", "online"])
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 

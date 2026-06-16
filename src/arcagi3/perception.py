@@ -48,6 +48,15 @@ def detect_background(grid: np.ndarray) -> int:
     return int(vals[int(np.argmax(counts))])
 
 
+def encode_onehot(grid: np.ndarray, num_colors: int = 16) -> np.ndarray:
+    """(H,W) int color grid -> (num_colors,H,W) float32 one-hot (for the Phase A CNN)."""
+    g = np.clip(np.asarray(grid), 0, num_colors - 1).astype(np.int64)
+    oh = np.zeros((num_colors, g.shape[0], g.shape[1]), dtype=np.float32)
+    np.put_along_axis(oh.reshape(num_colors, -1),
+                      g.reshape(1, -1), 1.0, axis=0)
+    return oh
+
+
 @dataclass
 class Obj:
     """A connected region of a single color (4-connectivity)."""

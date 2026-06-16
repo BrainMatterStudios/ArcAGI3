@@ -33,10 +33,18 @@ TRUST = int(os.getenv("TRUST", "3"))
 BORDER = int(os.getenv("BORDER", "0"))
 
 
+CONF = float(os.getenv("CONF", "0.55"))
+
+
 def make_policy():
     if POLICY == "reactive":
         from arcagi3.policy import HybridPolicy
         return HybridPolicy()
+    if POLICY == "online":
+        from arcagi3.online_explorer import OnlineLearningExplorer
+        return OnlineLearningExplorer(trust_threshold=TRUST, border_mask=(BORDER or 2),
+                                      conf_threshold=CONF,
+                                      allow_cpu=bool(int(os.getenv("ALLOW_CPU", "1"))))
     from arcagi3.salience_explorer import SalienceExplorer
     return SalienceExplorer(trust_threshold=TRUST, border_mask=BORDER)
 
