@@ -45,6 +45,11 @@ def make_policy():
         return OnlineLearningExplorer(trust_threshold=TRUST, border_mask=(BORDER or 2),
                                       conf_threshold=CONF,
                                       allow_cpu=bool(int(os.getenv("ALLOW_CPU", "1"))))
+    if POLICY == "primary":
+        from arcagi3.primary_model_explorer import PrimaryModelExplorer
+        return PrimaryModelExplorer(trust_threshold=TRUST, border_mask=(BORDER or 2),
+                                    conf_threshold=CONF,
+                                    allow_cpu=bool(int(os.getenv("ALLOW_CPU", "1"))))
     from arcagi3.salience_explorer import SalienceExplorer
     return SalienceExplorer(trust_threshold=TRUST, border_mask=BORDER)
 
