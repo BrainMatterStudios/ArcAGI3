@@ -28,32 +28,33 @@ INSTALL = """\
 """
 
 PROBE = """\
-# Phase A.0 probe: record torch/GPU availability in the OFFLINE eval image (go/no-go for
-# online learning). Rides along with the v6 agent run (rerun-guarded, fully try/excepted),
-# so it never affects scoring or crashes the run; read the values from the rerun stdout.
-import os
-if os.getenv('KAGGLE_IS_COMPETITION_RERUN'):
-    print('=== ARCAGI3_EVAL_PROBE_BEGIN ===', flush=True)
-    try:
-        import numpy as _np; print('numpy', _np.__version__, flush=True)
-    except Exception as _e:
-        print('numpy import FAILED', repr(_e), flush=True)
-    try:
-        import torch as _t
-        print('torch', _t.__version__, flush=True)
-        print('cuda_available', _t.cuda.is_available(), flush=True)
-        print('device_count', _t.cuda.device_count(), flush=True)
-        for _i in range(_t.cuda.device_count()):
-            _p = _t.cuda.get_device_properties(_i)
-            print(f'gpu{_i}', _p.name, round(_p.total_memory/1e9, 2), 'GB', flush=True)
-    except Exception as _e:
-        print('torch import FAILED', repr(_e), flush=True)
-    try:
-        _w = '/kaggle/input/competitions/arc-prize-2026-arc-agi-3/arc_agi_3_wheels'
-        print('torch_wheels', [f for f in os.listdir(_w) if 'torch' in f.lower()], flush=True)
-    except Exception as _e:
-        print('wheels listdir FAILED', repr(_e), flush=True)
-    print('=== ARCAGI3_EVAL_PROBE_END ===', flush=True)
+# Phase A.0 probe: record torch/GPU availability on Kaggle (go/no-go for online learning).
+# Runs UNCONDITIONALLY (interactive run too) because code-competition RERUN logs are hidden
+# — the interactive kernel log IS readable via `kaggle kernels output`, and the interactive
+# GPU image is a strong proxy for the rerun image. Fully try/excepted; never crashes the run.
+import os as _os
+print('=== ARCAGI3_EVAL_PROBE_BEGIN ===', flush=True)
+print('is_rerun', bool(_os.getenv('KAGGLE_IS_COMPETITION_RERUN')), flush=True)
+try:
+    import numpy as _np; print('numpy', _np.__version__, flush=True)
+except Exception as _e:
+    print('numpy import FAILED', repr(_e), flush=True)
+try:
+    import torch as _t
+    print('torch', _t.__version__, flush=True)
+    print('cuda_available', _t.cuda.is_available(), flush=True)
+    print('device_count', _t.cuda.device_count(), flush=True)
+    for _i in range(_t.cuda.device_count()):
+        _p = _t.cuda.get_device_properties(_i)
+        print(f'gpu{_i}', _p.name, round(_p.total_memory/1e9, 2), 'GB', flush=True)
+except Exception as _e:
+    print('torch import FAILED', repr(_e), flush=True)
+try:
+    _w = '/kaggle/input/competitions/arc-prize-2026-arc-agi-3/arc_agi_3_wheels'
+    print('torch_wheels', [f for f in _os.listdir(_w) if 'torch' in f.lower()], flush=True)
+except Exception as _e:
+    print('wheels listdir FAILED', repr(_e), flush=True)
+print('=== ARCAGI3_EVAL_PROBE_END ===', flush=True)
 """
 
 WRITE_PKG = (
