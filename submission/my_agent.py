@@ -27,15 +27,24 @@ for _p in _CANDIDATES:
 
 _Policy = None
 _IMPORT_ERR = None
-try:
-    # Primary: SalienceExplorer (beats HybridPolicy on real games: 11 vs 9, no regression).
-    from arcagi3.salience_explorer import SalienceExplorer as _Policy
-except Exception:
-    try:  # fallback to the hybrid if the new module is unavailable
-        from arcagi3.policy import HybridPolicy as _Policy
-    except Exception as _e:  # noqa: BLE001
-        _IMPORT_ERR = "".join(traceback.format_exception(type(_e), _e, _e.__traceback__))
-        print(f"[my_agent] arcagi3 import FAILED -> random fallback.\n{_IMPORT_ERR}", flush=True)
+# Phase A is opt-in via ARCAGI3_ONLINE=1. The online policy is GPU-ONLY + fail-safe: on a
+# P100/no-usable-GPU eval image it disables the model and runs the pure SalienceExplorer (the
+# banked 0.33), so enabling it can never ship below the floor. Default OFF until A.4 proves it
+# beats 0.33 on real games. Banked v6 = SalienceExplorer (border=2, trust=3) = 0.33.
+if os.getenv("ARCAGI3_ONLINE") == "1":
+    try:
+        from arcagi3.online_explorer import OnlineLearningExplorer as _Policy
+    except Exception:
+        _Policy = None
+if _Policy is None:
+    try:
+        from arcagi3.salience_explorer import SalienceExplorer as _Policy
+    except Exception:
+        try:  # fallback to the hybrid if the new module is unavailable
+            from arcagi3.policy import HybridPolicy as _Policy
+        except Exception as _e:  # noqa: BLE001
+            _IMPORT_ERR = "".join(traceback.format_exception(type(_e), _e, _e.__traceback__))
+            print(f"[my_agent] arcagi3 import FAILED -> random fallback.\n{_IMPORT_ERR}", flush=True)
 _HybridPolicy = _Policy  # back-compat name used below
 
 try:
