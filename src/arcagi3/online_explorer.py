@@ -22,13 +22,15 @@ from .online_model import OnlineActionEffectModel
 
 class OnlineLearningExplorer:
     def __init__(self, seed: int = 0, trust_threshold: int = 3, border_mask: int = 2,
-                 conf_threshold: float = 0.55, breaker_limit: int = 12,
-                 allow_cpu: bool = False, **model_kw) -> None:
+                 conf_threshold: float = 0.8, breaker_limit: int = 12,
+                 novelty_limit: int = 15, allow_cpu: bool = False, **model_kw) -> None:
         self.base = SalienceExplorer(seed=seed, trust_threshold=trust_threshold,
                                      border_mask=border_mask)
         self.model = OnlineActionEffectModel(seed=seed, conf_threshold=conf_threshold,
                                              allow_cpu=allow_cpu, **model_kw)
         self.breaker_limit = breaker_limit
+        self.novelty_limit = novelty_limit
+        self._ov_stall = 0       # consecutive overrides that discovered no new state
         self._last_grid = None
         self._last_action = None       # action actually executed into the last frame
         self._last_key = None          # base key the last action was taken from
@@ -66,8 +68,10 @@ class OnlineLearningExplorer:
         key_prev = self.base.prev_key
         action_prev = self._last_action
         plan_empty_before = not self.base.plan
+        size_before = len(self.base.nodes)
 
         base_token = self.base.decide(grid, gstate_terminal, gstate_notplayed, levels, available)
+        new_state = len(self.base.nodes) > size_before  # did THIS frame add a graph node?
 
         # terminal/notplayed/reset: passthrough; drop cross-episode training link
         if gstate_terminal or gstate_notplayed or base_token[0] == "reset":
@@ -82,6 +86,7 @@ class OnlineLearningExplorer:
             self._level = levels
             self._level_disabled = False
             self._no_change_overrides = 0
+            self._ov_stall = 0
             try:
                 self.model.reset_level()
             except Exception:
@@ -98,6 +103,15 @@ class OnlineLearningExplorer:
                     self._level_disabled = True
             elif changed:
                 self._no_change_overrides = 0
+            # novelty-stall breaker: overrides that change the frame but discover NO new state
+            # (cycling in a tiny loop — the tu93 9->2 collapse) -> disable the model this level.
+            if self._last_was_override:
+                if new_state:
+                    self._ov_stall = 0
+                else:
+                    self._ov_stall += 1
+                    if self._ov_stall >= self.novelty_limit:
+                        self._level_disabled = True
             try:
                 self.model.observe(self._last_grid, action_prev, bool(changed))
             except Exception:
