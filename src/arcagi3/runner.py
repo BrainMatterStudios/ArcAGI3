@@ -50,12 +50,15 @@ def run_game(game_id: str, games_dir: str, budget: int, seed: int = 0,
     if agent_name == "salience":
         from .salience_explorer import SalienceExplorer as _SE
         return run_reactive(env, game_id, budget, seed, policy_cls=_SE)
+    _ac = os.getenv("ARCAGI3_ALLOW_CPU") == "1"  # local dev: let the learned model run on CPU
     if agent_name == "online":
         from .online_explorer import OnlineLearningExplorer as _OLE
-        return run_reactive(env, game_id, budget, seed, policy_cls=_OLE)
+        return run_reactive(env, game_id, budget, seed,
+                            policy_cls=lambda seed=0: _OLE(seed=seed, allow_cpu=_ac))
     if agent_name == "primary":
         from .primary_model_explorer import PrimaryModelExplorer as _PME
-        return run_reactive(env, game_id, budget, seed, policy_cls=_PME)
+        return run_reactive(env, game_id, budget, seed,
+                            policy_cls=lambda seed=0: _PME(seed=seed, allow_cpu=_ac))
     if agent_name == "wm":
         # policy_cls=None -> make_policy() -> respects ARCAGI3_WORLDMODEL env var
         return run_reactive(env, game_id, budget, seed, policy_cls=None)
