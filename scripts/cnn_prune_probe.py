@@ -55,11 +55,11 @@ def capture(prefix, budget):
 def labels_for_game(steps):
     """Return {key: 1 if on a shortest path to a reward, else 0} over all seen states."""
     edges, first_seen = A.build_edges(steps)
-    segs = A.segment_levels(steps, first_seen)
+    segs = A.segment_levels(steps, first_seen)          # dict {level: LevelSeg}
     pos = set()
-    for seg in segs:
+    for lvl, seg in segs.items():
         entries = A.level_entries(steps, seg)
-        path = A.best_path(edges, entries, seg.target_key, seg.member_keys)
+        path, entry = A.best_path(edges, entries, seg.target_key, seg.member_keys)
         if path: pos |= set(path)
     allkeys = set(first_seen)
     return {k: (1 if k in pos else 0) for k in allkeys}
