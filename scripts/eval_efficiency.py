@@ -33,6 +33,10 @@ HOLDOUT = ["su15", "sk48", "re86", "wa30", "m0r0", "ls20", "tn36", "tr87"]
 def make_policy(name: str):
     if name == "salience":
         return SalienceExplorer(seed=0, trust_threshold=3, border_mask=2)
+    if name in ("tour-yield", "tour-dfs"):
+        from arcagi3.tour_explorer import TourExplorer
+        mode = "yield" if name == "tour-yield" else "dfs"
+        return TourExplorer(seed=0, trust_threshold=3, border_mask=2, frontier_mode=mode)
     raise ValueError(name)
 
 
