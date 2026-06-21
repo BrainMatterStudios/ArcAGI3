@@ -35,6 +35,11 @@ class CAIPruneExplorer(SalienceExplorer):
         self.pruned_colors: set = set()
         self._cai_prev_grid = None
 
+    def _reward_colors(self):
+        # in the transfer+cai combo, never prune a color transfer has learned is rewarding
+        sigs = getattr(self, "reward_click_sig", None)
+        return {s[0] for s in sigs if s} if sigs else set()
+
     def _clicked_color(self, grid, x, y):
         for o in P.connected_components(grid, background=self.bg):
             if (y, x) in o.cells:
@@ -56,7 +61,8 @@ class CAIPruneExplorer(SalienceExplorer):
                     self.color_noop[col] = 0
                 else:
                     self.color_noop[col] += 1
-                    if (self.color_noop[col] >= self.noop_k and col not in self.color_active):
+                    if (self.color_noop[col] >= self.noop_k and col not in self.color_active
+                            and col not in self._reward_colors()):
                         self.pruned_colors.add(col)
         action = super().decide(grid, gstate_terminal, gstate_notplayed, levels, available)
         self._cai_prev_grid = grid
@@ -66,6 +72,9 @@ class CAIPruneExplorer(SalienceExplorer):
         cands = super()._candidates(grid, available)
         if not self.enable_cai or not self.pruned_colors:
             return cands
+        prune = self.pruned_colors - self._reward_colors()
+        if not prune:
+            return cands
         # drop click candidates whose cell color is a proven-no-op color
         cell_color = {}
         for o in P.connected_components(grid, background=self.bg):
@@ -73,7 +82,7 @@ class CAIPruneExplorer(SalienceExplorer):
                 cell_color[(rr, cc)] = int(o.color)
         out = []
         for (act, tier) in cands:
-            if act[0] == "C" and cell_color.get((act[2], act[1])) in self.pruned_colors:
+            if act[0] == "C" and cell_color.get((act[2], act[1])) in prune:
                 continue  # provably dead -> prune
             out.append((act, tier))
         return out
