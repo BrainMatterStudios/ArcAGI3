@@ -132,3 +132,49 @@ wrong cut). The only failure mode is an instrumented agent that diverges from th
   agent behavior; the cut is flag-gated).
 - **Optimistic walk-reduction.** "Better tour ordering" may only shave the long-walk tail
   modestly; the audit's walk-length distribution must justify the expected saving before building.
+
+## Results (2026-06-21) → KILL (pre-registered)
+
+Run: `scripts/retraversal_audit.py 40000` over the 16 tune+holdout games (~1032 s).
+Raw: `/tmp/retraversal_audit.json`, `/tmp/retraversal_audit.log`.
+
+### Anatomy is sharply game-dependent (not one uniform pattern)
+
+| pool | action-weighted mean | games ≥30% |
+|---|---|---|
+| `pct_walk` (frontier-walks) | 0.155 | **3 / 16** |
+| `pct_redundant_probe` (no-op/known-state probes) | 0.510 | **13 / 16** |
+
+- **Frontier-walks** concentrate in avatar games: tu93 0.62, ls20 0.46, sp80 0.41 (mean walk-len
+  tu93 7.4 / ls20 13.9). Only 3/16 ≥30%.
+- **Redundant probes** dominate click games: lp85 0.98, su15 0.88, sc25 0.77, vc33 0.77, m0r0 0.51,
+  wa30 0.48 — 13/16 ≥30%, and this is a *conservative under-estimate* (nodes also created by
+  `_observe`, so true redundancy is higher).
+
+### Verdict: KILL the general efficiency lever (pre-registered ≥30%-on-≥10/16 + structurally-safe cut)
+- **Redundant-probe pool** passes breadth (13/16) but has **no structurally-safe cut.** It is
+  dominated by tier-9 lattice **no-op clicks**; distinguishing a no-op from a productive click
+  *before* testing needs a transition model (killed: learned models regress) or a content heuristic
+  — which is the **already-killed lean/high-impact-click lever** (tied random in breadth; lean
+  targeting drops the off-object goal clicks the dense `coarse_grid_step` lattice was *added* to
+  catch — the tn36 no-free-lunch). Cutting it is not coverage-preserving.
+- **Walk pool** has a coverage-preserving (ordering) cut but **fails breadth** (3/16 ≥30%) — it
+  would help only a few avatar games.
+
+So the big pool is irreducible and the safely-cuttable pool is too narrow → **clean KILL** (the
+user-pre-committed branch). The measure-first gate did its job: it stopped us building the intuitive
+walk-reduction cut, which the data shows helps only ~3 games, and re-confirmed — from the efficiency
+angle — the documented no-free-lunch wall (the real cost is redundant click-probes that can't be
+safely pruned without re-treading killed levers).
+
+### Honest residual (low-EV, not pursued without direction)
+The one safe-but-narrow option is a **walk-reduction / better frontier-tour ordering on the avatar
+wall games** (tu93 62%, ls20 46%, sp80 41%; action-weighted walks = 15.5% of all actions). Halving
+walks ≈ 8% fewer total actions ≈ ~1.16× on affected levels — modest, narrow, and a non-additive
+ordering change (dev≠Kaggle risk, needs the holdout gate + a live submission). Below the
+pre-registered bar; recorded as a residual, not a recommendation.
+
+**Outcome:** a successful Increment 1 — the audit named no safely-cuttable general lever and avoided
+building the wrong cut. Banked 0.33 untouched (no agent behavior changed; suite 190 green). Tooling
+kept: `InstrumentedExplorer` + `scripts/retraversal_audit.py`. Path to >0.33 remains the June-30
+SOTA disclosure + hardening.
