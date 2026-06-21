@@ -96,7 +96,10 @@ def analyze_game(prefix, budget, highbudget):
         segs = A.segment_levels(steps, first_seen)
     disc_tier, parent_colors = discovery_meta(steps, colors)
 
-    per_level, game_X, game_y = {}, [], []
+    # Label schemes to compare (isolates "labeling bias" vs "real signal"):
+    SCHEMES = ["single", "slack0", "slack1", "slack2"]
+    per_level, game_X = {}, []
+    game_y = {s: [] for s in SCHEMES}
     for lvl, seg in sorted(segs.items()):
         # Phase 0a': allow reset-roots as entries (the first frame can be a disconnected
         # intro state) and take the shortest path from any entry.
@@ -106,8 +109,12 @@ def analyze_game(prefix, budget, highbudget):
         per_level[lvl] = cl
         if path is None:
             continue
-        # Fairer label: union of near-optimal paths (slack=2), not the single shortest path.
-        on = A.near_optimal_states(edges, entry, seg.target_key, seg.member_keys, slack=2)
+        on = {
+            "single": set(path),
+            "slack0": A.near_optimal_states(edges, entry, seg.target_key, seg.member_keys, 0),
+            "slack1": A.near_optimal_states(edges, entry, seg.target_key, seg.member_keys, 1),
+            "slack2": A.near_optimal_states(edges, entry, seg.target_key, seg.member_keys, 2),
+        }
         for k in seg.member_keys:
             if k not in grids:
                 continue
@@ -115,18 +122,20 @@ def analyze_game(prefix, budget, highbudget):
                                  discovery_tier=disc_tier.get(k, 0),
                                  parent_colors=parent_colors.get(k))
             game_X.append(A.feature_vector(f))
-            game_y.append(1 if k in on else 0)
-    return {"gid": gid, "best_level": best, "per_level": per_level,
-            "X": np.array(game_X) if game_X else None,
-            "y": np.array(game_y) if game_y else None}
+            for s in SCHEMES:
+                game_y[s].append(1 if k in on[s] else 0)
+    X = np.array(game_X) if game_X else None
+    Y = {s: np.array(v) for s, v in game_y.items()} if game_X else None
+    return {"gid": gid, "best_level": best, "per_level": per_level, "X": X, "Y": Y}
 
 
 def main():
     budget = int(sys.argv[1]) if len(sys.argv) > 1 else 40000
     highbudget = int(sys.argv[2]) if len(sys.argv) > 2 else 150000
     games = sys.argv[3:] if len(sys.argv) > 3 else ["tu93", "vc33", "m0r0", "ls20", "lp85", "cd82"]
+    SCHEMES = ["single", "slack0", "slack1", "slack2"]
     t0 = time.time()
-    results, per_game = {}, {}
+    results, per_scheme = {}, {s: {} for s in SCHEMES}
     for g in games:
         try:
             r = analyze_game(g, budget, highbudget)
@@ -138,29 +147,35 @@ def main():
             print(f"  [{g} L{lvl}] ceiling_states={cl['ceiling_states']} "
                   f"ceiling_actions={cl['ceiling_actions']} disc={cl['discovered_states']} "
                   f"acts={cl['actual_actions']} reachable={cl['reachable']}", flush=True)
-        if r["X"] is not None and r["y"] is not None and r["y"].sum() > 0:
-            per_game[g] = (r["X"], r["y"])
-    enough = len(per_game) >= 2
-    auc = A.logo_auc(per_game) if enough else float("nan")
-    sh = A.shuffle_auc(per_game) if enough else float("nan")
-    auc_mlp = A.logo_auc_mlp(per_game) if enough else float("nan")
-    per_lin = A.logo_auc_per_game(per_game) if enough else {}
-    per_pos = {g: int(y.sum()) for g, (_X, y) in per_game.items()}
-    print(f"\n== Tier-2 leave-one-game-out: logistic AUC={auc:.3f}  MLP AUC={auc_mlp:.3f}  "
-          f"shuffle={sh:.3f}  (games={list(per_game)})", flush=True)
-    print(f"== per-held-game logistic AUC: "
-          + ", ".join(f"{g}={v:.3f}(+{per_pos[g]})" for g, v in per_lin.items()), flush=True)
-    best_auc = max([a for a in (auc, auc_mlp) if a == a], default=float("nan"))
-    verdict = ("BUILD" if (best_auc >= 0.65 and best_auc >= sh + 0.10)
-               else "KILL/AMBER")
-    print(f"== VERDICT: best AUC={best_auc:.3f} vs bar 0.65 & shuffle+0.10={sh+0.10:.3f} "
-          f"=> {verdict}", flush=True)
+        if r["X"] is not None:
+            for s in SCHEMES:
+                y = r["Y"][s]
+                if y.sum() > 0 and (y == 0).sum() > 0:
+                    per_scheme[s][g] = (r["X"], y)
+
+    # For each labeling scheme: pooled leave-one-game-out AUC (logistic + MLP) vs shuffle.
+    print("\n== Tier-2 by labeling scheme (logistic / MLP / shuffle, leave-one-game-out):", flush=True)
+    summary = {}
+    for s in SCHEMES:
+        pg = per_scheme[s]
+        if len(pg) < 2:
+            print(f"   {s}: <2 usable games", flush=True)
+            continue
+        lin = A.logo_auc(pg)
+        mlp = A.logo_auc_mlp(pg)
+        sh = A.shuffle_auc(pg)
+        best = max(lin, mlp)
+        verdict = "BUILD" if (best >= 0.65 and best >= sh + 0.10) else ("AMBER" if best >= sh + 0.10 else "KILL")
+        pos = {g: int(y.sum()) for g, (_X, y) in pg.items()}
+        summary[s] = {"logistic": lin, "mlp": mlp, "shuffle": sh, "verdict": verdict, "pos": pos}
+        print(f"   {s:7s} logistic={lin:.3f} mlp={mlp:.3f} shuffle={sh:.3f} "
+              f"best={best:.3f} bar=0.65 => {verdict}  (games={list(pg)})", flush=True)
+        per_lin = A.logo_auc_per_game(pg)
+        print(f"           per-game: " + ", ".join(f"{g}={v:.3f}(+{pos[g]})" for g, v in per_lin.items()), flush=True)
     print(f"elapsed {time.time()-t0:.0f}s", flush=True)
     out = "/tmp/prune_oracle.json"
     with open(out, "w") as f:
-        json.dump({"auc": auc, "auc_mlp": auc_mlp, "shuffle": sh,
-                   "per_game_auc": per_lin, "per_game_pos": per_pos,
-                   "results": results}, f, indent=2, default=str)
+        json.dump({"summary": summary, "results": results}, f, indent=2, default=str)
     print(f"saved {out}", flush=True)
 
 

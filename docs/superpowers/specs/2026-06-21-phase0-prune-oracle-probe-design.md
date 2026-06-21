@@ -232,3 +232,55 @@ few more hours on a **Tier-2 refinement** — near-optimal-path labeling + a ric
 tiny learned feature extractor) + per-game AUC breakdown + fixing the reachability artifact so ls20
 contributes — then re-apply the same pre-registered bar. This is the cheapest way to turn an
 0.007-miss amber into a trustworthy build-or-kill. User decision required before proceeding.
+
+## Refined Results — Phase 0a' (2026-06-21) → robust KILL
+
+User chose "refine the probe, re-judge". Three refinements (commit on branch `phase0-prune-oracle`):
+1. **Reachability fix.** Diagnosed the `reachable=False` cause empirically on lp85 (19 states): the
+   level's first frame is a transient intro/NOT_PLAYED state the agent leaves and never returns to,
+   so it is disconnected from the productive subgraph (entered via a reset). **(My earlier
+   trust-filter hypothesis was WRONG — `build_edges` uses the actual trajectory, not the trusted
+   graph.)** Fix: `level_entries` allows post-reset roots as path entries; `best_path` takes the
+   shortest path from any entry. Result: **every level is now reachable, including ls20** (the hard
+   wall) — Tier-1 ceilings stay uniformly 0.96–0.999 across all 6 games.
+2. **Fairer labels.** Replaced single-shortest-path positives with near-optimal-path unions
+   (`near_optimal_states`, slack 0/1/2) — all swept.
+3. **Nonlinear classifier + per-game AUC.** Added a numpy MLP (`logo_auc_mlp`) and per-held-game AUC.
+
+**Decisive labeling sweep (all 6 games: tu93, vc33, m0r0, ls20, lp85, cd82):**
+
+| labels | logistic | MLP | shuffle | best | verdict |
+|---|---|---|---|---|---|
+| single-path | 0.449 | 0.433 | 0.350 | 0.449 | KILL |
+| slack-0 | 0.415 | 0.515 | 0.436 | 0.515 | KILL |
+| slack-1 | 0.402 | 0.502 | 0.440 | 0.502 | KILL |
+| slack-2 | 0.394 | 0.538 | 0.411 | 0.538 | AMBER (barely) |
+
+Per-game AUCs span 0.37–0.60 (chance) under every scheme; none clear 0.65.
+
+**The earlier 0.643 was a GAME-SUBSET artifact, not a real signal.** Single-path labeling — identical
+to the v1 run — gives **0.449 on all 6 games** vs **0.643 on the v1 4-game subset**. Adding the
+previously-excluded games (via the reachability fix, especially the 3147-state ls20 wall) collapsed
+it to chance. The conclusion is robust to labeling scheme (single → slack-2) and classifier (linear →
+nonlinear MLP): **best AUC 0.449–0.538, far below the pre-registered 0.65.**
+
+### Verdict: KILL (robust)
+On-path (productive) vs off-path (wasted) states are **observationally indistinguishable at decision
+time** — across both mechanic families, all 6 games, all labelings, and both linear and nonlinear
+classifiers. This is the pre-registered "high Tier-1 ceiling + AUC at control → KILL the learned-prior
+bet" branch, and it gives **direct quantitative evidence** for the standing memory finding ("the gap
+is goal-ACHIEVEMENT, not goal-IDENTIFICATION; reordering without a signal doesn't cut coverage"): even
+with perfect hindsight of which states were productive, those states carry no decision-time-observable
+feature that separates them from wasted states → a learned prior, which sees only decision-time
+features, cannot prune.
+
+**Residual caveat (honest):** this kills the prior over the tested feature set (object/grid summaries +
+salience tier). A CNN over the raw 64×64 grid could in principle extract features not hand-coded here.
+But the nonlinear MLP also failed, the features already include the structure a CNN would key on, and
+the per-game AUCs are uniformly at-chance (not "weak signal partly captured") — so this is strong
+evidence against the bet, not a proof that no feature set could work. Pursuing a raw-pixel CNN is the
+one residual path, but low-EV given this evidence.
+
+**Outcome:** a successful Phase 0a — the kill-gate saved building a procedural generator + offline
+training pipeline for a prior that provably cannot prune on this set. Banked 0.33 untouched (no agent
+code changed; full suite green). Path to >0.33 remains the June-30 SOTA disclosure + hardening.
