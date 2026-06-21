@@ -49,3 +49,17 @@ def test_shortest_path_unreachable_returns_none():
     assert A.shortest_path(edges, b"a", b"x", {b"a", b"b"}) is None
     c = A.ceilings(A.LevelSeg(0, b"a", b"x", {b"a", b"b"}, 0, 3), None)
     assert c["reachable"] is False and c["ceiling_actions"] is None
+
+def test_state_features():
+    grid = np.zeros((64, 64), dtype=np.int8)
+    grid[0:2, 0:2] = 3          # one 4-cell object, color 3
+    grid[10, 10] = 5            # one 1-cell object, color 5
+    f = A.state_features(grid, background=0, discovery_tier=7, parent_colors={3})
+    assert f["n_objects"] == 2.0
+    assert f["n_small"] == 2.0           # both objects size <= 4
+    assert f["max_obj_size"] == 4.0
+    assert f["n_distinct_colors"] == 2.0  # {3,5}
+    assert f["discovery_tier"] == 7.0
+    assert f["n_new_colors"] == 1.0       # 5 is new vs parent {3}
+    assert list(A.FEATURE_ORDER)  # non-empty, stable order
+    assert len(A.feature_vector(f)) == len(A.FEATURE_ORDER)

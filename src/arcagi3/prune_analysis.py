@@ -114,3 +114,29 @@ def ceilings(seg, path):
             "actual_actions": seg.actual_actions, "path_actions": pa,
             "ceiling_actions": round(1 - pa / max(seg.actual_actions, 1), 3),
             "reachable": True}
+
+
+FEATURE_ORDER = ["n_objects", "n_small", "median_obj_size", "max_obj_size",
+                 "n_distinct_colors", "board_fill", "discovery_tier", "n_new_colors"]
+
+
+def state_features(grid, background, discovery_tier, parent_colors):
+    """Features computable ONLY from what is observable at the state's discovery time."""
+    objs = P.connected_components(grid, background=background)
+    sizes = np.array([o.size for o in objs]) if objs else np.array([0])
+    colors = {int(c) for c in np.unique(grid)} - {int(background)}
+    n_new = len(colors - set(parent_colors)) if parent_colors is not None else 0
+    return {
+        "n_objects": float(len(objs)),
+        "n_small": float(sum(1 for o in objs if o.size <= 4)),
+        "median_obj_size": float(np.median(sizes)),
+        "max_obj_size": float(sizes.max()),
+        "n_distinct_colors": float(len(colors)),
+        "board_fill": float((grid != background).mean()),
+        "discovery_tier": float(discovery_tier),
+        "n_new_colors": float(n_new),
+    }
+
+
+def feature_vector(f):
+    return np.array([f[k] for k in FEATURE_ORDER], dtype=float)
