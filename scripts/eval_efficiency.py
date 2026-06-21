@@ -44,6 +44,12 @@ def make_policy(name: str):
         from arcagi3.transfer_explorer import TransferExplorer
         return TransferExplorer(seed=0, trust_threshold=3, border_mask=2,
                                 coarse_grid_step=4, max_click_targets=256)
+    if name == "transfer-promote":  # ablation: promote matches but DON'T demote the rest
+        from arcagi3.transfer_explorer import TransferExplorer
+        return TransferExplorer(seed=0, trust_threshold=3, border_mask=2, transfer_demote=0)
+    if name == "transfer-shape":  # ablation: signature = color + size-bucket
+        from arcagi3.transfer_explorer import TransferExplorer
+        return TransferExplorer(seed=0, trust_threshold=3, border_mask=2, sig_mode="colorshape")
     if name == "salience-dense":  # v6 with the same dense lattice (fair baseline)
         return SalienceExplorer(seed=0, trust_threshold=3, border_mask=2,
                                 coarse_grid_step=4, max_click_targets=256)
