@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARC-AGI-3 Campaign — Status & Strategic Fork</title>
+<style>
+  :root{--bg:#0f1115;--card:#171a21;--ink:#e6e9ef;--mut:#9aa4b2;--line:#262b36;
+        --good:#3fb950;--bad:#f85149;--warn:#d29922;--accent:#58a6ff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:40px 22px 80px}
+  h1{font-size:26px;margin:0 0 4px} h2{font-size:18px;margin:34px 0 12px;color:var(--accent)}
+  .sub{color:var(--mut);margin:0 0 8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .k{background:rgba(248,81,73,.15);color:var(--bad)} .w{background:rgba(210,153,34,.15);color:var(--warn)}
+  .g{background:rgba(63,185,80,.15);color:var(--good)}
+  .big{font-size:34px;font-weight:700} .mut{color:var(--mut)}
+  code{background:#0c0e12;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:13px}
+  .row{display:flex;gap:14px;flex-wrap:wrap} .row>.card{flex:1;min-width:220px;margin:0}
+  ul{margin:8px 0 0;padding-left:20px} li{margin:4px 0}
+  .fork{border-left:3px solid var(--accent)}
+</style>
+</head>
+<body><div class="wrap">
+
+<h1>ARC-AGI-3 — Campaign Status &amp; Strategic Fork</h1>
+<p class="sub">Session 2026-06-21 · branch <code>phase0-prune-oracle</code> · goal: win the Kaggle competition</p>
+
+<div class="row">
+  <div class="card"><div class="mut">Banked public score</div><div class="big">0.33</div><div class="mut">beats 0.25 baseline · v13 live</div></div>
+  <div class="card"><div class="mut">Leader (public)</div><div class="big">~1.2</div><div class="mut">method undisclosed</div></div>
+  <div class="card"><div class="mut">New experiments this session</div><div class="big">7</div><div class="mut">all measured, none repeated</div></div>
+</div>
+
+<h2>The scoring correction (the premise)</h2>
+<div class="card">
+Prior sessions optimized against a wrong model. The official formula:
+<ul>
+<li><b>Per level:</b> <code>min(1.15, (human_actions / agent_actions)²)</code>; uncompleted = 0.</li>
+<li><b>Per game:</b> weighted average of per-level scores, weight = the 1-indexed level number → <b>deep levels dominate</b>.</li>
+<li><b>Total:</b> average over the <b>hidden</b> games only.</li>
+</ul>
+Implication: the lever is <b>reaching deep levels efficiently on unseen games</b> — not adding dev levels (confirmed: v11/v12 added levels → still 0.33).
+</div>
+
+<h2>What was tried this session</h2>
+<div class="card"><table>
+<tr><th>Experiment</th><th>Idea</th><th>Result</th></tr>
+<tr><td><b>TransferExplorer</b></td><td>Reuse the reward signature from a solved level on later levels of the same game</td><td><span class="pill w">ships</span> strict superset of v6, +41% dev eff — but <b>Kaggle 0.33</b> (public games never reach its trigger)</td></tr>
+<tr><td>PriorExplorer</td><td>Hand-coded core-knowledge palette priors</td><td><span class="pill k">kill</span> regresses HOLDOUT</td></tr>
+<tr><td>RelationalExplorer</td><td>Abstract state key (quantize all objects)</td><td><span class="pill k">kill</span> cracks walls but craters efficiency</td></tr>
+<tr><td><b>Mechanic inference</b></td><td>Infer avatar/movement/interactions from a fixed ontology</td><td><span class="pill g">finding</span> wall-game avatars ARE cleanly inferable; true mechanic = <b>slide-to-wall</b> (not fixed-delta)</td></tr>
+<tr><td>Slide-aware planner</td><td>Inference-gated spatial nav over avatar-cell state</td><td><span class="pill k">kill</span> real isolated ls20 2.3× — but doesn't compose</td></tr>
+<tr><td>Salient-state key</td><td>Rare objects exact, common objects merged</td><td><span class="pill k">kill</span> inert → relevant state is <b>irreducibly large</b></td></tr>
+</table></div>
+
+<h2>Why every lever hits the same wall</h2>
+<div class="card">
+<ul>
+<li><b>The public score is gated by ~3 fixed "wall-regime" games</b> where our agent walls at L0/L1. Improvements elsewhere can't move it.</li>
+<li><b>Reaching their deep levels needs genuine mechanic understanding</b>, and offline that is unobtainable: reward is too sparse to learn (&lt;5 signals/game), the dense signals (frame-change, progress counters) are provably <i>not</i> goal-steerable, and the relevant state space is <b>irreducibly large</b> (no lossless abstraction helps — proven today).</li>
+<li><b>The leaders' ~1.2 means beating human action-efficiency</b> → near-optimal play → real understanding. No offline trick found or invented this session reaches it.</li>
+</ul>
+</div>
+
+<h2>The strategic fork — your call</h2>
+<div class="card fork">
+<ol>
+<li><b>From-scratch research breakthrough</b> in offline understanding (program/rule induction without a hosted LLM). Weeks-to-months; genuinely uncertain; this is what "win without copying" actually requires.</li>
+<li><b>Accept 0.33</b> as the banked result — real, baseline-beating, defensible.</li>
+<li><b>Point me at a specific crazy idea</b> you have. If there's an angle untried, I'll build &amp; measure it immediately.</li>
+</ol>
+</div>
+
+<p class="mut">State: v13 live (0.33) · 0.33 floor firewalled · 210+ tests green · 11 commits (not pushed) · submission default = TransferExplorer. Reusable tooling kept: mechanic_inference, slide_nav, salient_state, eval_efficiency (TUNE/HOLDOUT actions-to-level harness).</p>
+
+</div></body></html>
