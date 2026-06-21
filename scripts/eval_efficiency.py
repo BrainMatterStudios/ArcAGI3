@@ -37,6 +37,15 @@ def make_policy(name: str):
         from arcagi3.tour_explorer import TourExplorer
         mode = "yield" if name == "tour-yield" else "dfs"
         return TourExplorer(seed=0, trust_threshold=3, border_mask=2, frontier_mode=mode)
+    if name == "transfer":
+        from arcagi3.transfer_explorer import TransferExplorer
+        return TransferExplorer(seed=0, trust_threshold=3, border_mask=2)
+    if name == "prior":
+        from arcagi3.prior_explorer import PriorExplorer
+        return PriorExplorer(seed=0, trust_threshold=3, border_mask=2)
+    if name == "relational":
+        from arcagi3.relational_explorer import RelationalExplorer
+        return RelationalExplorer(seed=0, trust_threshold=3, border_mask=2)
     raise ValueError(name)
 
 
