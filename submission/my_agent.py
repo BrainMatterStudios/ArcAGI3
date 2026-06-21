@@ -37,16 +37,15 @@ if os.getenv("ARCAGI3_ONLINE") == "1":
     except Exception:
         _Policy = None
 if _Policy is None:
-    # EXPERIMENT (low-risk: Kaggle ranks by best submission, so this cannot displace the banked
-    # v13=0.33): StallRelationalExplorer (level-trigger) = SalienceExplorer + switch to a
-    # translation-tolerant relational state-key once stuck (no level-up for 1500 actions), which
-    # reaches wall-game levels far faster (sk48 2897 vs 25139 = 8.7x). Tests whether wall-game
-    # efficiency moves the scored games. Falls back to TransferExplorer (v13), then Salience,
-    # then HybridPolicy, then inline random.
-    import functools
+    # TransferCAIExplorer = SalienceExplorer + two validated, orthogonal efficiency levers:
+    #   - within-game reward-color TRANSFER (promote the rewarding action-class on later levels)
+    #   - CAI no-op PRUNING (stop clicking colors proven no-op within a level; reset per level-up)
+    # Validated on dev @30k (dense): TUNE 3.0/9.66 (+47% efficiency, lp85 L1->L5, vc33 L3->L4),
+    # HOLDOUT byte-identical (0.88/2.35, zero regression). Both are NON-reranking (pruning +
+    # within-tier promotion), so they preserve coverage. Falls back to TransferExplorer (v13=0.33),
+    # then Salience, then HybridPolicy, then inline random.
     try:
-        from arcagi3.stall_relational_explorer import StallRelationalExplorer as _SR
-        _Policy = functools.partial(_SR, stall_mode="level", stall_trigger=1500)
+        from arcagi3.transfer_cai_explorer import TransferCAIExplorer as _Policy
     except Exception:
         _Policy = None
     if _Policy is None:
