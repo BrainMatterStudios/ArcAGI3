@@ -13,6 +13,7 @@ from arcagi3.salience_explorer import SalienceExplorer
 from arcagi3.transfer_explorer import TransferExplorer
 from arcagi3.prior_explorer import PriorExplorer
 from arcagi3.relational_explorer import RelationalExplorer
+from arcagi3.transfer_relational_explorer import TransferRelationalExplorer
 
 GAMES_DIR = "src/arcagi3/games"
 CFG = dict(seed=0, trust_threshold=3, border_mask=2)
@@ -62,6 +63,20 @@ def test_relational_off_byte_identical():
     base = _base("push")
     off, _ = _drive(RelationalExplorer(enable_relational=False, **CFG), "push", 400)
     assert off == base and len(base) > 50
+
+
+def test_combo_off_byte_identical():
+    base = _base("push")
+    off, _ = _drive(
+        TransferRelationalExplorer(enable_transfer=False, enable_relational=False, **CFG),
+        "push", 400)
+    assert off == base and len(base) > 50
+
+
+def test_combo_on_completes_local_games():
+    _, lv = _drive(TransferRelationalExplorer(enable_transfer=True, enable_relational=True,
+                                              **CFG), "btnc", 4000)
+    assert lv >= 1
 
 
 def test_transfer_on_runs_and_learns_on_click_game():

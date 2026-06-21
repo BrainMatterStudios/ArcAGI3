@@ -46,6 +46,12 @@ def make_policy(name: str):
     if name == "relational":
         from arcagi3.relational_explorer import RelationalExplorer
         return RelationalExplorer(seed=0, trust_threshold=3, border_mask=2)
+    if name in ("relational8",):
+        from arcagi3.relational_explorer import RelationalExplorer
+        return RelationalExplorer(seed=0, trust_threshold=3, border_mask=2, rel_quant=8)
+    if name in ("combo", "transfer-rel"):
+        from arcagi3.transfer_relational_explorer import TransferRelationalExplorer
+        return TransferRelationalExplorer(seed=0, trust_threshold=3, border_mask=2)
     raise ValueError(name)
 
 
