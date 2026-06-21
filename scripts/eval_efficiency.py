@@ -78,6 +78,13 @@ def make_policy(name: str):
     if name == "rtransfer":
         from arcagi3.relational_transfer_explorer import RelationalTransferExplorer
         return RelationalTransferExplorer(seed=0, trust_threshold=3, border_mask=2)
+    if name == "cai":
+        from arcagi3.cai_prune_explorer import CAIPruneExplorer
+        return CAIPruneExplorer(seed=0, trust_threshold=3, border_mask=2)
+    if name == "cai-dense":
+        from arcagi3.cai_prune_explorer import CAIPruneExplorer
+        return CAIPruneExplorer(seed=0, trust_threshold=3, border_mask=2,
+                                coarse_grid_step=4, max_click_targets=256)
     if name == "value":
         from arcagi3.value_ranker_explorer import ValueRankerExplorer
         return ValueRankerExplorer(seed=0, trust_threshold=3, border_mask=2)
