@@ -140,3 +140,74 @@ def state_features(grid, background, discovery_tier, parent_colors):
 
 def feature_vector(f):
     return np.array([f[k] for k in FEATURE_ORDER], dtype=float)
+
+
+def roc_auc(scores, labels):
+    """AUC via the rank (Mann-Whitney U) statistic, with average ranks for ties."""
+    scores = np.asarray(scores, dtype=float)
+    labels = np.asarray(labels)
+    pos, neg = labels == 1, labels == 0
+    npos, nneg = int(pos.sum()), int(neg.sum())
+    if npos == 0 or nneg == 0:
+        return float("nan")
+    order = scores.argsort(kind="mergesort")
+    ranks = np.empty(len(scores), dtype=float)
+    sorted_scores = scores[order]
+    i = 0
+    while i < len(scores):
+        j = i
+        while j + 1 < len(scores) and sorted_scores[j + 1] == sorted_scores[i]:
+            j += 1
+        avg = (i + j) / 2.0 + 1.0          # 1-based average rank for the tie block
+        ranks[order[i:j + 1]] = avg
+        i = j + 1
+    return float((ranks[pos].sum() - npos * (npos + 1) / 2.0) / (npos * nneg))
+
+
+def logistic_fit(X, y, iters=800, lr=0.2):
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y, dtype=float)
+    mu, sd = X.mean(0), X.std(0)
+    sd = np.where(sd == 0, 1.0, sd)
+    Xs = np.hstack([(X - mu) / sd, np.ones((len(X), 1))])
+    w = np.zeros(Xs.shape[1])
+    for _ in range(iters):
+        p = 1.0 / (1.0 + np.exp(-Xs @ w))
+        w -= lr * Xs.T @ (p - y) / len(y)
+    return w, mu, sd
+
+
+def logistic_score(X, w, mu, sd):
+    Xs = np.hstack([(np.asarray(X, dtype=float) - mu) / sd, np.ones((len(X), 1))])
+    return 1.0 / (1.0 + np.exp(-Xs @ w))
+
+
+def logo_auc(per_game):
+    """Leave-one-GAME-out: fit on all-but-one game, score held-out, pool, AUC.
+
+    per_game: dict[game] -> (X [n,F] float array, y [n] {0,1} array). Measures TRANSFER
+    (does the on-path signal generalize to an unseen game), not per-game memorization.
+    """
+    games = list(per_game)
+    pooled_s, pooled_y = [], []
+    for held in games:
+        tr = [g for g in games if g != held]
+        if not tr:
+            continue
+        Xtr = np.vstack([per_game[g][0] for g in tr])
+        ytr = np.concatenate([per_game[g][1] for g in tr])
+        if ytr.sum() == 0 or (ytr == 0).sum() == 0:
+            continue
+        w, mu, sd = logistic_fit(Xtr, ytr)
+        pooled_s.append(logistic_score(per_game[held][0], w, mu, sd))
+        pooled_y.append(per_game[held][1])
+    if not pooled_s:
+        return float("nan")
+    return roc_auc(np.concatenate(pooled_s), np.concatenate(pooled_y))
+
+
+def shuffle_auc(per_game, seed=0):
+    """Label-permutation control: same features, labels shuffled WITHIN each game."""
+    rng = np.random.default_rng(seed)
+    shuffled = {g: (X, rng.permutation(y)) for g, (X, y) in per_game.items()}
+    return logo_auc(shuffled)

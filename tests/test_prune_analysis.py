@@ -63,3 +63,24 @@ def test_state_features():
     assert f["n_new_colors"] == 1.0       # 5 is new vs parent {3}
     assert list(A.FEATURE_ORDER)  # non-empty, stable order
     assert len(A.feature_vector(f)) == len(A.FEATURE_ORDER)
+
+def test_roc_auc_basic():
+    assert A.roc_auc([0.1, 0.9], [0, 1]) == 1.0
+    assert A.roc_auc([0.9, 0.1], [0, 1]) == 0.0
+    assert A.roc_auc([0.5, 0.5], [0, 1]) == 0.5      # ties -> 0.5
+
+
+def test_logo_auc_separable_vs_shuffle():
+    rng = np.random.default_rng(0)
+    per_game = {}
+    for g in ("g1", "g2", "g3"):
+        # feature 0 separates: on-path high, off-path low; other features noise.
+        Xpos = np.column_stack([rng.normal(3, 0.3, 40), rng.normal(0, 1, 40)])
+        Xneg = np.column_stack([rng.normal(0, 0.3, 60), rng.normal(0, 1, 60)])
+        X = np.vstack([Xpos, Xneg])
+        y = np.array([1] * 40 + [0] * 60)
+        per_game[g] = (X, y)
+    auc = A.logo_auc(per_game)
+    sh = A.shuffle_auc(per_game, seed=0)
+    assert auc >= 0.9                 # held-out separability is real
+    assert abs(sh - 0.5) < 0.15       # shuffle control collapses to chance
