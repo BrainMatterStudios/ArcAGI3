@@ -98,12 +98,16 @@ def analyze_game(prefix, budget, highbudget):
 
     per_level, game_X, game_y = {}, [], []
     for lvl, seg in sorted(segs.items()):
-        path = A.shortest_path(edges, seg.start_key, seg.target_key, seg.member_keys)
+        # Phase 0a': allow reset-roots as entries (the first frame can be a disconnected
+        # intro state) and take the shortest path from any entry.
+        entries = A.level_entries(steps, seg)
+        path, entry = A.best_path(edges, entries, seg.target_key, seg.member_keys)
         cl = A.ceilings(seg, path)
         per_level[lvl] = cl
         if path is None:
             continue
-        on = set(path)
+        # Fairer label: union of near-optimal paths (slack=2), not the single shortest path.
+        on = A.near_optimal_states(edges, entry, seg.target_key, seg.member_keys, slack=2)
         for k in seg.member_keys:
             if k not in grids:
                 continue
@@ -136,16 +140,27 @@ def main():
                   f"acts={cl['actual_actions']} reachable={cl['reachable']}", flush=True)
         if r["X"] is not None and r["y"] is not None and r["y"].sum() > 0:
             per_game[g] = (r["X"], r["y"])
-    auc = A.logo_auc(per_game) if len(per_game) >= 2 else float("nan")
-    sh = A.shuffle_auc(per_game) if len(per_game) >= 2 else float("nan")
-    print(f"\n== Tier-2 leave-one-game-out AUC={auc:.3f}  shuffle={sh:.3f}  "
-          f"(games={list(per_game)})", flush=True)
-    print("== VERDICT thresholds: ceiling_actions>=0.5 AND AUC>=0.65 AND AUC>=shuffle+0.10 "
-          "=> BUILD; high ceiling + AUC~shuffle => KILL", flush=True)
+    enough = len(per_game) >= 2
+    auc = A.logo_auc(per_game) if enough else float("nan")
+    sh = A.shuffle_auc(per_game) if enough else float("nan")
+    auc_mlp = A.logo_auc_mlp(per_game) if enough else float("nan")
+    per_lin = A.logo_auc_per_game(per_game) if enough else {}
+    per_pos = {g: int(y.sum()) for g, (_X, y) in per_game.items()}
+    print(f"\n== Tier-2 leave-one-game-out: logistic AUC={auc:.3f}  MLP AUC={auc_mlp:.3f}  "
+          f"shuffle={sh:.3f}  (games={list(per_game)})", flush=True)
+    print(f"== per-held-game logistic AUC: "
+          + ", ".join(f"{g}={v:.3f}(+{per_pos[g]})" for g, v in per_lin.items()), flush=True)
+    best_auc = max([a for a in (auc, auc_mlp) if a == a], default=float("nan"))
+    verdict = ("BUILD" if (best_auc >= 0.65 and best_auc >= sh + 0.10)
+               else "KILL/AMBER")
+    print(f"== VERDICT: best AUC={best_auc:.3f} vs bar 0.65 & shuffle+0.10={sh+0.10:.3f} "
+          f"=> {verdict}", flush=True)
     print(f"elapsed {time.time()-t0:.0f}s", flush=True)
     out = "/tmp/prune_oracle.json"
     with open(out, "w") as f:
-        json.dump({"auc": auc, "shuffle": sh, "results": results}, f, indent=2, default=str)
+        json.dump({"auc": auc, "auc_mlp": auc_mlp, "shuffle": sh,
+                   "per_game_auc": per_lin, "per_game_pos": per_pos,
+                   "results": results}, f, indent=2, default=str)
     print(f"saved {out}", flush=True)
 
 

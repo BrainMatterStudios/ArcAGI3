@@ -84,3 +84,58 @@ def test_logo_auc_separable_vs_shuffle():
     sh = A.shuffle_auc(per_game, seed=0)
     assert auc >= 0.9                 # held-out separability is real
     assert abs(sh - 0.5) < 0.15       # shuffle control collapses to chance
+
+
+def _reset_steps():
+    # Intro frame I is disconnected: I->A, then RESET to root R, then R->B->T (level-up).
+    # The shortest productive path must start from the reset-root R, not the first frame I.
+    return [
+        A.Step(0, 0, b"I", ("S", 1), 0.0, 0),
+        A.Step(1, 0, b"A", ("reset",), 0.0, 0),
+        A.Step(2, 0, b"R", ("S", 1), 0.0, 0),
+        A.Step(3, 0, b"B", ("S", 2), 0.0, 0),
+        A.Step(4, 0, b"T", ("S", 3), 1.0, 0),   # reward -> level up
+        A.Step(5, 1, b"z", ("S", 1), 0.0, 0),
+    ]
+
+
+def test_level_entries_includes_reset_root():
+    steps = _reset_steps()
+    edges, first_seen = A.build_edges(steps)
+    seg = A.segment_levels(steps, first_seen)[0]
+    assert seg.start_key == b"I" and seg.target_key == b"T"
+    entries = A.level_entries(steps, seg)
+    assert entries == [b"I", b"R"]   # first frame + the post-reset root
+
+
+def test_best_path_uses_reset_root_when_first_frame_disconnected():
+    steps = _reset_steps()
+    edges, first_seen = A.build_edges(steps)
+    seg = A.segment_levels(steps, first_seen)[0]
+    # The old single-start path is unreachable from the disconnected first frame:
+    assert A.shortest_path(edges, seg.start_key, seg.target_key, seg.member_keys) is None
+    # best_path recovers it via the reset-root entry:
+    path, entry = A.best_path(edges, A.level_entries(steps, seg), seg.target_key, seg.member_keys)
+    assert entry == b"R" and path == [b"R", b"B", b"T"]
+    c = A.ceilings(seg, path)
+    assert c["reachable"] is True and c["ceiling_actions"] == 0.5
+
+
+def test_near_optimal_states_union_of_shortest_paths():
+    steps = _reset_steps()
+    edges, first_seen = A.build_edges(steps)
+    seg = A.segment_levels(steps, first_seen)[0]
+    on = A.near_optimal_states(edges, b"R", seg.target_key, seg.member_keys, slack=0)
+    assert on == {b"R", b"B", b"T"}   # all 3 productive states, none of I/A
+
+
+def test_mlp_separates_and_logo_per_game():
+    rng = np.random.default_rng(0)
+    per_game = {}
+    for g in ("g1", "g2", "g3"):
+        Xpos = np.column_stack([rng.normal(3, 0.3, 40), rng.normal(0, 1, 40)])
+        Xneg = np.column_stack([rng.normal(0, 0.3, 60), rng.normal(0, 1, 60)])
+        per_game[g] = (np.vstack([Xpos, Xneg]), np.array([1] * 40 + [0] * 60))
+    assert A.logo_auc_mlp(per_game) >= 0.85
+    per = A.logo_auc_per_game(per_game)
+    assert set(per) == {"g1", "g2", "g3"} and all(v >= 0.85 for v in per.values())

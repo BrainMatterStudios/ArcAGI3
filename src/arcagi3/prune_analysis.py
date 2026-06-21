@@ -211,3 +211,172 @@ def shuffle_auc(per_game, seed=0):
     rng = np.random.default_rng(seed)
     shuffled = {g: (X, rng.permutation(y)) for g, (X, y) in per_game.items()}
     return logo_auc(shuffled)
+
+
+# --- Phase 0a' refinements (2026-06-21) -----------------------------------------------
+# Reset-root entries + near-optimal-path labels (fix the disconnected-first-frame
+# reachability artifact and the single-shortest-path label bias), per-game AUC, and a
+# nonlinear (MLP) classifier. See docs/.../2026-06-21-phase0-prune-oracle-probe-design.md.
+
+def adjacency(edges):
+    """dict[from_key] -> list[to_key] (drops the action label)."""
+    return {k: [tk for _a, tk in lst] for k, lst in edges.items()}
+
+
+def reverse_adjacency(edges):
+    """dict[to_key] -> list[from_key]."""
+    rev = {}
+    for k, lst in edges.items():
+        for _a, tk in lst:
+            rev.setdefault(tk, []).append(k)
+    return rev
+
+
+def bfs_dist(adj, source, allowed):
+    """Hop distance from source to every node reachable within `allowed`."""
+    if source not in allowed:
+        return {}
+    dist = {source: 0}
+    q = deque([source])
+    while q:
+        k = q.popleft()
+        for nk in adj.get(k, ()):
+            if nk in allowed and nk not in dist:
+                dist[nk] = dist[k] + 1
+                q.append(nk)
+    return dist
+
+
+def level_entries(steps, seg):
+    """Candidate entry states for a level attempt: the level-start state PLUS every
+    post-reset root in the window (the state the agent lands on after a RESET).
+
+    The first frame of a level can be a transient intro/NOT_PLAYED state the agent leaves
+    and never returns to, so it is disconnected from the productive subgraph (which is
+    entered via a reset). Allowing reset-roots as entries fixes the spurious reachable=False.
+    """
+    by_idx = {s.idx: s for s in steps}
+    entries = [seg.start_key]
+    for s in steps:
+        if seg.start_idx <= s.idx < seg.end_idx and s.action == RESET:
+            nxt = by_idx.get(s.idx + 1)
+            if nxt is not None:
+                entries.append(nxt.from_key)
+    seen, out = set(), []
+    for e in entries:
+        if e not in seen:
+            seen.add(e)
+            out.append(e)
+    return out
+
+
+def best_path(edges, entries, target, allowed):
+    """Shortest path (list of keys) from ANY entry to target over forward edges,
+    restricted to `allowed`. Returns the globally shortest, or None if unreachable
+    from every entry. Also returns the entry that achieved it."""
+    best, best_entry = None, None
+    for e in entries:
+        p = shortest_path(edges, e, target, allowed)
+        if p is not None and (best is None or len(p) < len(best)):
+            best, best_entry = p, e
+    return best, best_entry
+
+
+def near_optimal_states(edges, entry, target, allowed, slack=0):
+    """States on SOME path from `entry` to `target` within `slack` of the shortest.
+
+    A fairer Tier-2 positive label than a single shortest path: a state is on-path iff
+    dist(entry->s) + dist(s->target) <= optimal + slack. slack=0 = union of all shortest
+    paths. Returns the empty set if target is unreachable from entry.
+    """
+    fwd = bfs_dist(adjacency(edges), entry, allowed)
+    if target not in fwd:
+        return set()
+    bwd = bfs_dist(reverse_adjacency(edges), target, allowed)
+    opt = fwd[target]
+    return {s for s in allowed
+            if s in fwd and s in bwd and fwd[s] + bwd[s] <= opt + slack}
+
+
+def mlp_fit(X, y, hidden=16, iters=1500, lr=0.1, seed=0):
+    """Tiny 1-hidden-layer tanh MLP (numpy) — captures nonlinear feature separability."""
+    rng = np.random.default_rng(seed)
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y, dtype=float).reshape(-1, 1)
+    mu, sd = X.mean(0), X.std(0)
+    sd = np.where(sd == 0, 1.0, sd)
+    Xs = (X - mu) / sd
+    W1 = rng.normal(0, 0.5, (Xs.shape[1], hidden))
+    b1 = np.zeros(hidden)
+    W2 = rng.normal(0, 0.5, (hidden, 1))
+    b2 = np.zeros(1)
+    for _ in range(iters):
+        a1 = np.tanh(Xs @ W1 + b1)
+        p = 1.0 / (1.0 + np.exp(-np.clip(a1 @ W2 + b2, -30, 30)))
+        g2 = (p - y) / len(y)
+        g1 = (g2 @ W2.T) * (1 - a1 ** 2)
+        W2 -= lr * (a1.T @ g2)
+        b2 -= lr * g2.sum(0)
+        W1 -= lr * (Xs.T @ g1)
+        b1 -= lr * g1.sum(0)
+    return (W1, b1, W2, b2, mu, sd)
+
+
+def mlp_score(X, params):
+    W1, b1, W2, b2, mu, sd = params
+    Xs = (np.asarray(X, dtype=float) - mu) / sd
+    a1 = np.tanh(Xs @ W1 + b1)
+    return (1.0 / (1.0 + np.exp(-np.clip(a1 @ W2 + b2, -30, 30)))).ravel()
+
+
+def _logo(per_game, fit, score):
+    """Generic pooled leave-one-game-out AUC for a (fit -> model, score(X, model)) pair."""
+    games = list(per_game)
+    ps, py = [], []
+    for held in games:
+        tr = [g for g in games if g != held]
+        if not tr:
+            continue
+        Xtr = np.vstack([per_game[g][0] for g in tr])
+        ytr = np.concatenate([per_game[g][1] for g in tr])
+        if ytr.sum() == 0 or (ytr == 0).sum() == 0:
+            continue
+        m = fit(Xtr, ytr)
+        ps.append(score(per_game[held][0], m))
+        py.append(per_game[held][1])
+    if not ps:
+        return float("nan")
+    return roc_auc(np.concatenate(ps), np.concatenate(py))
+
+
+def _logistic_model(X, y):
+    return logistic_fit(X, y)
+
+
+def _logistic_apply(X, m):
+    return logistic_score(X, *m)
+
+
+def logo_auc_mlp(per_game):
+    """Leave-one-game-out pooled AUC using the nonlinear MLP classifier."""
+    return _logo(per_game, mlp_fit, mlp_score)
+
+
+def logo_auc_per_game(per_game, nonlinear=False):
+    """Per-HELD-game AUC: which games carry the transferable signal (vs which don't)."""
+    fit = mlp_fit if nonlinear else _logistic_model
+    score = mlp_score if nonlinear else _logistic_apply
+    out = {}
+    for held in list(per_game):
+        tr = [g for g in per_game if g != held]
+        if not tr:
+            out[held] = float("nan")
+            continue
+        Xtr = np.vstack([per_game[g][0] for g in tr])
+        ytr = np.concatenate([per_game[g][1] for g in tr])
+        if ytr.sum() == 0 or (ytr == 0).sum() == 0:
+            out[held] = float("nan")
+            continue
+        m = fit(Xtr, ytr)
+        out[held] = roc_auc(score(per_game[held][0], m), per_game[held][1])
+    return out
