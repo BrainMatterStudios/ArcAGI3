@@ -174,3 +174,61 @@ ground-truth-less number that misleads the build/kill decision.
 - **Dev ≠ Kaggle.** This probe informs a build/kill decision; it does not itself change the
   leaderboard. The ship gate remains `scripts/eval_efficiency.py` HOLDOUT efficiency, and the
   0.33 floor is never regressed (Phase 0a touches no agent code).
+
+## Results (2026-06-21)
+
+Run: `scripts/prune_oracle.py 40000 150000 tu93 vc33 m0r0 ls20 lp85 cd82` (~510 actions/sec, 384 s).
+Raw: `/tmp/prune_oracle.json`, `/tmp/prune_oracle.log`.
+
+### Tier-1 — prune ceiling EXISTS uniformly, on both mechanic families
+Every level whose level-up state was reachable over the recorded graph shows a very high prune
+ceiling — including the avatar coverage walls predicted to be uncompressible:
+
+| game | level | discovered_states | actions | ceiling_states | ceiling_actions |
+|---|---|---|---|---|---|
+| tu93 | L4 | 400 | 3222 | 0.927 | 0.991 |
+| tu93 | L5 | 1783 | 15998 | 0.983 | **0.998** |
+| tu93 | L8 | 67 | 1917 | 0.567 | 0.985 |
+| vc33 | L2 | 1003 | 18447 | 0.977 | **0.999** |
+| m0r0 | L1 | 1119 | 12516 | 0.979 | 0.998 |
+| cd82 | L1 | 86 | 241 | 0.907 | 0.971 |
+
+(tu93 L1–L3/L6/L7 also 0.90–0.98.) So the "true coverage wall, ceiling ≈ 0" branch did **not**
+occur anywhere — refuting the §5 prediction that avatar walls would be uncompressible. **Caveat:**
+this is the optimistic oracle (knows the goal location); a uniformly-high ceiling is *necessary but
+weakly informative* — it largely reflects that a breadth-first explorer always walks far more than
+the single shortest path. Tier-2 is the decisive gate.
+
+### Tier-2 — real but WEAK signal; misses the pre-registered bar by 0.007
+Leave-one-game-out ROC-AUC = **0.643**, shuffle control = **0.506** (games: tu93, vc33, m0r0, cd82).
+- `AUC ≥ shuffle + 0.10`: 0.643 − 0.506 = **+0.137 ✓** (signal is real, clearly above its own chance baseline).
+- `AUC ≥ 0.65`: **FAILS by 0.007.**
+
+**By the pre-registered conjunction, this does NOT clear the BUILD gate.** (Not moving the goalpost:
+0.65 was set a priori; 0.643 misses it.)
+
+### Verdict: MARGINAL / AMBER — refine the probe before build-or-kill
+Not a clean BUILD (failed 0.65), but not a clean KILL either (beat the shuffle control by +0.137,
+which the §4 table calls a meaningful signal). Two concrete reasons the **measurement is biased
+low** — i.e. 0.643 is likely a conservative floor on the true learnability:
+1. **Single-shortest-path labels.** Only the states on the one shortest recorded path are labeled
+   on-path (positive); every other discovered state is negative — including states one step off an
+   equally-productive path. This shrinks/noises the positive class and depresses AUC. A "near-optimal
+   path" label (within k of optimal, or any state on *a* path that reaches the goal) would be fairer.
+2. **8 crude scalar features.** The actual bet is a learned prior (e.g. a small CNN over the grid),
+   which can extract far richer structure than 8 hand-scalars. Even these crude features beat shuffle
+   by 0.137; a learned feature extractor is the relevant upper bound, not this floor.
+
+Third caveat affecting coverage: **`reachable=False` on many L0 levels** (tu93/vc33/ls20/lp85/cd82
+L0) is partly an artifact — the explorer's `trust_threshold=3` suspicion filter omits some traversed
+edges from the recorded graph, so a shortest path can't always be reconstructed. `reachable=False`
+means "no path reconstructable in the filtered graph", **not** "uncompressible". Notably **ls20 (the
+one true hard wall in the set) contributed nothing to Tier-2** (only L0, unreachable) — so the AUC
+is effectively a tu93/vc33/m0r0/cd82 number, not a verdict on the hardest walls.
+
+**Recommendation:** do **not** start the generator (failed the pre-registered build bar), and do
+**not** kill (the signal is real and the measurement is demonstrably pessimistic). Instead spend a
+few more hours on a **Tier-2 refinement** — near-optimal-path labeling + a richer feature set (or a
+tiny learned feature extractor) + per-game AUC breakdown + fixing the reachability artifact so ls20
+contributes — then re-apply the same pre-registered bar. This is the cheapest way to turn an
+0.007-miss amber into a trustworthy build-or-kill. User decision required before proceeding.
