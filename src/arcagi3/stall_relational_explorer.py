@@ -21,10 +21,14 @@ from .transfer_explorer import _size_bucket
 
 class StallRelationalExplorer(SalienceExplorer):
     def __init__(self, *args, enable_stallrel: bool = True, stall_trigger: int = 1500,
-                 rel_quant: int = 4, **kwargs) -> None:
+                 rel_quant: int = 4, stall_mode: str = "states", **kwargs) -> None:
         self.enable_stallrel = bool(enable_stallrel)
         self.stall_trigger = int(stall_trigger)
         self.rel_quant = max(1, int(rel_quant))
+        # "states": switch when no NEW states discovered for stall_trigger actions (saturation =
+        # truly stuck; a slow-but-progressing game like tu93 keeps discovering states so it never
+        # triggers). "level": switch on no level-up for stall_trigger actions (misfires on slow games).
+        self.stall_mode = stall_mode
         super().__init__(*args, **kwargs)
 
     def reset_all(self):
@@ -32,6 +36,7 @@ class StallRelationalExplorer(SalienceExplorer):
         self.rel_mode = False
         self._sr_since = 0
         self._sr_levels = 0
+        self._sr_last_nodes = 0
 
     def _key(self, grid):
         if not (self.enable_stallrel and self.rel_mode):
@@ -66,9 +71,16 @@ class StallRelationalExplorer(SalienceExplorer):
 
     def decide(self, grid, gstate_terminal, gstate_notplayed, levels, available):
         if self.enable_stallrel and self.stall_trigger > 0 and not self.rel_mode:
-            if levels > self._sr_levels:
-                self._sr_levels = levels
-                self._sr_since = 0
+            if self.stall_mode == "states":
+                # reset the stall counter whenever a NEW state is discovered OR a level is gained
+                if len(self.nodes) > self._sr_last_nodes or levels > self._sr_levels:
+                    self._sr_last_nodes = len(self.nodes)
+                    self._sr_levels = levels
+                    self._sr_since = 0
+            else:  # "level"
+                if levels > self._sr_levels:
+                    self._sr_levels = levels
+                    self._sr_since = 0
             if not gstate_terminal and not gstate_notplayed:
                 self._sr_since += 1
             if self._sr_since >= self.stall_trigger and not gstate_terminal and not gstate_notplayed:
