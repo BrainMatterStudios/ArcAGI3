@@ -119,3 +119,48 @@ byte-identical test green).
   can't prove eval-scale completion).
 - **Subclass plumbing drift.** The `v6`-passthrough must stay byte-identical to the parent; the
   firewall test guards it and must run in the suite.
+
+## Results (2026-06-21) → KILL (pre-registered)
+
+A/B at budget 6000 (baseline `salience` vs `tour-yield` vs `tour-dfs`); `/tmp/ab_*_6000.log`.
+
+| policy @6000 | TUNE mean_levels | HOLDOUT mean_levels | HOLDOUT sum_eff |
+|---|---|---|---|
+| salience (baseline) | **1.75** | 0.38 | **1.19** |
+| tour-yield | 1.25 ⬇ | 0.38 | 1.15 ⬇ |
+| tour-dfs | 1.00 ⬇⬇ | 0.38 | 1.26 ⬆ |
+
+Pre-registered win = improve HOLDOUT eff AND no HOLDOUT level drop AND no TUNE level drop, at BOTH
+budgets. **Both modes fail at 6000:** `tour-yield` drops both TUNE levels (1.75→1.25) and HOLDOUT
+efficiency (1.19→1.15); `tour-dfs` improves HOLDOUT efficiency but drops TUNE levels hard
+(1.75→1.00). A 6000 failure is dispositive for the both-budget AND-gate, so the full 30000 sweep was
+not needed.
+
+### The regression is genuine, not budget-truncation
+The collapse concentrates on **tu93** — the avatar wall the lever was meant to *help*. Confirmed at
+5× budget (tu93-only, 30000 actions):
+
+| tu93 @30000 | levels |
+|---|---|
+| salience | **L9** (24193 acts, completes) |
+| tour-yield | L2 (stuck, 30000 acts) |
+| tour-dfs | L3 (stuck, 30000 acts) |
+
+salience clears tu93 L0 in 431 actions and all 9 levels in ~24k; both reorderings can't escape
+L2–L3 even with 30k. So this is a **real regression**, not late-completion truncation.
+
+### Why — and the correction to a spec assumption
+The design assumed frontier-reordering is "coverage-preserving (same set of explored states at eval
+scale)." **That is false in practice.** With a huge graph and any finite budget, the explorer is
+always mid-exploration, so the frontier *order* determines *which* states are reached before the
+budget runs out — and **nearest-first ordering is load-bearing**, not wasteful slack. Sending the
+agent to the max-untried (`yield`) or most-recently-discovered (`dfs`) frontier instead derails the
+methodical coverage that lets the graph explorer hit tu93's level-ups. This is the **same failure
+class as every killed signal-steering lever**: reordering exploration without the goal signal corrupts
+the search.
+
+### Verdict: KILL both modes
+The one structurally-safe residual lever is exhausted. Banked 0.33 is untouched (`SalienceExplorer`
+never modified; `v6`-passthrough byte-identical test green; suite 195 green). `TourExplorer` +
+`tour-*` policies are kept only as dead, default-unused experiment tooling (user's call on
+removal). Path to >0.33 remains the June-30 SOTA disclosure + hardening.
