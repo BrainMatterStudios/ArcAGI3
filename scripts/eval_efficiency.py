@@ -69,6 +69,10 @@ def make_policy(name: str):
     if name == "slide":
         from arcagi3.slide_nav_explorer import SlideNavExplorer
         return SlideNavExplorer(seed=0, trust_threshold=3, border_mask=2)
+    if name in ("salient", "salient3"):
+        from arcagi3.salient_state_explorer import SalientStateExplorer
+        return SalientStateExplorer(seed=0, trust_threshold=3, border_mask=2,
+                                    rare_max=2 if name == "salient" else 3)
     if name in ("combo", "transfer-rel"):
         from arcagi3.transfer_relational_explorer import TransferRelationalExplorer
         return TransferRelationalExplorer(seed=0, trust_threshold=3, border_mask=2)
