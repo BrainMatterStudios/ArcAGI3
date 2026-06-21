@@ -66,6 +66,18 @@ def make_policy(name: str):
     raise ValueError(name)
 
 
+def _retry(fn, tries=5, delay=1.0):
+    """Retry an API call through transient three.arcprize.org timeouts (flaky network)."""
+    for i in range(tries):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            if i == tries - 1:
+                raise
+            print(f"    [retry {i+1}/{tries}] API error: {type(e).__name__}", flush=True)
+            time.sleep(delay * (i + 1))
+
+
 def run_game(prefix: str, policy_name: str, budget: int):
     try:
         gid = next(e.game_id for e in client.get_environments() if e.game_id.startswith(prefix))
@@ -73,7 +85,7 @@ def run_game(prefix: str, policy_name: str, budget: int):
         return None
     card = client.open_scorecard(tags=["eval"]); env = client.make(game_id=gid, scorecard_id=card)
     pol = make_policy(policy_name)
-    obs = env.reset(); n = 0; best = 0; marks = []; last = 0
+    obs = _retry(env.reset); n = 0; best = 0; marks = []; last = 0
     while n < budget:
         st = obs.state
         tok = pol.decide(P.to_grid(obs.frame),
@@ -84,11 +96,11 @@ def run_game(prefix: str, policy_name: str, budget: int):
         if st == GameState.WIN:
             break
         if tok[0] == "reset":
-            obs = env.reset()
+            obs = _retry(env.reset)
         elif tok[0] == "S":
-            obs = env.step(GameAction.from_id(tok[1]))
+            obs = _retry(lambda: env.step(GameAction.from_id(tok[1])))
         else:
-            obs = env.step(GameAction.ACTION6, data={"x": int(tok[1]), "y": int(tok[2])})
+            obs = _retry(lambda: env.step(GameAction.ACTION6, data={"x": int(tok[1]), "y": int(tok[2])}))
         n += 1
         lv = int(obs.levels_completed or 0)
         if lv > best:
