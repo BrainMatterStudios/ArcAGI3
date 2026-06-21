@@ -40,15 +40,26 @@ def make_policy(name: str):
     if name == "transfer":
         from arcagi3.transfer_explorer import TransferExplorer
         return TransferExplorer(seed=0, trust_threshold=3, border_mask=2)
+    if name == "transfer-dense":  # the ACTUAL submission config (dense click lattice)
+        from arcagi3.transfer_explorer import TransferExplorer
+        return TransferExplorer(seed=0, trust_threshold=3, border_mask=2,
+                                coarse_grid_step=4, max_click_targets=256)
+    if name == "salience-dense":  # v6 with the same dense lattice (fair baseline)
+        return SalienceExplorer(seed=0, trust_threshold=3, border_mask=2,
+                                coarse_grid_step=4, max_click_targets=256)
     if name == "prior":
         from arcagi3.prior_explorer import PriorExplorer
         return PriorExplorer(seed=0, trust_threshold=3, border_mask=2)
     if name == "relational":
         from arcagi3.relational_explorer import RelationalExplorer
         return RelationalExplorer(seed=0, trust_threshold=3, border_mask=2)
-    if name in ("relational8",):
+    if name in ("relational8", "relational2"):
         from arcagi3.relational_explorer import RelationalExplorer
-        return RelationalExplorer(seed=0, trust_threshold=3, border_mask=2, rel_quant=8)
+        q = 8 if name == "relational8" else 2
+        return RelationalExplorer(seed=0, trust_threshold=3, border_mask=2, rel_quant=q)
+    if name == "combo2":  # transfer + relational rel_quant=2 (finer)
+        from arcagi3.transfer_relational_explorer import TransferRelationalExplorer
+        return TransferRelationalExplorer(seed=0, trust_threshold=3, border_mask=2, rel_quant=2)
     if name in ("combo", "transfer-rel"):
         from arcagi3.transfer_relational_explorer import TransferRelationalExplorer
         return TransferRelationalExplorer(seed=0, trust_threshold=3, border_mask=2)
