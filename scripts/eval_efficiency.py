@@ -66,6 +66,9 @@ def make_policy(name: str):
     if name == "combo2":  # transfer + relational rel_quant=2 (finer)
         from arcagi3.transfer_relational_explorer import TransferRelationalExplorer
         return TransferRelationalExplorer(seed=0, trust_threshold=3, border_mask=2, rel_quant=2)
+    if name == "struct":
+        from arcagi3.structural_novelty_explorer import StructuralNoveltyExplorer
+        return StructuralNoveltyExplorer(seed=0, trust_threshold=3, border_mask=2)
     if name == "slide":
         from arcagi3.slide_nav_explorer import SlideNavExplorer
         return SlideNavExplorer(seed=0, trust_threshold=3, border_mask=2)
