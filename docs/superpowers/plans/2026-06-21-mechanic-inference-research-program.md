@@ -48,12 +48,30 @@ wall games (tu93 large inconsistent deltas). Increment 1 directly RE-TESTS that 
 falsifiable measurement — if avatar/movement inference is unreliable on real games, we learn
 it cheaply and stop, rather than assuming.
 
-## Increment 2 — Mechanic-guided planner (ONLY if 1 passes)
+## Increment 2 — Mechanic-guided planner — BUILT, MEASURED, KILLED (2026-06-21)
 
-A planner that uses *confirmed* mechanics + the live env (reset-rollback) to reach the
-level-up goal-change efficiently. Gated on TUNE/HOLDOUT no-regression (0.33 firewall) +
-measurable wall-game progress (actions-to-level on ls20/re86). Design after Increment 1's
-report; do not pre-commit.
+`SlideNavExplorer`: inference-gated slide-aware spatial explorer (avatar-cell + #collectibles
+state, BFS slide-nav, push-safety gate, stall-triggered engagement). RESULT:
+- **Isolated ls20: L1@3426 vs salience 7961 — a real 2.3x win** (first concrete wall-game
+  efficiency gain; validates the slide-aware idea).
+- **Does NOT compose.** stall=0 (engage from start): gains ls20 but regresses tu93 L5->L4 +
+  tr87 L1->L0 (net-negative). stall=1500 (additive): preserves all levels but engaging
+  mid-game is *worse* than letting salience continue (ls20 7961->14823, tu93 eff 1.87->1.756)
+  -> aggregate == salience or slightly worse. No configuration helps the aggregate.
+- ROOT: avatar-cell collapse trades board/depth info for coverage-speed; restarting mid-maze
+  wastes the explorer's partial work. KILL (4th spatial-nav kill in project history).
+
+Firewall held throughout: SlideNavExplorer lives only in the eval harness, never in the
+submission (default stays TransferExplorer). v13=0.33 and the 0.33 floor untouched.
+
+## Verdict
+
+The program produced one genuine, durable finding — **wall-game mechanics ARE cheaply
+inferable, and the true mechanic is slide-to-wall (not the fixed-delta the project assumed)**
+— and one real-but-uncomposable speedup (ls20 2.3x in isolation). But the planner does not
+yield a shippable lever: the wall games resist a clean general solution from this angle too.
+0.33 public ceiling stands. Next real shot at >0.33 remains the June-30 open-source
+adopt+harden, or a genuinely different breakthrough not yet found.
 
 ## Discipline
 
