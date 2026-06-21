@@ -172,14 +172,14 @@ def logistic_fit(X, y, iters=800, lr=0.2):
     Xs = np.hstack([(X - mu) / sd, np.ones((len(X), 1))])
     w = np.zeros(Xs.shape[1])
     for _ in range(iters):
-        p = 1.0 / (1.0 + np.exp(-Xs @ w))
+        p = 1.0 / (1.0 + np.exp(-np.clip(Xs @ w, -30, 30)))
         w -= lr * Xs.T @ (p - y) / len(y)
     return w, mu, sd
 
 
 def logistic_score(X, w, mu, sd):
     Xs = np.hstack([(np.asarray(X, dtype=float) - mu) / sd, np.ones((len(X), 1))])
-    return 1.0 / (1.0 + np.exp(-Xs @ w))
+    return 1.0 / (1.0 + np.exp(-np.clip(Xs @ w, -30, 30)))
 
 
 def logo_auc(per_game):
