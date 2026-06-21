@@ -44,3 +44,73 @@ def build_edges(steps):
         if i + 1 < len(steps) and s.action != RESET and s.reward <= 0:
             edges[s.from_key].append((s.action, steps[i + 1].from_key))
     return dict(edges), first_seen
+
+
+@dataclass
+class LevelSeg:
+    level: int
+    start_key: bytes
+    target_key: bytes      # from_key of the reward (level-up) step
+    member_keys: set       # keys first-seen within [start_idx, end_idx]
+    start_idx: int
+    end_idx: int           # the reward step idx
+
+    @property
+    def actual_actions(self):
+        return self.end_idx - self.start_idx
+
+
+def segment_levels(steps, first_seen):
+    """One LevelSeg per level that ENDS in a reward step (a completed level)."""
+    level_first_idx = {}
+    reward_step = {}
+    for s in steps:
+        if s.level not in level_first_idx:
+            level_first_idx[s.level] = s.idx
+        if s.reward > 0 and s.level not in reward_step:
+            reward_step[s.level] = s
+    by_idx = {s.idx: s for s in steps}
+    segs = {}
+    for lvl, rs in reward_step.items():
+        if lvl not in level_first_idx:
+            continue
+        start_idx, end_idx = level_first_idx[lvl], rs.idx
+        members = {k for k, fi in first_seen.items() if start_idx <= fi <= end_idx}
+        segs[lvl] = LevelSeg(lvl, by_idx[start_idx].from_key, rs.from_key,
+                             members, start_idx, end_idx)
+    return segs
+
+
+def shortest_path(edges, start, target, allowed):
+    """BFS over `edges` restricted to nodes in `allowed`. Returns [start..target] or None."""
+    if start == target:
+        return [start]
+    if start not in allowed or target not in allowed:
+        return None
+    seen = {start}
+    q = deque([(start, [start])])
+    while q:
+        k, path = q.popleft()
+        for _a, nk in edges.get(k, []):
+            if nk in seen or nk not in allowed:
+                continue
+            seen.add(nk)
+            if nk == target:
+                return path + [nk]
+            q.append((nk, path + [nk]))
+    return None
+
+
+def ceilings(seg, path):
+    """Tier-1 numbers for one level. path is None when target is unreachable in-level."""
+    disc = len(seg.member_keys)
+    if path is None:
+        return {"discovered_states": disc, "path_states": None, "ceiling_states": None,
+                "actual_actions": seg.actual_actions, "path_actions": None,
+                "ceiling_actions": None, "reachable": False}
+    ps, pa = len(path), len(path) - 1
+    return {"discovered_states": disc, "path_states": ps,
+            "ceiling_states": round(1 - ps / max(disc, 1), 3),
+            "actual_actions": seg.actual_actions, "path_actions": pa,
+            "ceiling_actions": round(1 - pa / max(seg.actual_actions, 1), 3),
+            "reachable": True}
