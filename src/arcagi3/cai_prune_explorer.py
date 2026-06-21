@@ -42,6 +42,9 @@ class CAIPruneExplorer(SalienceExplorer):
         return None
 
     def decide(self, grid, gstate_terminal, gstate_notplayed, levels, available):
+        # a no-op color at level N can be the trigger at level N+1 -> reset pruning each level-up
+        if self.enable_cai and levels > self.prev_levels:
+            self.pruned_colors.clear(); self.color_noop.clear(); self.color_active.clear()
         # judge the previous click: did the state change? (no-op vs causal)
         if (self.enable_cai and self.prev_action is not None and self.prev_action[0] == "C"
                 and self._cai_prev_grid is not None and not gstate_terminal and not gstate_notplayed):
