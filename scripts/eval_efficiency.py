@@ -78,6 +78,9 @@ def make_policy(name: str):
     if name == "rtransfer":
         from arcagi3.relational_transfer_explorer import RelationalTransferExplorer
         return RelationalTransferExplorer(seed=0, trust_threshold=3, border_mask=2)
+    if name == "value":
+        from arcagi3.value_ranker_explorer import ValueRankerExplorer
+        return ValueRankerExplorer(seed=0, trust_threshold=3, border_mask=2)
     if name == "struct":
         from arcagi3.structural_novelty_explorer import StructuralNoveltyExplorer
         return StructuralNoveltyExplorer(seed=0, trust_threshold=3, border_mask=2)
