@@ -33,13 +33,13 @@ client = Arcade(operation_mode=OperationMode.NORMAL, logger=logging.getLogger("o
 
 
 def run_and_capture(prefix, budget):
-    """Run v6 on one real game; return (steps, grid_by_key, colors_by_key, levels, tier_by_key)."""
+    """Run v6 on one real game; return (steps, grid_by_key, colors_by_key, best_level, gid, bg)."""
     gid = next(e.game_id for e in client.get_environments() if e.game_id.startswith(prefix))
     card = client.open_scorecard(tags=["prune-oracle"])
     env = client.make(game_id=gid, scorecard_id=card)
     pol = SalienceExplorer(seed=0, trust_threshold=3, border_mask=2)
     obs = env.reset()
-    steps, grid_by_key, colors_by_key, tier_by_key = [], {}, {}, {}
+    steps, grid_by_key, colors_by_key = [], {}, {}
     n, best = 0, 0
     while n < budget:
         st = obs.state
