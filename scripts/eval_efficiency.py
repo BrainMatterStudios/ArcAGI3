@@ -66,6 +66,10 @@ def make_policy(name: str):
     if name == "combo2":  # transfer + relational rel_quant=2 (finer)
         from arcagi3.transfer_relational_explorer import TransferRelationalExplorer
         return TransferRelationalExplorer(seed=0, trust_threshold=3, border_mask=2, rel_quant=2)
+    if name in ("stallrel", "stallrel800"):
+        from arcagi3.stall_relational_explorer import StallRelationalExplorer
+        st = 800 if name == "stallrel800" else 1500
+        return StallRelationalExplorer(seed=0, trust_threshold=3, border_mask=2, stall_trigger=st)
     if name == "irr":
         from arcagi3.irreversible_impact_explorer import IrreversibleImpactExplorer
         return IrreversibleImpactExplorer(seed=0, trust_threshold=3, border_mask=2)
