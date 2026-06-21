@@ -37,23 +37,30 @@ if os.getenv("ARCAGI3_ONLINE") == "1":
     except Exception:
         _Policy = None
 if _Policy is None:
-    # TransferExplorer = SalienceExplorer (banked v6 = 0.33) + within-game cross-level
-    # reward-signature transfer. It is a STRICT SUPERSET: byte-identical to v6 until a
-    # level-up, then biases later levels toward the rewarding action-class. Validated on the
-    # dev TUNE/HOLDOUT harness @30k: TUNE +37% efficiency / +0.5 levels (lp85 L1->L5, vc33
-    # L2-3 ~2x cheaper), HOLDOUT byte-identical (zero regression). Falls back to the plain
-    # SalienceExplorer, then HybridPolicy, then inline random.
+    # EXPERIMENT (low-risk: Kaggle ranks by best submission, so this cannot displace the banked
+    # v13=0.33): StallRelationalExplorer (level-trigger) = SalienceExplorer + switch to a
+    # translation-tolerant relational state-key once stuck (no level-up for 1500 actions), which
+    # reaches wall-game levels far faster (sk48 2897 vs 25139 = 8.7x). Tests whether wall-game
+    # efficiency moves the scored games. Falls back to TransferExplorer (v13), then Salience,
+    # then HybridPolicy, then inline random.
+    import functools
     try:
-        from arcagi3.transfer_explorer import TransferExplorer as _Policy
+        from arcagi3.stall_relational_explorer import StallRelationalExplorer as _SR
+        _Policy = functools.partial(_SR, stall_mode="level", stall_trigger=1500)
     except Exception:
+        _Policy = None
+    if _Policy is None:
         try:
-            from arcagi3.salience_explorer import SalienceExplorer as _Policy
+            from arcagi3.transfer_explorer import TransferExplorer as _Policy
         except Exception:
-            try:  # fallback to the hybrid if the new module is unavailable
-                from arcagi3.policy import HybridPolicy as _Policy
-            except Exception as _e:  # noqa: BLE001
-                _IMPORT_ERR = "".join(traceback.format_exception(type(_e), _e, _e.__traceback__))
-                print(f"[my_agent] arcagi3 import FAILED -> random fallback.\n{_IMPORT_ERR}", flush=True)
+            try:
+                from arcagi3.salience_explorer import SalienceExplorer as _Policy
+            except Exception:
+                try:  # fallback to the hybrid if the new module is unavailable
+                    from arcagi3.policy import HybridPolicy as _Policy
+                except Exception as _e:  # noqa: BLE001
+                    _IMPORT_ERR = "".join(traceback.format_exception(type(_e), _e, _e.__traceback__))
+                    print(f"[my_agent] arcagi3 import FAILED -> random fallback.\n{_IMPORT_ERR}", flush=True)
 _HybridPolicy = _Policy  # back-compat name used below
 
 try:
