@@ -76,6 +76,7 @@ class SlideNavExplorer:
         self.prev_levels = 0
         self.prev_cell = None
         self.prev_action = None
+        self._cur_grid = None
 
     # ---- avatar geometry ----
     def _avatar_centroid(self, grid):
@@ -220,6 +221,7 @@ class SlideNavExplorer:
         return (q[0], q[1], self._ncollect(grid))
 
     def _nav(self, grid, levels):
+        self._cur_grid = grid   # exposed for goal-directed subclasses
         st = self._state(grid)
         if st is None:
             self.mode = "delegate"
