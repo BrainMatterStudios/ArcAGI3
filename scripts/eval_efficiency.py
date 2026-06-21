@@ -88,6 +88,10 @@ def make_policy(name: str):
     if name == "value":
         from arcagi3.value_ranker_explorer import ValueRankerExplorer
         return ValueRankerExplorer(seed=0, trust_threshold=3, border_mask=2)
+    if name in ("transfer-cai", "transfer-cai-dense"):
+        from arcagi3.transfer_cai_explorer import TransferCAIExplorer
+        kw = dict(coarse_grid_step=4, max_click_targets=256) if name.endswith("dense") else {}
+        return TransferCAIExplorer(seed=0, trust_threshold=3, border_mask=2, **kw)
     if name == "struct":
         from arcagi3.structural_novelty_explorer import StructuralNoveltyExplorer
         return StructuralNoveltyExplorer(seed=0, trust_threshold=3, border_mask=2)
