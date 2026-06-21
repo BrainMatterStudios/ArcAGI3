@@ -18,6 +18,7 @@ MY_AGENT = (HERE / "my_agent.py").read_text()
 # Core modules the agent needs at eval (skip runner/validate_online/games — unused there).
 CORE = ["__init__.py", "perception.py", "world_model.py", "movement.py", "agent.py",
         "policy.py", "spatial.py", "salience_explorer.py",
+        "transfer_explorer.py",  # default policy: SalienceExplorer + within-game reward transfer
         "online_model.py", "online_explorer.py"]  # Phase A (opt-in via ARCAGI3_ONLINE=1)
 PKG = {name: base64.b64encode((SRC / name).read_bytes()).decode() for name in CORE}
 
