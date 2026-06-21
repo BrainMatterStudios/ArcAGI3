@@ -69,8 +69,8 @@ def make_xy(grid_by_key, lab):
     X, y = [], []
     for k, l in lab.items():
         if k not in grid_by_key: continue
-        oh = P.encode_onehot(grid_by_key[k])               # (64,64,16)
-        X.append(np.transpose(oh, (2, 0, 1)).astype(np.float32))
+        oh = P.encode_onehot(grid_by_key[k])               # already (16,64,64) = (C,H,W)
+        X.append(oh.astype(np.float32))
         y.append(l)
     return np.array(X), np.array(y, dtype=np.float32)
 
@@ -109,11 +109,16 @@ def fit_and_score(train, test):
 
 def main():
     budget = int(sys.argv[1]) if len(sys.argv) > 1 else 30000
+    import os
     data = {}
     for g in GAMES:
-        steps, grids = capture(g, budget)
-        lab = labels_for_game(steps)
-        X, y = make_xy(grids, lab)
+        cache = f"/tmp/cnn_{g}_{budget}.npz"
+        if os.path.exists(cache):
+            d = np.load(cache); X, y = d["X"], d["y"]
+        else:
+            steps, grids = capture(g, budget)
+            X, y = make_xy(grids, labels_for_game(steps))
+            np.savez(cache, X=X, y=y)
         npos = int(y.sum())
         print(f"  {g}: states={len(y)} positives={npos}", flush=True)
         if len(y) > 20 and 0 < npos < len(y):
