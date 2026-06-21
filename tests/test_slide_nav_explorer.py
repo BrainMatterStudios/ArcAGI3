@@ -46,15 +46,23 @@ def test_slide_off_byte_identical():
 
 
 def test_slide_gates_off_push_sokoban():
-    # push (sokoban) needs thousands of actions to solve; the point here is the SAFETY GATE:
+    # stall_trigger=0 forces immediate probe (no stall wait) to exercise the SAFETY GATE:
     # a non-avatar object moves with the avatar (push) -> must DELEGATE, never engage spatial nav.
-    pol = SlideNavExplorer(enable_slide=True, **CFG)
+    pol = SlideNavExplorer(enable_slide=True, stall_trigger=0, **CFG)
     _drive(pol, "push", 600)
     assert pol.mode == "delegate"
 
 
 def test_slide_engages_on_pure_nav():
-    pol = SlideNavExplorer(enable_slide=True, **CFG)
+    pol = SlideNavExplorer(enable_slide=True, stall_trigger=0, **CFG)
     _, lv = _drive(pol, "navg", 6000)
     assert pol.mode == "nav"        # clean avatar, walls, no push -> engage spatial nav
     assert lv >= 1
+
+
+def test_stall_trigger_gates_engagement():
+    # a very large stall_trigger means the explorer never "stalls" -> nav never engages
+    # (the mechanism that makes engagement additive). With trigger=0 it engages immediately.
+    pol = SlideNavExplorer(enable_slide=True, stall_trigger=10_000_000, **CFG)
+    _drive(pol, "navg", 4000)
+    assert pol.mode == "watch"

@@ -31,10 +31,16 @@ _DIRS = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
 
 class SlideNavExplorer:
     def __init__(self, seed: int = 0, trust_threshold: int = 3, border_mask: int = 2,
-                 enable_slide: bool = True, probe_steps: int = 24, coarse_grid_step: int = 8,
-                 max_click_targets: int = 96) -> None:
+                 enable_slide: bool = True, probe_steps: int = 24, stall_trigger: int = 1500,
+                 coarse_grid_step: int = 8, max_click_targets: int = 96) -> None:
         self.enable_slide = bool(enable_slide)
         self.probe_steps = int(probe_steps)
+        # STALL-TRIGGERED engagement (additive-by-construction): delegate to SalienceExplorer by
+        # default; only switch to spatial nav after the explorer has gone stall_trigger actions
+        # with no level-up. Cheap/progressing games (tr87 L1@212, tu93) never trigger it -> no
+        # regression; genuinely-stuck mazes (ls20) get the slide-nav rescue. 0 disables (engage
+        # immediately, the un-gated behaviour).
+        self.stall_trigger = int(stall_trigger)
         self.fallback = SalienceExplorer(seed=seed, trust_threshold=trust_threshold,
                                          border_mask=border_mask, coarse_grid_step=coarse_grid_step,
                                          max_click_targets=max_click_targets)
@@ -49,7 +55,11 @@ class SlideNavExplorer:
         if hasattr(self.fallback, "reset_all"):
             self.fallback.reset_all()
         self.bg = None
-        self.mode = "probe"          # probe -> nav | delegate
+        # watch: delegate to fallback + watch for a stall; probe: identify avatar; nav: spatial; delegate: pure fallback
+        self.mode = "watch" if self.stall_trigger > 0 else "probe"
+        self._since_level = 0
+        self._watch_levels = 0
+        self._tried_probe = False
         self.avatar_cols: set[int] = set()
         self.deltas: dict[int, tuple[int, int]] = {}    # action_id -> dominant (dr,dc)
         self._probe_hist: list = []  # (action_id, prev_centroid, centroid)
@@ -90,6 +100,22 @@ class SlideNavExplorer:
         # delegate path (gate failed / disabled / not a pure-arrow game)
         if not self.enable_slide or self.mode == "delegate" or 6 in available or not self._avail:
             return self.fallback.decide(grid, gstate_terminal, gstate_notplayed, levels, available)
+
+        # WATCH: run the fallback explorer, count actions since the last level-up; only switch to
+        # spatial nav once it has clearly STALLED (additive — games it handles never trigger us).
+        if self.mode == "watch":
+            if levels > self._watch_levels:
+                self._watch_levels = levels
+                self._since_level = 0
+            if not gstate_terminal and not gstate_notplayed:
+                self._since_level += 1
+            if (self._since_level >= self.stall_trigger and not self._tried_probe
+                    and not gstate_terminal and not gstate_notplayed):
+                self.mode = "probe"          # stalled -> try to identify the avatar
+                self._tried_probe = True
+                self.prev_action = None
+            else:
+                return self.fallback.decide(grid, gstate_terminal, gstate_notplayed, levels, available)
 
         if gstate_terminal or gstate_notplayed:
             self.prev_action = None
