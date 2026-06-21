@@ -56,7 +56,7 @@ def test_build_edges_excludes_reset_and_levelup():
     assert edges[b"b"] == [(("S", 2), b"c")]
     assert b"c" not in edges  # step 4 is a reward edge -> excluded
     assert first_seen[b"a"] == 0 and first_seen[b"d"] == 1
-    assert first_seen[b"b"] == 2 and first_seen[b"c"] == 3
+    assert first_seen[b"b"] == 3 and first_seen[b"c"] == 4
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
