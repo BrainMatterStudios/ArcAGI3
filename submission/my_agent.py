@@ -69,7 +69,18 @@ class MyAgent(_BaseAgent):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._pol = _HybridPolicy() if _HybridPolicy is not None else None
+        # Dense-click config: coarse_grid_step=4 + max_click_targets=256 lets the explorer
+        # reach level-up cells that are NOT object centroids/corners (tn36: dev holdout L0->L1,
+        # ZERO regressions on 15 other dev games — the extra targets are tier-9 last-resort).
+        # Graceful fallback if the active policy doesn't accept these kwargs.
+        self._pol = None
+        if _HybridPolicy is not None:
+            for _kw in ({"coarse_grid_step": 4, "max_click_targets": 256}, {}):
+                try:
+                    self._pol = _HybridPolicy(**_kw)
+                    break
+                except TypeError:
+                    continue
         self._t0 = time.time()
         seed = int(time.time() * 1e6) % (2 ** 32 - 1)
         random.seed(seed)

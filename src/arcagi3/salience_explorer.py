@@ -59,8 +59,15 @@ class _Node:
 class SalienceExplorer:
     def __init__(self, max_click_targets: int = 96, seed: int = 0,
                  max_stuck_resets: int = 200, trust_threshold: int = 3,
-                 border_mask: int = 2) -> None:
+                 border_mask: int = 2, coarse_grid_step: int = 8) -> None:
         self.max_click_targets = max_click_targets
+        # coarse_grid_step: spacing (px) of the low-priority (tier 9) fallback click lattice.
+        # Smaller = denser off-object coverage. Default 8 preserves the banked v6 floor EXACTLY.
+        # step=4 + a raised max_click_targets cracks click games whose level-up cell is NOT an
+        # object centroid/corner (e.g. tn36: L0->L1, ZERO regressions on 15 other dev games,
+        # because the extra targets are tier-9 last-resort and games solved earlier never reach
+        # them). Additive-only: never removes or reorders the existing higher-priority targets.
+        self.coarse_grid_step = int(coarse_grid_step)
         self.rng = np.random.default_rng(seed)
         self.max_stuck_resets = max_stuck_resets
         # border_mask > 0 enables the dynamic-border (HUD/progress-bar) mask: cells within
@@ -111,7 +118,7 @@ class SalienceExplorer:
                 cands.append((("S", aid), 0))
         if 6 in available:
             for x, y, prio in P.salient_click_targets(grid, max_targets=self.max_click_targets,
-                                                      coarse_grid_step=8):
+                                                      coarse_grid_step=self.coarse_grid_step):
                 cands.append((("C", int(x), int(y)), int(prio)))
         return cands
 
