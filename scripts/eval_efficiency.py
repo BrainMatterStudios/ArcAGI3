@@ -90,6 +90,10 @@ def make_policy(name: str):
         from arcagi3.causal_probe_explorer import CausalProbeExplorer
         kw = dict(coarse_grid_step=4, max_click_targets=256) if name.endswith("dense") else {}
         return CausalProbeExplorer(seed=0, trust_threshold=3, border_mask=2, **kw)
+    if name in ("depth", "depth-dense"):
+        from arcagi3.depth_stall_explorer import DepthStallExplorer
+        kw = dict(coarse_grid_step=4, max_click_targets=256) if name.endswith("dense") else {}
+        return DepthStallExplorer(seed=0, trust_threshold=3, border_mask=2, **kw)
     if name in ("goexplore", "goexplore16"):
         from arcagi3.go_explore_explorer import GoExploreExplorer
         return GoExploreExplorer(seed=0, trust_threshold=3, border_mask=2,
