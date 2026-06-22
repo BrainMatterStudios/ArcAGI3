@@ -173,6 +173,8 @@ on games you've never seen.</i></p>
     <tr><td class="m">39</td><td>Movement-aware coverage</td><td>systematic traversal of reachable cells using the inferred model</td><td>only 7 cells reachable (wall-trapped) — needs env-change, not movement</td><td><span class="tag t-kill">refuted</span></td></tr>
     <tr><td class="m">40</td><td><b>Level-up contrastive</b></td><td>contrast pre-win state vs 7901 ordinary states (which variables gate L1?)</td><td>no global predicate — completion is <b>spatial-relational</b>; ls20 goal = reach color-9</td><td><span class="tag t-win">finding</span></td></tr>
     <tr><td class="m">41</td><td>General reach-target nav</td><td>perceive target + induce movement + navigate, across 5 nav games</td><td><b>0/5</b> reach L1 — solving doesn't generalize; each win-mechanic is idiosyncratic</td><td><span class="tag t-kill">refuted</span></td></tr>
+    <tr><td class="m">42</td><td><b>BFS-optimal planner (source)</b></td><td>BFS over true ls20 symbolic model; establishes A_h = 13 for L1</td><td>13-action optimal plan confirmed — planning is cheap given a correct model</td><td><span class="tag t-win">finding</span></td></tr>
+    <tr><td class="m">43</td><td>Model-discovery bake-off</td><td>3-way: DiscoveryExplorer (factored DSL induction + BFS) vs salience vs spatial_value — black-box, budget 10000</td><td>discovery 0 levels — PROBE_TRANSFORMS = 0 triples (wrong primitive class: agent-attr-cycle vs world-paint); baselines L1 at 0.00 eff</td><td><span class="tag t-kill">negative — localized</span></td></tr>
   </tbody>
 </table>
 <p class="note">Experiments 21–35 (this session) all confirm the wall from new angles. The user-directed <b>Goal Extraction Engine</b> (§9) validated that symbolic <b>perception works</b> — a real, reusable positive — but every way of <i>converting</i> perception to score (planners, transfer-augmentation, VLM, structured discovery) fails, because the exact objective + action-mechanic is idiosyncratic per game and underdetermined by appearance.</p>
@@ -325,6 +327,42 @@ that pipeline showed, tested end-to-end.</p>
   mechanic requires the same ~8k-action in-game derivation we're trying to avoid, and doesn't transfer. The paradigm
   reveals the structure; the win needs general multi-step planning over per-game-derived idiosyncratic mechanics —
   beyond offline-feasible reach. <b>v13 = 0.33 remains the banked, firewalled result.</b></p>
+</div>
+
+<div class="panel kill">
+  <h3>Experiment 43 — Model-discovery bake-off on ls20 (black-box): discover → plan → transfer</h3>
+  <p><b>Setup.</b> 3-way bake-off on ls20, source used only as automated grader (A_h = 13, Exp-42 BFS-optimal for L1).
+  All engines driven through a single black-box harness via the same <code>decide()</code> contract; metric =
+  min(1.15,(A_h/A_m)²). Contestants: <b>#1 DiscoveryExplorer</b> — net-new factored symbolic model induction over a
+  minimal general-primitive DSL (movement, walls, on-enter attribute-cycle, attr-match-at-slot terminal) + BFS planner
+  over the induced model + cross-level grammar transfer; <b>#2 SalienceExplorer</b> (baseline); <b>#3 SpatialValueExplorer</b>
+  (neural-value baseline).</p>
+  <table style="margin:10px 0 14px">
+    <thead><tr><th>engine</th><th class="m">levels</th><th class="m">L1 actions</th><th class="m">L1 eff</th><th class="m">transfer slope</th></tr></thead>
+    <tbody>
+      <tr><td>discovery (#1)</td><td class="m neg">0</td><td class="m dim">—</td><td class="m dim">—</td><td class="m dim">—</td></tr>
+      <tr><td>salience (#2)</td><td class="m">1</td><td class="m">7901</td><td class="m neg">0.00</td><td class="m dim">—</td></tr>
+      <tr><td>spatial_value (#3)</td><td class="m">1</td><td class="m">7901</td><td class="m neg">0.00</td><td class="m dim">—</td></tr>
+    </tbody>
+  </table>
+  <p><b>The localized finding.</b> Engine #1's <i>perception, movement-grammar induction, and planning all worked</i> —
+  it correctly identified the agent, fit the full 4-way movement model (5-cell steps), extracted candidate goal slots from
+  the scene graph, and the BFS planner is sound (Exp-42 proves it solves L1 in 13 actions given a correct model). The wall
+  is the <b>discovery primitive vocabulary</b>: <code>PROBE_TRANSFORMS</code> recorded <b>0 transition triples</b> because
+  on live ls20 frames the agent's own (color, shape, orientation) stays <b>constant</b> — instead, the agent
+  <b>paints a trail (color 11 → color 3) as it moves</b>. The minimal DSL was built around <i>agent self-attribute
+  cycling</i>, which is the wrong primitive class for ls20's actual <i>spatial paint / path-opening</i> mechanic.</p>
+  <p><b>Reconciliation.</b> This refines, not contradicts, the Exp-42 source reading (avatar transform-match at a slot).
+  The agent is wall-trapped (~7 reachable cells); it must <b>paint to open paths</b> before any transformer tile or goal
+  slot is even reachable. The <i>first</i> primitive that must be induced is a <b>world/environment transform (paint)</b>,
+  not an agent-attribute cycle. Notably this re-validates the Exp-37 "paint/fill" observation as the correct
+  <i>first-order</i> mechanic.</p>
+  <p style="margin-bottom:0"><b>Verdict.</b> The discover→plan <b>architecture</b> is sound — planning is cheap given a
+  model; perception and movement induction work. But the <b>primitive DSL must include world-transform primitives</b>
+  (paint / region-transform / path-opening) to discover ls20; agent-attribute cycling alone is insufficient. The baselines
+  win L1 only by brute exploration at ~0 efficiency. The bake-off localized the wall precisely to <i>primitive coverage in
+  the discovery phase</i> — Phase 2 clean next step: extend the DSL with a world-paint primitive and re-run.
+  <b>v13 = 0.33 remains the banked, firewalled result; no submission from Phase 1.</b></p>
 </div>
 
 <div class="footer">
