@@ -78,6 +78,10 @@ def make_policy(name: str):
     if name == "rtransfer":
         from arcagi3.relational_transfer_explorer import RelationalTransferExplorer
         return RelationalTransferExplorer(seed=0, trust_threshold=3, border_mask=2)
+    if name in ("valuecnn", "valuecnn-dense"):
+        from arcagi3.spatial_value_explorer import SpatialValueExplorer
+        kw = dict(coarse_grid_step=4, max_click_targets=256) if name.endswith("dense") else {}
+        return SpatialValueExplorer(seed=0, trust_threshold=3, border_mask=2, **kw)
     if name in ("goexplore", "goexplore16"):
         from arcagi3.go_explore_explorer import GoExploreExplorer
         return GoExploreExplorer(seed=0, trust_threshold=3, border_mask=2,
