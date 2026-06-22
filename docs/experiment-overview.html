@@ -226,13 +226,16 @@ overfit-collapse that sank the preview leaders. The dev numbers, against the <b>
   validated that <b>perception works</b> but doesn't convert to score. The public games are signal-rich
   <b>navigation/puzzle-goal</b> games; the residual wall is inferring the <i>exact</i> idiosyncratic
   objective + action-mechanic for an <i>unseen</i> game.</p>
-  <p style="margin-bottom:0"><b>What would actually move it:</b> reliable <b>exact-objective inference</b> —
-  reading not just the coarse goal-type (which both the symbolic extractor and a capable VLM already get)
-  but the precise objective + mechanic, and acting toward it in ~human action counts to close the 100× gap.
-  On current evidence that needs strong reasoning beyond the offline box (GPT-4V-class / specialized
-  fine-tuned + TTT — the leaders' edge); on-device VLMs (qwen2.5vl tested) misread the exact agent/mechanic,
-  and it can't be pre-trained to generalize from 25 distinct games. Strategic fork: commit to that
-  beyond-box build, or bank 0.33 with the validated perception layer as the reusable asset.</p>
+  <p><b>What is and isn't proven (corrected):</b> proven that <i>small on-device VLMs</i> and
+  <i>hand-coded goal-families</i> fail — NOT that offline reasoning fails. Those are different claims, and
+  the latter is open.</p>
+  <p style="margin-bottom:0"><b>The most promising untested direction (mechanic induction):</b> stop chasing
+  "what is the goal?" and discover "what are the transition laws?" — Perception → <b>mechanic induction</b>
+  (a per-game library of action-laws: e.g. ls20's agent-move converts color-11→green and consumes color-8 =
+  a <b>fill/collect</b> game, which goal-perception mis-guessed as reach-target) → affordances → execution on
+  the grammar. Early evidence (§9): the induced grammar extracts ls20's real dynamics where goal-perception
+  was wrong. Open question: whether the grammar makes the goal-config search tractable, or just confirms it's
+  deep. This is the next thing to build — not exploration, transfer, value-learning, or goal-perception.</p>
 </div>
 
 <!-- VISUAL INSPECTION -->
@@ -277,6 +280,15 @@ that pipeline showed, tested end-to-end.</p>
   greedy-symmetry doesn't drive it). Resolving the exact objective needs in-game experimentation per game —
   the expensive goal-inference we set out to avoid — and it must <i>generalize to unseen games</i>, which
   hand-coded families and on-device VLMs don't. That residual, not perception, is the genuine wall.</p>
+</div>
+<div class="panel accent">
+  <h3>Mechanic induction — the next direction (early evidence)</h3>
+  <p style="margin-bottom:0">Captured ls20's actual level-up transition + induced its per-action grammar:
+  the agent-move <b>converts color-11→green (paints/fills)</b> and <b>consumes color-8 (collects)</b> — so ls20
+  is a <b>fill/collect</b> game, which goal-perception mis-guessed as reach-target. This is the key positive
+  for the shift from <i>goal-first</i> to <i>rules-first</i>: mechanic induction extracted the true dynamics
+  where perception failed. The open question is whether the grammar makes the deep goal-config search
+  tractable (salience needs 7961 actions to stumble into ls20's L1) — that's the next build.</p>
 </div>
 
 <div class="footer">
