@@ -77,3 +77,58 @@ def plan(model: InducedModel, start: FactoredState, slots: list[dict], max_nodes
                 seen.add(k)
                 q.append((nxt, path + [a]))
     return None
+
+
+def plan_painted_set(*, deltas, true_walls, paintable_cells, tiles, width, height,
+                     start_pos, start_attrs, slots, max_paints=None, max_nodes=200_000):
+    """A2 backend: BFS over (pos, attrs, completed, painted). Paintable cells must be painted
+    (by entering, subject to max_paints) to be traversed; true_walls always block. Tiles cycle
+    attributes exactly as InducedModel.step does. Returns (actions|None, status) with status in
+    {"solved","no_solution","intractable"}."""
+    def attrs_tuple(d):
+        return tuple(sorted(d.items()))
+
+    def satisfied(pos, ad, completed):
+        done = set(completed)
+        for i, s in enumerate(slots):
+            if i in done:
+                continue
+            if pos == s["pos"] and all(ad.get(k) == v for k, v in s["attr_req"].items()):
+                done.add(i)
+        return frozenset(done)
+
+    start_ad = dict(start_attrs)
+    start_completed = satisfied(start_pos, start_ad, frozenset())
+    if len(start_completed) == len(slots):
+        return [], "solved"
+    start = (start_pos, attrs_tuple(start_ad), start_completed, frozenset())
+    seen = {start}
+    q = deque([(start_pos, start_ad, start_completed, frozenset(), [])])
+    expanded = 0
+    while q:
+        if expanded >= max_nodes:
+            return None, "intractable"
+        pos, ad, completed, painted, path = q.popleft()
+        expanded += 1
+        for a, (dr, dc) in deltas.items():
+            nr, nc = pos[0] + dr, pos[1] + dc
+            if not (0 <= nr < height and 0 <= nc < width) or (nr, nc) in true_walls:
+                continue
+            npainted = painted
+            if (nr, nc) in paintable_cells and (nr, nc) not in painted:
+                if max_paints is not None and len(painted) >= max_paints:
+                    continue  # out of paint -> cannot enter
+                npainted = painted | {(nr, nc)}
+            nad = dict(ad)
+            tile = tiles.get((nr, nc))
+            if tile is not None and nad.get(tile.attribute) in tile.order:
+                i = tile.order.index(nad[tile.attribute])
+                nad[tile.attribute] = tile.order[(i + 1) % len(tile.order)]
+            ncompleted = satisfied((nr, nc), nad, completed)
+            if len(ncompleted) == len(slots):
+                return path + [a], "solved"
+            key = ((nr, nc), attrs_tuple(nad), ncompleted, npainted)
+            if key not in seen:
+                seen.add(key)
+                q.append(((nr, nc), nad, ncompleted, npainted, path + [a]))
+    return None, "no_solution"

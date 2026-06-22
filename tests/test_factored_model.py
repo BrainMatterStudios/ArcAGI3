@@ -61,3 +61,32 @@ def test_factored_state_attr_order_normalised():
     a = FactoredState(pos=(0, 0), attrs={"x": 1, "y": 2}, completed=frozenset())
     b = FactoredState(pos=(0, 0), attrs=(("y", 2), ("x", 1)), completed=frozenset())
     assert a == b and hash(a) == hash(b)
+
+
+from arcagi3.factored_model import plan_painted_set
+
+def _corridor_painted(max_paints):
+    # 1x5 corridor; cols 1,2,3 are PAINTABLE (must be painted to traverse); slot at col 4.
+    return dict(
+        deltas={3: (0, -1), 4: (0, 1)},
+        true_walls=set(),
+        paintable_cells={(0, 1), (0, 2), (0, 3)},
+        tiles={},
+        width=5, height=1,
+        start_pos=(0, 0), start_attrs={},
+        slots=[{"pos": (0, 4), "attr_req": {}, "done": False}],
+        max_paints=max_paints, max_nodes=5000,
+    )
+
+def test_a2_solves_when_budget_allows():
+    actions, status = plan_painted_set(**_corridor_painted(max_paints=3))
+    assert status == "solved" and actions[-1] == 4 and len(actions) == 4
+
+def test_a2_no_solution_when_budget_too_small():
+    actions, status = plan_painted_set(**_corridor_painted(max_paints=2))
+    assert status == "no_solution" and actions is None
+
+def test_a2_reports_intractable_on_node_cap():
+    cfg = _corridor_painted(max_paints=3); cfg["max_nodes"] = 1
+    actions, status = plan_painted_set(**cfg)
+    assert status == "intractable"
