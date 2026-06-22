@@ -1,5 +1,29 @@
+import os
 import numpy as np
+import pytest
 from arcagi3.discovery_explorer import DiscoveryExplorer
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(os.getenv("RUN_BAKEOFF") != "1", reason="live ls20 bake-off; set RUN_BAKEOFF=1")
+def test_discovery_beats_salience_on_l1():
+    # TARGET, NOT YET MET: as of Exp-43, discovery(#1) does NOT clear ls20 L1 within budget.
+    # Its model-discovery probes for AGENT attribute-change on tile entry (on_enter_cycles),
+    # but ls20's mechanic is spatial (the agent paints a trail; its own color/shape never
+    # changes), so PROBE_TRANSFORMS records zero triples -> empty model -> empty plan. This
+    # test documents the intended bar and is expected to FAIL until the discovery engine
+    # learns ls20's actual (non-agent-attribute) mechanic. Do NOT weaken the threshold to pass.
+    import sys
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("bo", "scripts/discovery_bakeoff.py")
+    bo = importlib.util.module_from_spec(spec)
+    sys.modules["bo"] = bo  # so @dataclass annotations resolve against the module's namespace
+    spec.loader.exec_module(bo)
+    from arcagi3.discovery_explorer import DiscoveryExplorer
+    eng = DiscoveryExplorer(seed=0); eng.reset_all()
+    res = bo.run_engine("discovery", eng, budget=5000, max_level=2)
+    l1 = next((x for x in res.levels if x.level == 0 and x.cleared), None)
+    assert l1 is not None and l1.actions < 2000   # vastly under salience's 7901
 
 
 def _grid_with_agent(pos, color=9):

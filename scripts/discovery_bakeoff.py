@@ -118,7 +118,9 @@ def print_table(results: list[EngineResult]) -> None:
 
 def main():
     budget = int(sys.argv[1]) if len(sys.argv) > 1 else 30000
+    from arcagi3.discovery_explorer import DiscoveryExplorer
     engines = [
+        ("discovery(#1)", DiscoveryExplorer(seed=0)),
         ("salience(#2)", SalienceExplorer(seed=0)),
         ("spatial_value(#3)", SpatialValueExplorer(seed=0)),
     ]
