@@ -20,3 +20,44 @@ def test_plan_reaches_attr_match_slot():
     assert actions is not None
     assert actions[-1] == 4
     assert 0 < len(actions) <= 12
+
+
+def _open_model(width=5, height=1, tiles=None, walls=None):
+    return InducedModel(deltas={3: (0, -1), 4: (0, 1)}, walls=walls or set(),
+                        tiles=tiles or {}, width=width, height=height, terminal=TerminalPredicate())
+
+
+def test_already_at_goal_returns_empty_plan():
+    model = _open_model()
+    start = FactoredState(pos=(0, 4), attrs={"rot": 0}, completed=frozenset())
+    slots = [{"pos": (0, 4), "attr_req": {"rot": 0}, "done": False}]
+    assert plan(model, start, slots, max_nodes=5000) == []
+
+
+def test_empty_slots_returns_empty_plan():
+    model = _open_model()
+    start = FactoredState(pos=(0, 0), attrs={"rot": 0}, completed=frozenset())
+    assert plan(model, start, [], max_nodes=5000) == []
+
+
+def test_no_solution_returns_none():
+    # slot requires rot=1 but there is no cycler tile anywhere -> unreachable
+    model = _open_model()
+    start = FactoredState(pos=(0, 0), attrs={"rot": 0}, completed=frozenset())
+    slots = [{"pos": (0, 4), "attr_req": {"rot": 1}, "done": False}]
+    assert plan(model, start, slots, max_nodes=5000) is None
+
+
+def test_walls_block_movement():
+    # wall at col 2 blocks the corridor; slot beyond it is unreachable
+    model = _open_model(walls={(0, 2)})
+    start = FactoredState(pos=(0, 0), attrs={"rot": 0}, completed=frozenset())
+    slots = [{"pos": (0, 4), "attr_req": {"rot": 0}, "done": False}]
+    assert plan(model, start, slots, max_nodes=5000) is None
+
+
+def test_factored_state_attr_order_normalised():
+    # same mapping, different construction -> equal & same hash
+    a = FactoredState(pos=(0, 0), attrs={"x": 1, "y": 2}, completed=frozenset())
+    b = FactoredState(pos=(0, 0), attrs=(("y", 2), ("x", 1)), completed=frozenset())
+    assert a == b and hash(a) == hash(b)

@@ -14,7 +14,7 @@ class FactoredState:
 
     def __init__(self, pos, attrs, completed):
         object.__setattr__(self, "pos", tuple(pos))
-        object.__setattr__(self, "attrs", tuple(sorted(attrs.items())) if isinstance(attrs, dict) else tuple(attrs))
+        object.__setattr__(self, "attrs", tuple(sorted(attrs.items())) if isinstance(attrs, dict) else tuple(sorted(attrs)))
         object.__setattr__(self, "completed", frozenset(completed))
 
     @property
@@ -59,6 +59,8 @@ def _satisfied(state: FactoredState, slots: list[dict]) -> frozenset:
 def plan(model: InducedModel, start: FactoredState, slots: list[dict], max_nodes: int = 200_000):
     """BFS over the factored state; goal = all slots satisfied. Returns action list or None."""
     start = FactoredState(start.pos, start.attr_dict, _satisfied(start, slots))
+    if len(start.completed) == len(slots):
+        return []
     seen = {(start.pos, start.attrs, start.completed)}
     q = deque([(start, [])])
     expanded = 0
