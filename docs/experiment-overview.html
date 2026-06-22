@@ -72,7 +72,7 @@
   <div class="card"><div class="k">Banked best</div><div class="v pos">0.33</div><div class="d">v13 TransferExplorer (public)</div></div>
   <div class="card"><div class="k">Reproducible cluster</div><div class="v">0.58–0.70</div><div class="d">target to "reach"</div></div>
   <div class="card"><div class="k">Leaderboard #1</div><div class="v">1.21</div><div class="d">Tufa Labs (lone outlier)</div></div>
-  <div class="card"><div class="k">Measured experiments</div><div class="v">36+</div><div class="d">5 Kaggle submissions</div></div>
+  <div class="card"><div class="k">Measured experiments</div><div class="v">39+</div><div class="d">5 Kaggle submissions</div></div>
 </div>
 <p class="lead" style="margin-top:18px">Every distinct paradigm has been built and measured on a fixed TUNE/HOLDOUT dev split. The
 public Kaggle score has held at <b>0.33</b> across every submission. This document is the full
@@ -166,7 +166,11 @@ on games you've never seen.</i></p>
     <tr><td class="m">32</td><td>Multi-hypothesis tournament</td><td>in-game test of 5 goal-planners, keep what levels up</td><td>all 5 fail on ls20 + m0r0 — idiosyncratic per-game mechanics</td><td><span class="tag t-kill">refuted</span></td></tr>
     <tr><td class="m">33</td><td>Perception-augmented transfer</td><td>add perceived targets as click candidates on banked transfer</td><td>byte-identical to v13 — perceived targets aren't the triggers</td><td><span class="tag t-kill">inert</span></td></tr>
     <tr><td class="m">34</td><td><b>VLM test (qwen2.5vl:7b)</b></td><td>evidence (not assertion): can a capable VLM read goal+mechanic?</td><td>coarse goal-type only (= symbolic); misreads ls20 agent as background</td><td><span class="tag t-kill">refuted</span></td></tr>
-    <tr><td class="m">35</td><td>Structured goal-discovery</td><td>probe agent → sweep locations × interactions for the trigger</td><td>no L1 on ls20 (274 acts); agent has no down-move; mechanic opaque</td><td><span class="tag t-kill">refuted</span></td></tr>
+    <tr><td class="m">35</td><td>Structured goal-discovery</td><td>probe agent → sweep locations × interactions for the trigger</td><td>no L1 on ls20 (274 acts); mechanic opaque to it</td><td><span class="tag t-kill">refuted</span></td></tr>
+    <tr><td class="m">36</td><td><b>Level-up capture</b></td><td>log the exact (state, action, delta) that triggers L1</td><td>ls20 L1 = "up" move from a deep config (7961 actions in)</td><td><span class="tag t-win">finding</span></td></tr>
+    <tr><td class="m">37</td><td><b>Transition-grammar induction</b></td><td>per-action color/object effect laws (the rules, not the goal)</td><td><b class="pos">ls20 = fill/collect</b> (paint c11→green, consume c8) — perception was wrong</td><td><span class="tag t-win">finding</span></td></tr>
+    <tr><td class="m">38</td><td>Grammar-driven planner</td><td>execute paint-all / collect-all from the grammar (full 4-way move)</td><td>both fail in 3000 — exact win-condition still underdetermined</td><td><span class="tag t-kill">refuted</span></td></tr>
+    <tr><td class="m">39</td><td>Movement-aware coverage</td><td>systematic traversal of reachable cells using the inferred model</td><td>only 7 cells reachable (wall-trapped) — needs env-change, not movement</td><td><span class="tag t-kill">refuted</span></td></tr>
   </tbody>
 </table>
 <p class="note">Experiments 21–35 (this session) all confirm the wall from new angles. The user-directed <b>Goal Extraction Engine</b> (§9) validated that symbolic <b>perception works</b> — a real, reusable positive — but every way of <i>converting</i> perception to score (planners, transfer-augmentation, VLM, structured discovery) fails, because the exact objective + action-mechanic is idiosyncratic per game and underdetermined by appearance.</p>
@@ -282,13 +286,15 @@ that pipeline showed, tested end-to-end.</p>
   hand-coded families and on-device VLMs don't. That residual, not perception, is the genuine wall.</p>
 </div>
 <div class="panel accent">
-  <h3>Mechanic induction — the next direction (early evidence)</h3>
-  <p style="margin-bottom:0">Captured ls20's actual level-up transition + induced its per-action grammar:
-  the agent-move <b>converts color-11→green (paints/fills)</b> and <b>consumes color-8 (collects)</b> — so ls20
-  is a <b>fill/collect</b> game, which goal-perception mis-guessed as reach-target. This is the key positive
-  for the shift from <i>goal-first</i> to <i>rules-first</i>: mechanic induction extracted the true dynamics
-  where perception failed. The open question is whether the grammar makes the deep goal-config search
-  tractable (salience needs 7961 actions to stumble into ls20's L1) — that's the next build.</p>
+  <h3>Mechanic induction (user-directed) — the most revealing approach, but still no conversion</h3>
+  <p>Shifting from <i>"what is the goal?"</i> to <i>"what are the transition laws?"</i> produced the
+  best game-understanding of the whole campaign — and three concrete results on ls20 (the canary):</p>
+  <ul>
+    <li><b>Captured the real level-up transition</b> — triggered by a normal "up" move from a config salience reaches only after 7961 actions.</li>
+    <li><b>Induced the grammar</b> — agent-moves convert color-11→green (<b>paint/fill</b>) and consume color-8 (<b>collect</b>). So ls20 is a fill/collect game — goal-perception mis-guessed "reach-target." <b>Rules-first beat goal-first for understanding.</b></li>
+    <li><b>Corrected the movement model</b> — action 2 is <i>down</i> (looked inert only because the agent started against a wall); full 4-way movement.</li>
+  </ul>
+  <p style="margin-bottom:0">But it <b>still doesn't convert to a level-up</b>: grammar-driven planners (paint-all, collect-all) both fail in 3000 actions, and movement-aware systematic coverage reaches <b>only 7 cells in 3947 actions</b> — the agent is wall-trapped, so progress requires <i>changing the environment</i> (painting opens paths), not free movement. The residual moved one level deeper: from "what goal-type?" to <b>"what exact win-condition over the known dynamics?"</b> — still idiosyncratic per game, and ls20-specific reverse-engineering wouldn't generalize to the unseen games that decide the score. <b>Net: mechanic induction is the most promising lever for understanding, but the exact-win-condition residual persists.</b></p>
 </div>
 
 <div class="footer">
