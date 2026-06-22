@@ -52,3 +52,20 @@ def induce_terminal(prewin: dict) -> TerminalPredicate:
     the agent standing on it with matching attributes. (Spatial+attribute, not a global count —
     confirmed by levelup_contrastive.) The predicate FORM is fixed; its slot specs come live."""
     return TerminalPredicate(kind="attr_match_at_slot")
+
+
+@dataclass(frozen=True)
+class RecolorOnMove:
+    from_color: int
+    to_color: int
+
+
+def induce_recolor_on_move(observations: list[dict], min_support: int = 1) -> list[RecolorOnMove]:
+    """Induce 'moving recolors cells from_color->to_color' (paint). A world-delta observation is
+    {"from_color", "to_color", "vanished": bool}; vanished deltas are collect, not recolor (skip)."""
+    counts: dict[tuple, int] = defaultdict(int)
+    for o in observations:
+        if not o.get("vanished"):
+            counts[(o["from_color"], o["to_color"])] += 1
+    return [RecolorOnMove(from_color=f, to_color=t)
+            for (f, t), n in counts.items() if n >= min_support]

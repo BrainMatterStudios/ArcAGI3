@@ -1,5 +1,5 @@
 import numpy as np
-from arcagi3.transform_induction import induce_on_enter_cycles, OnEnterCycle, induce_terminal, TerminalPredicate
+from arcagi3.transform_induction import induce_on_enter_cycles, OnEnterCycle, induce_terminal, TerminalPredicate, induce_recolor_on_move, RecolorOnMove
 
 
 def test_induces_color_cycle_on_tile_contact():
@@ -37,3 +37,18 @@ def test_terminal_all_slots_must_be_satisfied():
     assert pred.holds(agent_pos=(0, 0), agent_attrs={"color": "c", "shape": "s"},
                       slots=[{"pos": (0, 0), "attr_req": {"color": "c", "shape": "s"}, "done": False},
                              {"pos": (9, 9), "attr_req": {"color": "c", "shape": "s"}, "done": True}])
+
+
+def test_induces_recolor_on_move():
+    obs = [
+        {"from_color": 11, "to_color": 3, "vanished": False},
+        {"from_color": 11, "to_color": 3, "vanished": False},
+    ]
+    rules = induce_recolor_on_move(obs)
+    assert RecolorOnMove(from_color=11, to_color=3) in rules
+    assert all(r.from_color != 5 for r in rules)
+
+
+def test_recolor_requires_min_support():
+    obs = [{"from_color": 11, "to_color": 3, "vanished": False}]
+    assert induce_recolor_on_move(obs, min_support=2) == []
