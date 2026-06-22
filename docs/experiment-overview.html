@@ -72,7 +72,7 @@
   <div class="card"><div class="k">Banked best</div><div class="v pos">0.33</div><div class="d">v13 TransferExplorer (public)</div></div>
   <div class="card"><div class="k">Reproducible cluster</div><div class="v">0.58–0.70</div><div class="d">target to "reach"</div></div>
   <div class="card"><div class="k">Leaderboard #1</div><div class="v">1.21</div><div class="d">Tufa Labs (lone outlier)</div></div>
-  <div class="card"><div class="k">Measured experiments</div><div class="v">25+</div><div class="d">5 Kaggle submissions</div></div>
+  <div class="card"><div class="k">Measured experiments</div><div class="v">32+</div><div class="d">5 Kaggle submissions</div></div>
 </div>
 <p class="lead" style="margin-top:18px">Every distinct paradigm has been built and measured on a fixed TUNE/HOLDOUT dev split. The
 public Kaggle score has held at <b>0.33</b> across every submission. This document is the full
@@ -94,16 +94,16 @@ on games you've never seen.</i></p>
 <!-- ROOT CAUSE -->
 <h2><span class="n">02</span> The unified root cause</h2>
 <div class="panel kill">
-  <h3>An accurate world model is useless without a goal — and the goal is provably unlearnable offline here.</h3>
-  <p style="margin-bottom:6px">Across 20+ experiments, every dead end reduces to a <b>single measured wall</b>, not many separate ones:</p>
+  <h3>Competitive scores need ~human-efficient goal-directed play. The goal is visually displayed but not learnable offline — so blind exploration is ~100× too inefficient to score.</h3>
+  <p style="margin-bottom:6px">Across 32+ experiments, every dead end reduces to a <b>single measured wall</b>, now crystallized to its truest form:</p>
   <ul>
-    <li><b>Offline goal-identification is not learnable.</b> A raw-pixel CNN trained to flag "on-path-to-reward" states scored <b class="neg">LOGO AUC 0.457</b> — below chance. Hand-feature models: also chance.</li>
-    <li><b>Goal-direction levers</b> fail because there's no signal to steer by.</li>
-    <li><b>Rule-synthesis / forward models</b> fail because a perfect predictor still can't tell you <i>which</i> state is the goal.</li>
-    <li><b>The wall games are NOT learning-starved — they are signal-rich navigation-goal games</b> (a 2026-06-22 causal-probe survey overturned the earlier "starved" framing: sk48 changes the frame on 88% of actions, ls20/re86 ~100%). The wall is reaching the goal <i>configuration</i>, which needs goal-directed composition over discoverable mechanics — and the goal is the unlearnable part. Structural state is also irreducibly high-entropy (sk48: 455 distinct signatures / 800 steps), so no abstraction compresses it.</li>
-    <li><b>Any exploration-order change corrupts coverage</b> — confirmed across 5 independent reordering levers (frontier order is load-bearing).</li>
+    <li><b>The score is an efficiency ratio</b> (human_actions / your_actions per level), not "did you reach it." Salience reaching sk48 L1 in 25,139 actions when a human needs ~100 scores ≈ <b class="neg">0.004</b> — almost nothing. The gap isn't 2×, it's <b>~100×</b>.</li>
+    <li><b>Closing 100× requires goal-DIRECTED play</b> (act toward the goal, like a human), not exploring tens of thousands of states. That needs knowing the goal.</li>
+    <li><b>The goals ARE visually displayed</b> (rendered & inspected 2026-06-22 — see §8: ls20 = navigate avatar to target markers; m0r0 = mirror/symmetry; sk48 = collect/arrange with a progress meter). Humans read them instantly. <b>Our agents perceive only novelty and reward — never the goal.</b></li>
+    <li><b>But the goal is not learnable offline</b> (CNN LOGO AUC <b class="neg">0.457</b>, below chance; on-device VLMs fail the easy known game; 25 distinct games can't pre-train a generalizer), and it's not determinable from priors weak enough to run offline.</li>
+    <li><b>Any exploration-order change that would speed things up corrupts coverage</b> — confirmed across <b>7</b> reordering levers, with a precise mechanism: a level-up resets exploration state, so changing action order shifts level-up <i>timing</i> → the downstream trajectory diverges → deep reach collapses (tu93 L5→L2).</li>
   </ul>
-  <p class="note">The reproducible cluster (0.58–0.70) sidesteps this: they don't identify goals offline — they learn a <i>within-game distance to a reward already found</i> and spend compute on coverage efficiency. The leader (1.21) likely uses a hosted-LLM / TTT class method that's hard to reproduce offline.</p>
+  <p class="note">The two halves are jointly fatal to any offline blind-exploration family: you can't reach the hard goals without speeding up, and you can't speed up without destroying the deep reach you have. The cluster (0.58–0.70) and leader (1.21) close the 100× gap with visual goal-perception from strong hosted models / compute / data — resources outside the offline Kaggle box.</p>
 </div>
 
 <!-- KAGGLE SUBMISSIONS -->
@@ -157,9 +157,14 @@ on games you've never seen.</i></p>
     <tr><td class="m">23</td><td>CausalProbe structural promotion</td><td>promote structural-delta action classes (proof-gated)</td><td>net regression (over-fires); can't help nav games (position-dependent)</td><td><span class="tag t-kill">kill</span></td></tr>
     <tr><td class="m">24</td><td>Structural replay-bank</td><td>Go-Explore anchored on structural states</td><td>refuted by substrate: structural state high-entropy (no compression)</td><td><span class="tag t-kill">refuted</span></td></tr>
     <tr><td class="m">25</td><td>Universal-exploit scan</td><td>held-action macros / null-coord / corner clicks / sweep</td><td>0 level-ups on 16 games; context-free patterns can't reach triggers</td><td><span class="tag t-kill">refuted</span></td></tr>
+    <tr><td class="m">26</td><td>Depth-biased stall explorer</td><td>on stall, flip frontier choice nearest→farthest (drive deep)</td><td>30k A/B: strictly worse (sk48/ls20 L1→L0); goal isn't "deepest"</td><td><span class="tag t-kill">refuted</span></td></tr>
+    <tr><td class="m">27</td><td>Re-traversal diagnostic</td><td>measure nav-vs-explore action fraction</td><td>headroom inherent: sk48 2% nav; tu93 48% but reset-driven (non-reversible)</td><td><span class="tag t-win">finding</span></td></tr>
+    <tr><td class="m">28</td><td><b>Batch-value reorder</b></td><td>reorder same-tier untried batch by causal value</td><td>tu93 L5→L2 — proves NO reordering is coverage-safe (level-up timing)</td><td><span class="tag t-kill">refuted</span></td></tr>
+    <tr><td class="m">29</td><td>Latency / budget profiling</td><td>decide() time + actions-per-8hr</td><td>decide 0.5ms, budget ample — ceiling is NOT speed/budget</td><td><span class="tag t-win">finding</span></td></tr>
+    <tr><td class="m">30</td><td><b>Visual goal inspection</b></td><td>render & look at the games (§8)</td><td><b class="pos">goals ARE displayed</b> — humans read them; our agents don't perceive goals</td><td><span class="tag t-win">finding</span></td></tr>
   </tbody>
 </table>
-<p class="note">Experiments 21–25 (this session, causal-probe architecture + exploit scan) all confirm the wall from new angles. The full user-directed causal-probe architecture was built and tested: it handles <b>trigger</b> games via transfer (≈0.33) but cannot crack the <b>navigation</b> games that gate the public score.</p>
+<p class="note">Experiments 21–30 (this session: causal-probe architecture, exploit scan, and the user-approved multi-session build — depth Phase 1 + batch-value Phase 2) all confirm the wall from new angles, and yielded the mechanistic + visual crystallization in §2. The architecture handles <b>trigger</b> games via transfer (≈0.33) but cannot crack the <b>navigation</b> games that gate the score.</p>
 
 <!-- VALUE CNN DEEP DIVE -->
 <h2><span class="n">05</span> The value-CNN investigation (this session)</h2>
@@ -201,6 +206,9 @@ overfit-collapse that sank the preview leaders. The dev numbers, against the <b>
   <div class="panel accent"><h3>Verify the mechanism, not the metric</h3><p class="note" style="margin:0">The "ls20 2.3×" slide-nav win was a probe-prefix artifact — the planner never actually ran. A lucky opening sequence, not a generalizable lever.</p></div>
   <div class="panel accent"><h3>Reach &gt; efficiency</h3><p class="note" style="margin:0">Level weighting means reaching lp85 L5 beats shaving actions on an already-solved level. The value-CNN optimized the wrong thing.</p></div>
   <div class="panel accent"><h3>The wall is one wall</h3><p class="note" style="margin:0">Goal-id is unlearnable offline (AUC 0.457). Every paradigm — learned, symbolic, intrinsic, prior-based — reduces to this. 0.33 is the honest offline ceiling for this agent family.</p></div>
+  <div class="panel accent"><h3>No reordering is coverage-safe</h3><p class="note" style="margin:0">A level-up resets exploration state, so changing action order shifts level-up timing → trajectory diverges → deep reach collapses. 7 levers confirm it; even within-batch reorder craters tu93 (L5→L2).</p></div>
+  <div class="panel accent"><h3>It's not speed or budget</h3><p class="note" style="margin:0">decide() is 0.5ms and the 8-hr budget allows hundreds of thousands of actions/game. The ceiling is the ~100× efficiency gap from blind vs goal-directed play — not compute.</p></div>
+  <div class="panel accent"><h3>Agents don't see the goal</h3><p class="note" style="margin:0">Goals are visually displayed (§8) and humans pursue them in ~100 actions. Our agents perceive novelty & reward, never the goal — so they explore 100× more. That perception gap is the whole story.</p></div>
 </div>
 
 <!-- PATH FORWARD -->
@@ -213,13 +221,29 @@ overfit-collapse that sank the preview leaders. The dev numbers, against the <b>
   <b>navigation-goal</b> games: the wall is reaching the goal <i>configuration</i>, and the goal is the
   unlearnable part. The prize is the <i>private</i> hidden games (scored ~Nov) where transfer's
   strict-superset behavior <i>may</i> help — unobservable now.</p>
-  <p style="margin-bottom:0"><b>What would actually move it:</b> a method that reaches the <i>first</i>
-  level-up on a navigation game without knowing its goal — an open research problem. The cluster's
-  0.58–0.70 needs within-game distance-value without disturbing coverage (the value-CNN got the value,
-  broke the coverage); the leader's 1.21 needs a hosted-LLM / test-time-training class method, and even
-  that can't be <i>pre-trained</i> to generalize (only 25 games exist, all distinct, cross-game signal
-  ≈ chance). The strategic fork: commit to that hard build, or bank 0.33 and play the private-game upside.</p>
+  <p style="margin-bottom:0"><b>What would actually move it:</b> <b>visual goal-perception</b> — reading the
+  displayed goal (§8) and acting toward it in ~human action counts, closing the 100× gap. That needs
+  strong visual reasoning (hosted-model / TTT class) runnable offline, which on-device models can't yet
+  deliver, and can't be <i>pre-trained</i> to generalize from 25 distinct games. The strategic fork:
+  commit to that hard research build, or bank 0.33 and play the private-game upside.</p>
 </div>
+
+<!-- VISUAL INSPECTION -->
+<h2><span class="n">08</span> What the games actually look like</h2>
+<p class="lead">The decisive realization (2026-06-22): I had analyzed these games purely numerically for the
+entire campaign and never <i>looked</i> at them. Rendering the initial frames shows the goals are
+<b>visually present</b> — exactly what a human reads to play efficiently, and exactly what our
+novelty/reward-driven agents never perceive.</p>
+<img src="games_initial.png" alt="Initial frames of six games" style="width:100%;border:1px solid var(--border);border-radius:10px;margin:6px 0"/>
+<ul>
+  <li><b>ls20</b> — a maze: the <code>+</code> avatar must navigate to the maroon target markers. Goal is explicit.</li>
+  <li><b>m0r0</b> — a gray/brown split that reads as a <b>mirror/symmetry</b> task.</li>
+  <li><b>sk48</b> — a collect/arrange board with a tray and a left-edge <b>progress meter</b>.</li>
+  <li><b>wa30 / re86</b> — bordered-square <b>matching/selection</b> layouts.</li>
+</ul>
+<p class="note">A human infers each goal in seconds and pursues it in ~100 actions. Salience takes ~25,000
+because it has no goal to pursue — only novelty. This is the 100× gap made visible, and it points the
+only real path forward at <b>visual goal-perception</b>, not better blind exploration.</p>
 
 <div class="footer">
   All figures from <code>scripts/eval_efficiency.py</code> on the fixed TUNE/HOLDOUT split (budget 6000–30000).
