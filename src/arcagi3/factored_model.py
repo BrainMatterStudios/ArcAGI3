@@ -84,7 +84,12 @@ def plan_painted_set(*, deltas, true_walls, paintable_cells, tiles, width, heigh
     """A2 backend: BFS over (pos, attrs, completed, painted). Paintable cells must be painted
     (by entering, subject to max_paints) to be traversed; true_walls always block. Tiles cycle
     attributes exactly as InducedModel.step does. Returns (actions|None, status) with status in
-    {"solved","no_solution","intractable"}."""
+    {"solved","no_solution","intractable"}.
+
+    Painting happens on move-INTO a cell, so the start cell is NOT pre-painted; re-entering the
+    start cell later costs one paint from the budget.
+    Precedence: a cell in both `true_walls` and `paintable_cells` is treated as a hard wall
+    (true_walls checked first)."""
     def attrs_tuple(d):
         return tuple(sorted(d.items()))
 

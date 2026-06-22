@@ -1,4 +1,4 @@
-from arcagi3.factored_model import FactoredState, InducedModel, plan
+from arcagi3.factored_model import FactoredState, InducedModel, plan, plan_painted_set
 from arcagi3.transform_induction import OnEnterCycle, TerminalPredicate
 
 
@@ -63,8 +63,6 @@ def test_factored_state_attr_order_normalised():
     assert a == b and hash(a) == hash(b)
 
 
-from arcagi3.factored_model import plan_painted_set
-
 def _corridor_painted(max_paints):
     # 1x5 corridor; cols 1,2,3 are PAINTABLE (must be painted to traverse); slot at col 4.
     return dict(
@@ -90,3 +88,38 @@ def test_a2_reports_intractable_on_node_cap():
     cfg = _corridor_painted(max_paints=3); cfg["max_nodes"] = 1
     actions, status = plan_painted_set(**cfg)
     assert status == "intractable"
+
+
+def test_a2_tile_on_paintable_cell_cycles_attr_and_paints():
+    # A paintable cell that ALSO holds a rotation cycler: entering it both paints it and cycles attr.
+    actions, status = plan_painted_set(
+        deltas={4: (0, 1)}, true_walls=set(), paintable_cells={(0, 1)},
+        tiles={(0, 1): OnEnterCycle(tile_color=11, attribute="rot", order=(0, 1, 2, 3))},
+        width=3, height=1, start_pos=(0, 0), start_attrs={"rot": 3},
+        slots=[{"pos": (0, 2), "attr_req": {"rot": 0}, "done": False}],
+        max_paints=None, max_nodes=5000)
+    # step onto (0,1): paint it AND rot 3->0; step to (0,2): matches rot=0 -> solved
+    assert status == "solved" and actions == [4, 4]
+
+
+def test_a2_multi_slot_accumulates_completion():
+    # two slots in an open row (cols 1 and 3); agent must visit BOTH (order-free) to win.
+    actions, status = plan_painted_set(
+        deltas={3: (0, -1), 4: (0, 1)}, true_walls=set(), paintable_cells=set(),
+        tiles={}, width=4, height=1, start_pos=(0, 0), start_attrs={},
+        slots=[{"pos": (0, 1), "attr_req": {}, "done": False},
+               {"pos": (0, 3), "attr_req": {}, "done": False}],
+        max_paints=None, max_nodes=5000)
+    assert status == "solved" and actions[-1] == 4  # ends by reaching the far slot
+
+
+def test_a2_start_cell_paintable_costs_budget_on_reentry():
+    # start cell is paintable; with max_paints=1, re-entering the start after leaving would need a
+    # 2nd paint -> but a direct forward path needs only 1 paint, so it still solves at budget 1.
+    actions, status = plan_painted_set(
+        deltas={3: (0, -1), 4: (0, 1)}, true_walls=set(), paintable_cells={(0, 0), (0, 1)},
+        tiles={}, width=3, height=1, start_pos=(0, 0), start_attrs={},
+        slots=[{"pos": (0, 2), "attr_req": {}, "done": False}],
+        max_paints=1, max_nodes=5000)
+    # path: (0,0)->(0,1)[paint #1]->(0,2). Start cell (0,0) not pre-painted but never re-entered.
+    assert status == "solved" and actions == [4, 4]
