@@ -59,10 +59,14 @@ if _TORCH:
 
 class SpatialValueExplorer(SalienceExplorer):
     def __init__(self, *args, enable_value_cnn: bool = True, train_steps: int = 150,
-                 conf_margin: float = 0.6, **kwargs) -> None:
+                 conf_margin: float = 0.6, exploit_cap: int = 150, **kwargs) -> None:
         self.enable_value_cnn = bool(enable_value_cnn) and _TORCH
         self.train_steps = int(train_steps)
         self.conf_margin = float(conf_margin)
+        # cap consecutive exploit-actions per level: if the value-guided exploit hasn't produced a
+        # level-up within exploit_cap steps, it's chasing a wrong milestone-direction (the cd82
+        # failure: L2 differs from L1) -> revert to salience coverage. Bounds wasted exploit.
+        self.exploit_cap = int(exploit_cap)
         super().__init__(*args, **kwargs)
 
     def reset_all(self):
@@ -71,6 +75,8 @@ class SpatialValueExplorer(SalienceExplorer):
         self.grid_by_key: dict = {}
         self.transitions: list = []       # (from_key, action, to_key)
         self._svp_prev_grid = None
+        self._exploit_streak = 0
+        self._svp_levels = 0
 
     # ---- capture + train ----
     def decide(self, grid, gstate_terminal, gstate_notplayed, levels, available):
@@ -78,6 +84,9 @@ class SpatialValueExplorer(SalienceExplorer):
             if self.bg is None:
                 self.bg = P.detect_background(grid)
             self._svp_prev_grid = grid   # current grid, for _choose's value lookup
+            if levels > self._svp_levels:   # new level -> reset the exploit budget
+                self._svp_levels = levels
+                self._exploit_streak = 0
             self.grid_by_key.setdefault(self._key(grid), grid)
             if self.prev_action is not None and self.prev_key is not None:
                 self.transitions.append((self.prev_key, self.prev_action, self._key(grid)))
@@ -141,6 +150,8 @@ class SpatialValueExplorer(SalienceExplorer):
         untried = [a for a in node.cands if a not in node.edges]
         if len(untried) < 2 or self._svp_prev_grid is None:
             return super()._choose(cur)
+        if self._exploit_streak >= self.exploit_cap:   # exploit budget spent -> salience coverage
+            return super()._choose(cur)
         grid = self._svp_prev_grid
         self.qnet.train(False)
         with torch.no_grad():
@@ -156,5 +167,6 @@ class SpatialValueExplorer(SalienceExplorer):
         # HARDENING: only exploit if the net is confident (clear margin over the median candidate)
         med = float(np.median([v for v, _ in scored]))
         if best_v - med >= self.conf_margin:
+            self._exploit_streak += 1
             return best_a
         return super()._choose(cur)
