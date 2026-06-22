@@ -30,7 +30,7 @@ from pathlib import Path
 
 from arcengine import ActionInput, GameAction, GameState
 
-LS20_PATH = Path("environment_files/ls20/9607627b/ls20.py")
+LS20_PATH = Path(__file__).resolve().parent.parent / "environment_files/ls20/9607627b/ls20.py"
 MOVES = [GameAction.ACTION1, GameAction.ACTION2, GameAction.ACTION3, GameAction.ACTION4]
 
 

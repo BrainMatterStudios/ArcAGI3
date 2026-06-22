@@ -31,7 +31,7 @@ from pathlib import Path
 
 from arcengine import GameAction
 
-SK48_PATH = Path("environment_files/sk48/d8078629/sk48.py")
+SK48_PATH = Path(__file__).resolve().parent.parent / "environment_files/sk48/d8078629/sk48.py"
 
 # Only directional moves are useful for BFS; ACTION6 and ACTION7 are never optimal.
 SK48_MOVES = [
