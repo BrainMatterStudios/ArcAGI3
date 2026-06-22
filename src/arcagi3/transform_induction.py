@@ -30,3 +30,18 @@ def induce_on_enter_cycles(triples: list[dict], min_support: int = 1) -> list[On
             order = tuple(dict.fromkeys(seq[(tile_color, attr)]))  # de-dup, keep first-seen order
             rules.append(OnEnterCycle(tile_color=tile_color, attribute=attr, order=order))
     return rules
+
+
+@dataclass(frozen=True)
+class TerminalPredicate:
+    kind: str = "attr_match_at_slot"
+
+    def holds(self, agent_pos, agent_attr, slots) -> bool:
+        return all(s["done"] or (agent_pos == s["pos"] and agent_attr == s["attr"]) for s in slots)
+
+
+def induce_terminal(prewin: dict) -> TerminalPredicate:
+    """From the contrasted pre-win state, the completion predicate is: every slot is satisfied by
+    the agent standing on it with matching attributes. (Spatial+attribute, not a global count —
+    confirmed by levelup_contrastive.) The predicate FORM is fixed; its slot specs come live."""
+    return TerminalPredicate(kind="attr_match_at_slot")
