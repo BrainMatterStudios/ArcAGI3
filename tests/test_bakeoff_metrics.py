@@ -1,4 +1,5 @@
 import math
+import pytest
 from arcagi3.bakeoff_metrics import efficiency, transfer_slope
 
 def test_efficiency_capped_at_1_15():
@@ -15,3 +16,10 @@ def test_efficiency_uncompleted_is_zero():
 def test_transfer_slope_negative_when_costs_drop():
     assert transfer_slope([200, 120, 60, 40]) < 0
     assert transfer_slope([50, 50, 50]) == 0.0
+
+
+@pytest.mark.integration
+def test_human_baseline_level1_is_optimal():
+    from arcagi3.bakeoff_metrics import human_baseline_actions
+    a_h = human_baseline_actions(level=0)
+    assert a_h is not None and 1 <= a_h <= 30   # Exp-42 found 13
