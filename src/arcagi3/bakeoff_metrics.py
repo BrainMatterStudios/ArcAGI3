@@ -18,6 +18,7 @@ _TRUEMODEL = _REPO_ROOT / "scripts" / "truemodel_planner.py"
 _GRADERS: dict[str, tuple[str, str, str | None, str | None]] = {
     "ls20": ("scripts/truemodel_planner.py", "load_ls20_class", None, None),
     "sk48": ("scripts/truemodel_sk48.py", "load_sk48_class", "sk48_key", "SK48_MOVES"),
+    "collect": ("scripts/truemodel_collect.py", "load_collect_class", "collect_key", None),
 }
 
 # Cache: game_id -> list of per-level A_h values
@@ -56,8 +57,9 @@ def human_baseline_actions(game: str = "ls20", level: int = 0, max_nodes: int = 
     """A_h proxy = BFS-optimal action count over a game's TRUE model (grader-only source access).
 
     Dispatches by `game` name; results are cached per-game.  Supported games:
-      "ls20" — the original (Exp-42); L0=13, L1=45.
-      "sk48" — snake/rope puzzle; directional moves only, step-budget state.
+      "ls20"    — the original (Exp-42); L0=13, L1=45.
+      "sk48"    — snake/rope puzzle; directional moves only, step-budget state.
+      "collect" — collect-all-items navigation; directional moves, 14×14 grid.
 
     Returns None when BFS cannot solve within max_nodes, or on any unexpected error.
     """

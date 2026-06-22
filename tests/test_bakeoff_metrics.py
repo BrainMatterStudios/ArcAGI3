@@ -33,10 +33,11 @@ def test_efficiency_dispatch_signature():
 
 
 @pytest.mark.integration
-def test_sk48_baseline_level1():
+def test_collect_baseline_level1():
     from arcagi3.bakeoff_metrics import human_baseline_actions
-    a_h = human_baseline_actions(game="sk48", level=0)
-    assert a_h is None or a_h >= 1   # tolerant: confirms the grader runs without error
+    a_h = human_baseline_actions(game="collect", level=0)
+    # collect L1 has 3 items in a 14×14 grid; optimal collect-all path is a real, finite count.
+    assert a_h is not None and a_h >= 3
 
 
 @pytest.mark.integration
