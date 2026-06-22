@@ -45,7 +45,7 @@ class DiscoveryExplorer:
         self._tiles: dict = {}
         self._cycles: list = []
         self._triples: list[dict] = []
-        self._last_induced_len = -1
+        self._last_induced_len = (-1, -1)
         self._plan: list = []
         self._seen_hashes: set = set()
         self._last_level = 0
@@ -72,6 +72,7 @@ class DiscoveryExplorer:
         self._probe_queue = []
         self._transform_steps = 0
         self._prev_attr = None
+        self._prev_grid = None
         # grammar known -> jump straight to re-mapping the new layout's transforms; else re-probe.
         self._phase = "PROBE_TRANSFORMS" if self._deltas else "PROBE_MOVEMENT"
 
@@ -245,13 +246,13 @@ class DiscoveryExplorer:
             # Guard against re-inducing every call when nothing changed (Fix F): if the last
             # induction already failed to yield a plan and no new evidence has arrived since,
             # don't loop back through INDUCE — emit a coverage/fallback action to gather more.
-            if not self._plan and len(self._triples) == self._last_induced_len:
+            if not self._plan and (len(self._triples), len(self._world_obs)) == self._last_induced_len:
                 if simple:
                     return ("S", self._next_coverage_action(grid, simple) or
                             simple[self._transform_steps % len(simple)])
                 return ("S", available[0] if available else 1)
             self._build_model(grid)
-            self._last_induced_len = len(self._triples)
+            self._last_induced_len = (len(self._triples), len(self._world_obs))
             self._phase = "PLAN"
 
         # PLAN: enumerate candidate slot attr-specs, BFS-plan, cache the action list.
@@ -366,9 +367,12 @@ class DiscoveryExplorer:
             reqs.append({"shape": v})
         # A1 (traversal): InducedModel with paintable cells removed from walls (passable);
         # the existing path-BFS plan() satisfies the slots.
-        model = InducedModel(deltas=self._deltas, walls=true_walls, tiles=self._tiles,
-                             width=W, height=H, terminal=self._terminal)
-        start = FactoredState(pos=start_pos, attrs=start_attrs, completed=frozenset())
+        # A2 (painted_set): plan_painted_set uses start_pos/start_attrs directly — no model/start.
+        # Build model and start only for A1 to avoid constructing an unused InducedModel for A2.
+        if self._backend != "painted_set":
+            model = InducedModel(deltas=self._deltas, walls=true_walls, tiles=self._tiles,
+                                 width=W, height=H, terminal=self._terminal)
+            start = FactoredState(pos=start_pos, attrs=start_attrs, completed=frozenset())
 
         for req in reqs:
             slots = [{"pos": pos, "attr_req": req, "done": False} for pos in slot_positions]
