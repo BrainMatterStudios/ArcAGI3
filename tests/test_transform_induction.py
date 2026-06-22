@@ -1,5 +1,5 @@
 import numpy as np
-from arcagi3.transform_induction import induce_on_enter_cycles, OnEnterCycle, induce_terminal, TerminalPredicate, induce_recolor_on_move, RecolorOnMove
+from arcagi3.transform_induction import induce_on_enter_cycles, OnEnterCycle, induce_terminal, TerminalPredicate, induce_recolor_on_move, RecolorOnMove, induce_collect_on_contact, CollectOnContact
 
 
 def test_induces_color_cycle_on_tile_contact():
@@ -52,3 +52,14 @@ def test_induces_recolor_on_move():
 def test_recolor_requires_min_support():
     obs = [{"from_color": 11, "to_color": 3, "vanished": False}]
     assert induce_recolor_on_move(obs, min_support=2) == []
+
+
+def test_induces_collect_on_contact():
+    obs = [
+        {"from_color": 8, "to_color": 0, "vanished": True},
+        {"from_color": 8, "to_color": 0, "vanished": True},
+        {"from_color": 11, "to_color": 3, "vanished": False},
+    ]
+    rules = induce_collect_on_contact(obs)
+    assert CollectOnContact(color=8) in rules
+    assert all(r.color != 11 for r in rules)

@@ -69,3 +69,18 @@ def induce_recolor_on_move(observations: list[dict], min_support: int = 1) -> li
             counts[(o["from_color"], o["to_color"])] += 1
     return [RecolorOnMove(from_color=f, to_color=t)
             for (f, t), n in counts.items() if n >= min_support]
+
+
+@dataclass(frozen=True)
+class CollectOnContact:
+    color: int
+
+
+def induce_collect_on_contact(observations: list[dict], min_support: int = 1) -> list[CollectOnContact]:
+    """Induce 'agent contact removes cells of color C' (collect): world-delta observations whose
+    `vanished` is True (cell became background)."""
+    counts: dict[int, int] = defaultdict(int)
+    for o in observations:
+        if o.get("vanished"):
+            counts[o["from_color"]] += 1
+    return [CollectOnContact(color=c) for c, n in counts.items() if n >= min_support]
