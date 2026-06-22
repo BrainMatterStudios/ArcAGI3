@@ -21,16 +21,20 @@ import numpy as np
 
 from arcagi3 import perception as P, movement as Mv, scene_graph as SG
 from arcagi3.attribute_state import agent_attributes
-from arcagi3.transform_induction import induce_on_enter_cycles, induce_terminal
-from arcagi3.factored_model import FactoredState, InducedModel, plan
+from arcagi3.transform_induction import (
+    induce_on_enter_cycles, induce_terminal,
+    induce_recolor_on_move, induce_collect_on_contact,
+)
+from arcagi3.factored_model import FactoredState, InducedModel, plan, plan_painted_set
 
 # Bounded coverage so a black-box game can't trap the explorer in a phase forever.
 _MAX_TRANSFORM_STEPS = 400
 
 
 class DiscoveryExplorer:
-    def __init__(self, seed: int = 0):
+    def __init__(self, seed: int = 0, planner_backend: str = "traversal"):
         self.seed = seed
+        self._backend = planner_backend  # "traversal" = A1 (path BFS) | "painted_set" = A2
         self.reset_all()
 
     # ------------------------------------------------------------------ lifecycle
@@ -54,6 +58,10 @@ class DiscoveryExplorer:
         self._transform_steps = 0
         self._prev_attr = None
         self._world_obs: list[dict] = []
+        # World-transform rules induced from _world_obs (Task 6/7):
+        self._recolors: list = []        # RecolorOnMove(from_color, to_color) — paint
+        self._collects: list = []        # CollectOnContact(color) — collect/vanish
+        self._paint_colors: set = set()  # from_color of each recolor rule (paintable cells)
 
     def on_level_change(self, new_level: int):
         """KEEP the induced grammar (deltas/tiles/terminal); FLUSH the layout state."""
@@ -298,6 +306,11 @@ class DiscoveryExplorer:
                     for cell in o.cells:
                         self._tiles[cell] = cyc
         self._terminal = induce_terminal({})
+        # World-transform rules (Task 7): paint (recolor-on-move) + collect (vanish-on-contact),
+        # induced from the world-delta observations gathered during PROBE_TRANSFORMS.
+        self._recolors = induce_recolor_on_move(self._world_obs)
+        self._collects = induce_collect_on_contact(self._world_obs)
+        self._paint_colors = {r.from_color for r in self._recolors}
 
     def _attainable_attr_values(self):
         """The small set of attribute values the agent can take, from observed cycle orders."""
@@ -328,9 +341,15 @@ class DiscoveryExplorer:
         if not slot_positions:
             return
 
-        model = InducedModel(deltas=self._deltas, walls=self._walls, tiles=self._tiles,
-                             width=W, height=H, terminal=self._terminal)
-        start = FactoredState(pos=start_pos, attrs=start_attrs, completed=frozenset())
+        # Paintable cells (Task 7): cells whose color is a known paint `from_color`. Under A1
+        # they are treated as passable (removed from walls); under A2 they must be painted to
+        # be traversed. Computed from the same connected-components view used everywhere else.
+        paintable_cells: set = set()
+        if self._paint_colors and self._bg is not None:
+            for o in P.connected_components(grid, background=self._bg):
+                if int(o.color) in self._paint_colors:
+                    paintable_cells.update(o.cells)
+        true_walls = self._walls - paintable_cells
 
         # Enumerate single-attribute requirements per slot over the small attainable set.
         # Our attribute vector is AttrVec(color, shape_sig); shape_sig is rotation-SENSITIVE,
@@ -345,9 +364,27 @@ class DiscoveryExplorer:
             reqs.append({"color": v})
         for v in sorted(attainable.get("shape", set())):
             reqs.append({"shape": v})
+        # A1 (traversal): InducedModel with paintable cells removed from walls (passable);
+        # the existing path-BFS plan() satisfies the slots.
+        model = InducedModel(deltas=self._deltas, walls=true_walls, tiles=self._tiles,
+                             width=W, height=H, terminal=self._terminal)
+        start = FactoredState(pos=start_pos, attrs=start_attrs, completed=frozenset())
+
         for req in reqs:
             slots = [{"pos": pos, "attr_req": req, "done": False} for pos in slot_positions]
-            actions = plan(model, start, slots)
-            if actions:
-                self._plan = list(actions)
-                return
+            if self._backend == "painted_set":
+                # A2: paintable cells must be painted (entered) to be traversed.
+                actions, status = plan_painted_set(
+                    deltas=self._deltas, true_walls=true_walls,
+                    paintable_cells=paintable_cells, tiles=self._tiles,
+                    width=W, height=H, start_pos=start_pos, start_attrs=start_attrs,
+                    slots=slots, max_paints=None, max_nodes=200_000,
+                )
+                if status == "solved":
+                    self._plan = list(actions)
+                    return
+            else:
+                actions = plan(model, start, slots)
+                if actions:
+                    self._plan = list(actions)
+                    return

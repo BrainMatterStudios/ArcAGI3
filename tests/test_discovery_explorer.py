@@ -194,3 +194,30 @@ def test_world_delta_excludes_agent_and_records_recolor():
     eng._ingest_world_delta(cur)
     assert {"from_color": 11, "to_color": 3, "vanished": False} in eng._world_obs
     assert all(o["from_color"] != 9 and o["to_color"] != 9 for o in eng._world_obs)
+
+
+def test_planner_backend_flag_default_and_set():
+    from arcagi3.discovery_explorer import DiscoveryExplorer
+    assert DiscoveryExplorer(seed=0)._backend == "traversal"
+    assert DiscoveryExplorer(seed=0, planner_backend="painted_set")._backend == "painted_set"
+
+
+def test_a1_treats_paint_cells_as_passable():
+    import numpy as np
+    from arcagi3.discovery_explorer import DiscoveryExplorer
+    from arcagi3.transform_induction import RecolorOnMove
+    eng = DiscoveryExplorer(seed=0, planner_backend="traversal")
+    eng.reset_all(); eng._bg = 0; eng._agent_color = 9
+    eng._deltas = {3: (0, -1), 4: (0, 1)}
+    eng._recolors = [RecolorOnMove(11, 3)]; eng._paint_colors = {11}
+    grid = np.zeros((1, 3), dtype=np.int8); grid[0, 0] = 9; grid[0, 1] = 11
+    eng._walls = {(0, 1)}                 # naive probe marked the 11-cell blocked
+    eng._tiles = {}; eng._cycles = []; eng._terminal = None
+    import arcagi3.discovery_explorer as DE
+    orig = DE.SG.extract
+    DE.SG.extract = lambda g, bg: {"target_candidates": [{"centroid": (0.0, 2.0)}]}
+    try:
+        eng._build_plan(grid)
+    finally:
+        DE.SG.extract = orig
+    assert eng._plan and eng._plan[0] == 4   # A1 plans THROUGH the paint cell, not blocked by it
