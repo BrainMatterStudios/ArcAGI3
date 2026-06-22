@@ -72,7 +72,7 @@
   <div class="card"><div class="k">Banked best</div><div class="v pos">0.33</div><div class="d">v13 TransferExplorer (public)</div></div>
   <div class="card"><div class="k">Reproducible cluster</div><div class="v">0.58–0.70</div><div class="d">target to "reach"</div></div>
   <div class="card"><div class="k">Leaderboard #1</div><div class="v">1.21</div><div class="d">Tufa Labs (lone outlier)</div></div>
-  <div class="card"><div class="k">Measured experiments</div><div class="v">20+</div><div class="d">5 Kaggle submissions</div></div>
+  <div class="card"><div class="k">Measured experiments</div><div class="v">25+</div><div class="d">5 Kaggle submissions</div></div>
 </div>
 <p class="lead" style="margin-top:18px">Every distinct paradigm has been built and measured on a fixed TUNE/HOLDOUT dev split. The
 public Kaggle score has held at <b>0.33</b> across every submission. This document is the full
@@ -100,7 +100,7 @@ on games you've never seen.</i></p>
     <li><b>Offline goal-identification is not learnable.</b> A raw-pixel CNN trained to flag "on-path-to-reward" states scored <b class="neg">LOGO AUC 0.457</b> — below chance. Hand-feature models: also chance.</li>
     <li><b>Goal-direction levers</b> fail because there's no signal to steer by.</li>
     <li><b>Rule-synthesis / forward models</b> fail because a perfect predictor still can't tell you <i>which</i> state is the goal.</li>
-    <li><b>The wall games are learning-starved</b> — they offer nothing to learn from in-game (no-op clicks, triggers absent from the candidate set, no level completed to transfer from).</li>
+    <li><b>The wall games are NOT learning-starved — they are signal-rich navigation-goal games</b> (a 2026-06-22 causal-probe survey overturned the earlier "starved" framing: sk48 changes the frame on 88% of actions, ls20/re86 ~100%). The wall is reaching the goal <i>configuration</i>, which needs goal-directed composition over discoverable mechanics — and the goal is the unlearnable part. Structural state is also irreducibly high-entropy (sk48: 455 distinct signatures / 800 steps), so no abstraction compresses it.</li>
     <li><b>Any exploration-order change corrupts coverage</b> — confirmed across 5 independent reordering levers (frontier order is load-bearing).</li>
   </ul>
   <p class="note">The reproducible cluster (0.58–0.70) sidesteps this: they don't identify goals offline — they learn a <i>within-game distance to a reward already found</i> and spend compute on coverage efficiency. The leader (1.21) likely uses a hosted-LLM / TTT class method that's hard to reproduce offline.</p>
@@ -152,8 +152,14 @@ on games you've never seen.</i></p>
     <tr><td class="m">18</td><td><b>CAI-prune</b></td><td>prune proven-no-op click colors</td><td>+47% dev eff, lp85 L1→L5; <b class="neg">Kaggle 0.28</b></td><td><span class="tag t-kill">v15 regress</span></td></tr>
     <tr><td class="m">19</td><td><b>Spatial value-CNN</b></td><td>cluster-faithful per-game CNN + hardening</td><td>vc33 exploit 34–86×; net-safe vs salience, <b class="neg">net-NEG vs transfer</b></td><td><span class="tag t-mixed">see §5</span></td></tr>
     <tr><td class="m">20</td><td><b>Transfer + value-CNN</b></td><td>combo (banked base + learned exploit)</td><td>CNN hijacks transfer's deep reach; unstable</td><td><span class="tag t-mixed">see §5</span></td></tr>
+    <tr><td class="m">21</td><td>Action-7 gap</td><td>SDK exposes ACTION7 on 6 games, never emitted</td><td>inert; adding it regressed ar25 L2→L1; reverted</td><td><span class="tag t-kill">refuted</span></td></tr>
+    <tr><td class="m">22</td><td><b>Causal-probe survey</b></td><td>per-game delta-richness logging (no behavior change)</td><td><b class="pos">overturned "learning-starved"</b> — wall games signal-rich; triggers certifiable</td><td><span class="tag t-win">finding</span></td></tr>
+    <tr><td class="m">23</td><td>CausalProbe structural promotion</td><td>promote structural-delta action classes (proof-gated)</td><td>net regression (over-fires); can't help nav games (position-dependent)</td><td><span class="tag t-kill">kill</span></td></tr>
+    <tr><td class="m">24</td><td>Structural replay-bank</td><td>Go-Explore anchored on structural states</td><td>refuted by substrate: structural state high-entropy (no compression)</td><td><span class="tag t-kill">refuted</span></td></tr>
+    <tr><td class="m">25</td><td>Universal-exploit scan</td><td>held-action macros / null-coord / corner clicks / sweep</td><td>0 level-ups on 16 games; context-free patterns can't reach triggers</td><td><span class="tag t-kill">refuted</span></td></tr>
   </tbody>
 </table>
+<p class="note">Experiments 21–25 (this session, causal-probe architecture + exploit scan) all confirm the wall from new angles. The full user-directed causal-probe architecture was built and tested: it handles <b>trigger</b> games via transfer (≈0.33) but cannot crack the <b>navigation</b> games that gate the public score.</p>
 
 <!-- VALUE CNN DEEP DIVE -->
 <h2><span class="n">05</span> The value-CNN investigation (this session)</h2>
@@ -202,13 +208,17 @@ overfit-collapse that sank the preview leaders. The dev numbers, against the <b>
 <div class="panel">
   <p style="margin-top:0"><b>Banked and protected:</b> v13 TransferExplorer = 0.33. Best-counts means nothing tested
   can lower it. The transfer lever's lp85 L1→L5 deep reach is the genuine asset — worth protecting, not perturbing.</p>
-  <p><b>Honest standing:</b> 0.33 public is robust across every paradigm tried. The public games sit in
-  the "wall regime" (learning-starved, goal-unlearnable). The prize is the <i>private</i> hidden games
-  (scored ~Nov 2) where transfer's strict-superset behavior <i>may</i> help on multi-level-click games — unobservable now.</p>
-  <p style="margin-bottom:0"><b>What would actually move it:</b> the cluster's 0.58–0.70 needs <i>within-game
-  distance-value done without disturbing coverage</i> (the value-CNN got the value part but broke coverage);
-  the leader's 1.21 needs a hosted-LLM / test-time-training class method that's hard to run inside the
-  offline Kaggle constraints. Neither is yet reproduced. The search continues.</p>
+  <p><b>Honest standing:</b> 0.33 public is robust across every paradigm tried, now including the full
+  causal-probe architecture and the universal-exploit scan. The public games are signal-rich
+  <b>navigation-goal</b> games: the wall is reaching the goal <i>configuration</i>, and the goal is the
+  unlearnable part. The prize is the <i>private</i> hidden games (scored ~Nov) where transfer's
+  strict-superset behavior <i>may</i> help — unobservable now.</p>
+  <p style="margin-bottom:0"><b>What would actually move it:</b> a method that reaches the <i>first</i>
+  level-up on a navigation game without knowing its goal — an open research problem. The cluster's
+  0.58–0.70 needs within-game distance-value without disturbing coverage (the value-CNN got the value,
+  broke the coverage); the leader's 1.21 needs a hosted-LLM / test-time-training class method, and even
+  that can't be <i>pre-trained</i> to generalize (only 25 games exist, all distinct, cross-game signal
+  ≈ chance). The strategic fork: commit to that hard build, or bank 0.33 and play the private-game upside.</p>
 </div>
 
 <div class="footer">
