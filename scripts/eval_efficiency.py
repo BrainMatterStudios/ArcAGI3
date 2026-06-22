@@ -98,6 +98,10 @@ def make_policy(name: str):
         from arcagi3.batch_value_explorer import BatchValueExplorer
         kw = dict(coarse_grid_step=4, max_click_targets=256) if name.endswith("dense") else {}
         return BatchValueExplorer(seed=0, trust_threshold=3, border_mask=2, **kw)
+    if name in ("percept", "percept-dense"):
+        from arcagi3.perception_transfer_explorer import PerceptionTransferExplorer
+        kw = dict(coarse_grid_step=4, max_click_targets=256) if name.endswith("dense") else {}
+        return PerceptionTransferExplorer(seed=0, trust_threshold=3, border_mask=2, **kw)
     if name in ("goexplore", "goexplore16"):
         from arcagi3.go_explore_explorer import GoExploreExplorer
         return GoExploreExplorer(seed=0, trust_threshold=3, border_mask=2,
