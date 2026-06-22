@@ -118,10 +118,10 @@ def run_engine(name: str, engine, budget: int, game: str = "ls20", max_level: in
 
 
 def print_table(results: list[EngineResult]) -> None:
-    print(f"\n{'engine':<22}{'levels':<8}{'L1 act':<8}{'L1 eff':<8}{'slope':<8}", flush=True)
+    print(f"\n{'engine':<28}{'levels':<8}{'L1 act':<8}{'L1 eff':<8}{'slope':<8}", flush=True)
     for r in results:
         l1 = next((x for x in r.levels if x.level == 0), None)
-        print(f"{r.name:<22}{r.levels_cleared:<8}"
+        print(f"{r.name:<28}{r.levels_cleared:<8}"
               f"{(l1.actions if l1 else '-'):<8}{(round(l1.eff,3) if l1 else '-'):<8}"
               f"{round(r.slope,2):<8}", flush=True)
 
