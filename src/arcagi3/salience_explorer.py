@@ -257,7 +257,7 @@ class SalienceExplorer:
                 self.active_group = g
                 mp = min(node.tier.get(a, 0) for a in local)
                 choices = [a for a in local if node.tier.get(a, 0) == mp]
-                return choices[int(self.rng.integers(0, len(choices)))]
+                return self._pick_from_batch(choices, node)
             path = self._path_to_frontier(cur, g)
             if path:
                 self.active_group = g
@@ -271,6 +271,12 @@ class SalienceExplorer:
             self.plan = []
             return ("reset",)
         return self._random(cur)
+
+    def _pick_from_batch(self, choices, node):
+        """Choose one action from the equal-tier untried batch. Default: uniform random (v6).
+        Subclasses may REORDER this batch by an online value signal — coverage-safe, since every
+        action in the batch is still tried over successive visits; only the ORDER changes."""
+        return choices[int(self.rng.integers(0, len(choices)))]
 
     def _random(self, cur):
         node = self.nodes.get(cur)
