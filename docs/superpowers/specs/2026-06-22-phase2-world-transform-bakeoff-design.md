@@ -28,7 +28,8 @@ as an automated `A_h` grader, discover→clear→transfer→efficiency).
 1. recover the model from black-box probing,
 2. clear **L1** efficiently (≪ the salience baseline),
 3. **transfer** the grammar to clear **L2–L4** with per-level action cost dropping with depth,
-4. at a **meaningful `(A_h / A_m)²`** (capped 1.15).
+4. at a **meaningful `(A_h / A_m)²`** (capped 1.15) — now measurable **per level** (incl. L2–L4) via the
+   true per-level `A_h` grader (§8b), not just the transfer slope.
 
 **Cross-mechanic bar:** the *same* DSL + discovery loop clears L1 on **both** ls20 (paint) and sk48
 (collect) — proving the approach spans ≥2 mechanic classes, not one hand-fit game.
@@ -109,12 +110,25 @@ Backend selected by `plan(..., backend="traversal"|"painted_set")` (or an `Induc
 The collect case uses the existing planner unchanged (collect removes cells; goal = all collectibles gone
 or slot reached — no reachability-changes-as-you-act problem).
 
-## 8. sk48 `A_h` grader (scripts/truemodel_sk48.py)
+## 8. True-model `A_h` grader — per-level (fixes the Phase-1 limitation)
 
-Mirror `truemodel_planner.py`: load `environment_files/sk48/.../sk48.py`, BFS over its true model to the
-L1 win, return the optimal action count as `A_h`. Read `sk48.py` first to confirm its win predicate and
-action semantics (do NOT assume they match ls20). Grader-only; never imported by an engine.
-`bakeoff_metrics.human_baseline_actions` gains a `game` parameter to dispatch ls20 vs sk48 graders.
+Two parts:
+
+**(a) sk48 grader.** Mirror `truemodel_planner.py`: load `environment_files/sk48/.../sk48.py`, BFS over
+its true model. Read `sk48.py` first to confirm its win predicate and action semantics (do NOT assume they
+match ls20). Grader-only; never imported by an engine.
+
+**(b) Per-level grading (the fix).** Phase 1's `bfs_solve(start_level=N)` always reset to level 0, so
+`A_h` for N>0 was not a true mid-game baseline. Generalize the grader to a **solve→advance chain**:
+`optimal_actions_per_level(GameClass, up_to_level)` instantiates a fresh game and, for each level
+`i = 0..up_to_level`: BFS-solves the **current** level from the game's live state (deepcopy snapshots
+from the current `game`, not a fresh-from-0 instance), records `len(solution)` as `A_h[i]`, then applies
+that optimal solution to the real game instance to advance to level `i+1`, and repeats. This yields true
+per-level `A_h` for both games. Requires a `bfs_solve_current(game, max_nodes)` that snapshots from the
+game's current state rather than always resetting to level 0.
+
+`bakeoff_metrics.human_baseline_actions(game, level)` dispatches to the right game's grader and returns
+the cached per-level `A_h` from the chain (compute the chain once per game, cache the list).
 
 ## 9. Bake-off setup & decision rule (discovery_bakeoff.py)
 
@@ -150,14 +164,21 @@ and must be localized (which phase/primitive/backend failed).
   rule; do not assume sk48 is "just collect" — confirm from source what L1 actually requires.
 - **Overfitting to ls20/sk48** → strict general primitives; the cross-mechanic bar (one DSL, two games)
   is the guard; real generalization still tested later on unseen games.
+- **Per-level grader runtime** (the solve→advance chain runs BFS once per level) → bounded by `max_level`
+  (≤4) and `max_nodes`; compute the per-level `A_h` list once per game and cache it. If a level's true-model
+  BFS exceeds the node cap, record `A_h=None` for that level (efficiency falls back to "cleared, eff n/a")
+  rather than blocking the run.
 
 ## 12. File structure
 
 - Modify `src/arcagi3/transform_induction.py` — `RecolorOnMove`, `CollectOnContact`, their inducers.
 - Modify `src/arcagi3/factored_model.py` — A1 traversal mode + A2 painted-set `FactoredState`/`step`/`plan` backend.
 - Modify `src/arcagi3/discovery_explorer.py` — world-delta observation; world-transform induction in INDUCE; `planner_backend` flag; collect handling.
-- Modify `src/arcagi3/bakeoff_metrics.py` — `human_baseline_actions(game=...)` dispatch.
-- Create `scripts/truemodel_sk48.py` — sk48 `A_h` grader.
+- Modify `src/arcagi3/bakeoff_metrics.py` — `human_baseline_actions(game, level)` dispatch + per-level cache.
+- Modify `scripts/truemodel_planner.py` — add `bfs_solve_current(game, max_nodes)` (snapshot from current
+  state) and `optimal_actions_per_level(GameClass, up_to_level)` (solve→advance chain) — fixes level>0.
+- Create `scripts/truemodel_sk48.py` — sk48 grader reusing the chain (or generalize `truemodel_planner`
+  to take a game-class/path so one module serves both).
 - Modify `scripts/discovery_bakeoff.py` — `make_game`, sk48 run, register A1/A2/collect variants.
 - Modify `docs/experiment-overview.html` — Experiment 44 write-up.
 - Tests: extend `tests/test_transform_induction.py`, `tests/test_factored_model.py`,
@@ -170,6 +191,8 @@ and must be localized (which phase/primitive/backend failed).
   a toy corridor where a paint-able cell gates the path; A2 planner solves the same toy and correctly
   tracks `painted`; A2 returns the intractable sentinel when the node cap is hit.
 - **Component:** world-delta observation excludes the agent footprint and records correct from/to colors.
+- **Grader (per-level):** `optimal_actions_per_level` on ls20 returns `A_h[0] == 13` (Exp-42) AND advances
+  to and grades L2 (a true mid-game baseline, `A_h[1]` non-None) — proving the level>0 fix works.
 - **Integration (gated, live, `RUN_BAKEOFF=1`):** ls20 via A1 and A2; sk48 via collect — each asserting
   L1 cleared well under the salience baseline (thresholds set from observed results; not weakened to pass
   a failing engine).
