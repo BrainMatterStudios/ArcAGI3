@@ -72,7 +72,7 @@
   <div class="card"><div class="k">Banked best</div><div class="v pos">0.33</div><div class="d">v13 TransferExplorer (public)</div></div>
   <div class="card"><div class="k">Reproducible cluster</div><div class="v">0.58–0.70</div><div class="d">target to "reach"</div></div>
   <div class="card"><div class="k">Leaderboard #1</div><div class="v">1.21</div><div class="d">Tufa Labs (lone outlier)</div></div>
-  <div class="card"><div class="k">Measured experiments</div><div class="v">32+</div><div class="d">5 Kaggle submissions</div></div>
+  <div class="card"><div class="k">Measured experiments</div><div class="v">36+</div><div class="d">5 Kaggle submissions</div></div>
 </div>
 <p class="lead" style="margin-top:18px">Every distinct paradigm has been built and measured on a fixed TUNE/HOLDOUT dev split. The
 public Kaggle score has held at <b>0.33</b> across every submission. This document is the full
@@ -162,9 +162,14 @@ on games you've never seen.</i></p>
     <tr><td class="m">28</td><td><b>Batch-value reorder</b></td><td>reorder same-tier untried batch by causal value</td><td>tu93 L5→L2 — proves NO reordering is coverage-safe (level-up timing)</td><td><span class="tag t-kill">refuted</span></td></tr>
     <tr><td class="m">29</td><td>Latency / budget profiling</td><td>decide() time + actions-per-8hr</td><td>decide 0.5ms, budget ample — ceiling is NOT speed/budget</td><td><span class="tag t-win">finding</span></td></tr>
     <tr><td class="m">30</td><td><b>Visual goal inspection</b></td><td>render & look at the games (§8)</td><td><b class="pos">goals ARE displayed</b> — humans read them; our agents don't perceive goals</td><td><span class="tag t-win">finding</span></td></tr>
+    <tr><td class="m">31</td><td><b>Scene-graph extractor</b></td><td>symbolic goal PERCEPTION (objects/agent/symmetry/targets), no learning</td><td><b class="pos">works</b> — ls20→reach_target, m0r0→symmetry, sk48→collect (correct coarse goal-type)</td><td><span class="tag t-win">finding</span></td></tr>
+    <tr><td class="m">32</td><td>Multi-hypothesis tournament</td><td>in-game test of 5 goal-planners, keep what levels up</td><td>all 5 fail on ls20 + m0r0 — idiosyncratic per-game mechanics</td><td><span class="tag t-kill">refuted</span></td></tr>
+    <tr><td class="m">33</td><td>Perception-augmented transfer</td><td>add perceived targets as click candidates on banked transfer</td><td>byte-identical to v13 — perceived targets aren't the triggers</td><td><span class="tag t-kill">inert</span></td></tr>
+    <tr><td class="m">34</td><td><b>VLM test (qwen2.5vl:7b)</b></td><td>evidence (not assertion): can a capable VLM read goal+mechanic?</td><td>coarse goal-type only (= symbolic); misreads ls20 agent as background</td><td><span class="tag t-kill">refuted</span></td></tr>
+    <tr><td class="m">35</td><td>Structured goal-discovery</td><td>probe agent → sweep locations × interactions for the trigger</td><td>no L1 on ls20 (274 acts); agent has no down-move; mechanic opaque</td><td><span class="tag t-kill">refuted</span></td></tr>
   </tbody>
 </table>
-<p class="note">Experiments 21–30 (this session: causal-probe architecture, exploit scan, and the user-approved multi-session build — depth Phase 1 + batch-value Phase 2) all confirm the wall from new angles, and yielded the mechanistic + visual crystallization in §2. The architecture handles <b>trigger</b> games via transfer (≈0.33) but cannot crack the <b>navigation</b> games that gate the score.</p>
+<p class="note">Experiments 21–35 (this session) all confirm the wall from new angles. The user-directed <b>Goal Extraction Engine</b> (§9) validated that symbolic <b>perception works</b> — a real, reusable positive — but every way of <i>converting</i> perception to score (planners, transfer-augmentation, VLM, structured discovery) fails, because the exact objective + action-mechanic is idiosyncratic per game and underdetermined by appearance.</p>
 
 <!-- VALUE CNN DEEP DIVE -->
 <h2><span class="n">05</span> The value-CNN investigation (this session)</h2>
@@ -216,16 +221,18 @@ overfit-collapse that sank the preview leaders. The dev numbers, against the <b>
 <div class="panel">
   <p style="margin-top:0"><b>Banked and protected:</b> v13 TransferExplorer = 0.33. Best-counts means nothing tested
   can lower it. The transfer lever's lp85 L1→L5 deep reach is the genuine asset — worth protecting, not perturbing.</p>
-  <p><b>Honest standing:</b> 0.33 public is robust across every paradigm tried, now including the full
-  causal-probe architecture and the universal-exploit scan. The public games are signal-rich
-  <b>navigation-goal</b> games: the wall is reaching the goal <i>configuration</i>, and the goal is the
-  unlearnable part. The prize is the <i>private</i> hidden games (scored ~Nov) where transfer's
-  strict-superset behavior <i>may</i> help — unobservable now.</p>
-  <p style="margin-bottom:0"><b>What would actually move it:</b> <b>visual goal-perception</b> — reading the
-  displayed goal (§8) and acting toward it in ~human action counts, closing the 100× gap. That needs
-  strong visual reasoning (hosted-model / TTT class) runnable offline, which on-device models can't yet
-  deliver, and can't be <i>pre-trained</i> to generalize from 25 distinct games. The strategic fork:
-  commit to that hard research build, or bank 0.33 and play the private-game upside.</p>
+  <p><b>Honest standing (corrected):</b> the claim is NOT "0.33 is the absolute offline ceiling" — it's
+  that the <b>exploration-first family</b> caps ~0.33, <i>and</i> the symbolic Goal Extraction Engine (§9)
+  validated that <b>perception works</b> but doesn't convert to score. The public games are signal-rich
+  <b>navigation/puzzle-goal</b> games; the residual wall is inferring the <i>exact</i> idiosyncratic
+  objective + action-mechanic for an <i>unseen</i> game.</p>
+  <p style="margin-bottom:0"><b>What would actually move it:</b> reliable <b>exact-objective inference</b> —
+  reading not just the coarse goal-type (which both the symbolic extractor and a capable VLM already get)
+  but the precise objective + mechanic, and acting toward it in ~human action counts to close the 100× gap.
+  On current evidence that needs strong reasoning beyond the offline box (GPT-4V-class / specialized
+  fine-tuned + TTT — the leaders' edge); on-device VLMs (qwen2.5vl tested) misread the exact agent/mechanic,
+  and it can't be pre-trained to generalize from 25 distinct games. Strategic fork: commit to that
+  beyond-box build, or bank 0.33 with the validated perception layer as the reusable asset.</p>
 </div>
 
 <!-- VISUAL INSPECTION -->
@@ -245,8 +252,36 @@ novelty/reward-driven agents never perceive.</p>
 because it has no goal to pursue — only novelty. This is the 100× gap made visible, and it points the
 only real path forward at <b>visual goal-perception</b>, not better blind exploration.</p>
 
+<!-- GOAL EXTRACTION ENGINE -->
+<h2><span class="n">09</span> The Goal Extraction Engine (user-directed)</h2>
+<p class="lead">A reviewer correctly flagged that "0.33 is the offline ceiling" over-claimed — what was proven
+is that the <i>exploration-first family</i> caps there, not that all offline visual reasoning fails. And
+goal <b>learning</b> (reward prediction, AUC 0.457) ≠ goal <b>perception</b> (symbolic scene parsing). So the
+direction shifted to: parse the frame into a scene graph → generate goal hypotheses → plan. Here's what
+that pipeline showed, tested end-to-end.</p>
+<table>
+  <thead><tr><th>Layer</th><th>Result</th><th></th></tr></thead>
+  <tbody>
+    <tr class="best"><td><b>Perception</b> (scene-graph extractor)</td><td>Reads objects, agent, symmetry, targets, collectibles correctly. Top goal-type right where visually verifiable: ls20→reach_target, m0r0→symmetry, sk48→collect. <b>Interaction-probe nails the exact agent</b> (ls20 = color-12, ±5 steps) where the VLM failed.</td><td><span class="tag t-win">works</span></td></tr>
+    <tr><td><b>Planners</b> (multi-hypothesis tournament)</td><td>All 5 hypothesis-planners fail on ls20 (4 moves only, no down-move, opaque mechanic) and m0r0 (no clean agent — 100-cell global transforms).</td><td><span class="tag t-kill">fails</span></td></tr>
+    <tr><td><b>Transfer-augment</b> (perceived targets → clicks)</td><td>Byte-identical to v13 — perceived targets aren't the actual triggers, and target-games have no click action.</td><td><span class="tag t-kill">inert</span></td></tr>
+    <tr><td><b>VLM</b> (qwen2.5vl:7b, evidence not assertion)</td><td>Coarse goal-type only (= symbolic extractor); misreads ls20's agent as the background. OOD on abstract grids.</td><td><span class="tag t-kill">fails</span></td></tr>
+    <tr><td><b>Structured goal-discovery</b></td><td>Probe agent → sweep locations × interactions: no L1 on ls20 in 274 actions; the mechanic is opaque to goal-directed methods (only blind salience stumbles to L1, at 7961).</td><td><span class="tag t-kill">fails</span></td></tr>
+  </tbody>
+</table>
+<div class="panel accent">
+  <h3>The real residual, precisely</h3>
+  <p style="margin-bottom:0">Perception is solved — coarse goal-type is readable by both symbolic parsing and a VLM. But
+  <b>the exact objective + action-mechanic is idiosyncratic per game and underdetermined by appearance</b>
+  (ls20 <i>looks</i> like reach-target but needs an opaque sequence; m0r0 <i>looks</i> like symmetry but
+  greedy-symmetry doesn't drive it). Resolving the exact objective needs in-game experimentation per game —
+  the expensive goal-inference we set out to avoid — and it must <i>generalize to unseen games</i>, which
+  hand-coded families and on-device VLMs don't. That residual, not perception, is the genuine wall.</p>
+</div>
+
 <div class="footer">
-  All figures from <code>scripts/eval_efficiency.py</code> on the fixed TUNE/HOLDOUT split (budget 6000–30000).
+  Dev figures from <code>scripts/eval_efficiency.py</code> on the fixed TUNE/HOLDOUT split (budget 6000–30000);
+  Goal Extraction Engine in <code>src/arcagi3/scene_graph.py</code> (+ multi_hypothesis_test, reach_target_test).
   TUNE = vc33 cd82 sc25 lp85 lf52 tu93 ar25 sp80 · HOLDOUT = su15 sk48 re86 wa30 m0r0 ls20 tn36 tr87.
   Kaggle scores are real submission results. Full detail in memory <code>arcagi3-scoring-and-transfer.md</code>.
 </div>
