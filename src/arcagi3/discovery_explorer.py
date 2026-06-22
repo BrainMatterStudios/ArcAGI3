@@ -124,7 +124,12 @@ class DiscoveryExplorer:
                     self._walls.add((pos[0] + dr, pos[1] + dc))
 
     def _ingest_transform(self, grid):
-        """If the agent's attribute vector changed this step, record an on-enter triple."""
+        """If the agent's attribute vector changed this step, record an on-enter triple.
+
+        entered_color is the color of the cell the agent MOVED ONTO, read from the PREVIOUS
+        frame (self._prev_grid) at the agent's current (destination) representative position.
+        This is the tile color that caused the transformation, NOT the agent's old color.
+        """
         if self._agent_color is None:
             return
         attr = agent_attributes(grid, self._agent_cells(grid))
@@ -132,16 +137,31 @@ class DiscoveryExplorer:
         self._prev_attr = attr
         if prev is None:
             return
+
+        # Determine what tile the agent stepped onto: the color at the agent's current
+        # position in the PREVIOUS frame.  Fall back to None if prev_grid is unavailable
+        # or the position is out of bounds.
+        dest_pos = self._agent_pos(grid)
+        tile_color: int | None = None
+        if dest_pos is not None and self._prev_grid is not None:
+            dr, dc = dest_pos
+            h, w = self._prev_grid.shape
+            if 0 <= dr < h and 0 <= dc < w:
+                tile_color = int(self._prev_grid[dr, dc])
+
         if attr.color != prev.color:
-            self._triples.append({
-                "entered_color": int(prev.color),  # color cycles -> tile color is what we left
-                "attr": "color", "before": prev.color, "after": attr.color,
-            })
+            # Only record if we have a valid tile color; skip rather than log garbage.
+            if tile_color is not None:
+                self._triples.append({
+                    "entered_color": tile_color,
+                    "attr": "color", "before": prev.color, "after": attr.color,
+                })
         if attr.shape_sig != prev.shape_sig:
-            self._triples.append({
-                "entered_color": int(attr.color),
-                "attr": "shape", "before": prev.shape_sig, "after": attr.shape_sig,
-            })
+            if tile_color is not None:
+                self._triples.append({
+                    "entered_color": tile_color,
+                    "attr": "shape", "before": prev.shape_sig, "after": attr.shape_sig,
+                })
 
     # ------------------------------------------------------------------ phase machine
     def _decide_inner(self, grid, available):
