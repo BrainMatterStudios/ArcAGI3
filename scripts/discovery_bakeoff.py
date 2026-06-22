@@ -22,13 +22,16 @@ from arcagi3.spatial_value_explorer import SpatialValueExplorer
 logging.basicConfig(level=logging.ERROR)
 
 
-def _retry(fn, tries=5, delay=1.0):
+def _retry(fn, tries=5, delay=1.0, what=""):
     for i in range(tries):
         try:
             return fn()
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
             if i == tries - 1:
-                raise
+                msg = f"step failed after {tries} tries"
+                if what:
+                    msg += f": {what}"
+                raise RuntimeError(msg) from e
             time.sleep(delay * (i + 1))
 
 
@@ -58,7 +61,11 @@ def make_ls20():
 
 
 def run_engine(name: str, engine, budget: int, max_level: int = 4) -> EngineResult:
-    """Drive `engine.decide(...)`; charge each environment-altering action to the current level."""
+    """Drive `engine.decide(...)`; charge each environment-altering action to the current level.
+
+    max_level is the bake-off depth target (harness-level, not an engine constant) — ls20 has more levels;
+    we compare engines over L1..L4.
+    """
     env = make_ls20()
     obs = _retry(env.reset)
     res = EngineResult(name=name, levels_cleared=0)
@@ -80,9 +87,15 @@ def run_engine(name: str, engine, budget: int, max_level: int = 4) -> EngineResu
         if token[0] == "reset":
             obs = _retry(env.reset)
         elif token[0] == "S":
-            obs = _retry(lambda: env.step(GameAction.from_id(token[1]))); actions_this_level += 1; n += 1
+            aid = token[1]
+            obs = _retry(lambda: env.step(GameAction.from_id(aid)), what=f"{name} L{cur_level} {token}")
+            actions_this_level += 1
+            n += 1
         else:  # "C"
-            obs = _retry(lambda: env.step(GameAction.ACTION6, data={"x": token[1], "y": token[2]})); actions_this_level += 1; n += 1
+            x, y = token[1], token[2]
+            obs = _retry(lambda: env.step(GameAction.ACTION6, data={"x": x, "y": y}), what=f"{name} L{cur_level} {token}")
+            actions_this_level += 1
+            n += 1
         new_level = int(obs.levels_completed or 0)
         if new_level > cur_level:
             a_h = a_h_cache.setdefault(cur_level, human_baseline_actions(level=cur_level))
