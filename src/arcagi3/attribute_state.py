@@ -11,12 +11,17 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class AttrVec:
     color: int
-    shape_sig: tuple   # rotation-/translation-sensitive signature of the cell pattern
+    shape_sig: tuple[tuple[int, int], ...]   # rotation-/translation-sensitive signature of the cell pattern
 
 
 def agent_attributes(grid, agent_cells) -> AttrVec:
+    """Extract the agent's intrinsic attributes (color + orientation-sensitive shape signature)
+    from its cell-set. Position is normalised out (offsets from the min row/col), so the signature
+    captures shape+orientation but not location. Empty cell-set -> AttrVec(-1, ())."""
     cells = sorted((int(r), int(c)) for r, c in agent_cells)
-    color = int(grid[cells[0][0], cells[0][1]]) if cells else -1
+    if not cells:
+        return AttrVec(color=-1, shape_sig=())
+    color = int(grid[cells[0][0], cells[0][1]])
     r0 = min(r for r, _ in cells); c0 = min(c for _, c in cells)
     # translation-normalised but NOT rotation-normalised -> orientation is encoded in the sig
     shape_sig = tuple((r - r0, c - c0) for r, c in cells)

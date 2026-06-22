@@ -26,3 +26,9 @@ def test_attr_distinguishes_rotation():
 def test_attr_equal_for_same_object():
     g, cells = _shape_grid(7, 0)
     assert agent_attributes(g, cells) == agent_attributes(g.copy(), cells)
+
+
+def test_attr_empty_cells_is_safe():
+    g = np.zeros((5, 5), dtype=np.int8)
+    a = agent_attributes(g, [])
+    assert a.color == -1 and a.shape_sig == ()
