@@ -72,7 +72,7 @@
   <div class="card"><div class="k">Banked best</div><div class="v pos">0.33</div><div class="d">v13 TransferExplorer (public)</div></div>
   <div class="card"><div class="k">Reproducible cluster</div><div class="v">0.58–0.70</div><div class="d">target to "reach"</div></div>
   <div class="card"><div class="k">Leaderboard #1</div><div class="v">1.21</div><div class="d">Tufa Labs (lone outlier)</div></div>
-  <div class="card"><div class="k">Measured experiments</div><div class="v">39+</div><div class="d">5 Kaggle submissions</div></div>
+  <div class="card"><div class="k">Measured experiments</div><div class="v">40+</div><div class="d">5 Kaggle submissions</div></div>
 </div>
 <p class="lead" style="margin-top:18px">Every distinct paradigm has been built and measured on a fixed TUNE/HOLDOUT dev split. The
 public Kaggle score has held at <b>0.33</b> across every submission. This document is the full
@@ -171,6 +171,7 @@ on games you've never seen.</i></p>
     <tr><td class="m">37</td><td><b>Transition-grammar induction</b></td><td>per-action color/object effect laws (the rules, not the goal)</td><td><b class="pos">ls20 = fill/collect</b> (paint c11→green, consume c8) — perception was wrong</td><td><span class="tag t-win">finding</span></td></tr>
     <tr><td class="m">38</td><td>Grammar-driven planner</td><td>execute paint-all / collect-all from the grammar (full 4-way move)</td><td>both fail in 3000 — exact win-condition still underdetermined</td><td><span class="tag t-kill">refuted</span></td></tr>
     <tr><td class="m">39</td><td>Movement-aware coverage</td><td>systematic traversal of reachable cells using the inferred model</td><td>only 7 cells reachable (wall-trapped) — needs env-change, not movement</td><td><span class="tag t-kill">refuted</span></td></tr>
+    <tr><td class="m">40</td><td><b>Level-up contrastive</b></td><td>contrast pre-win state vs 7901 ordinary states (which variables gate L1?)</td><td>no global predicate — not all-paint/collect/coverage; completion is <b>spatial-relational</b></td><td><span class="tag t-win">finding</span></td></tr>
   </tbody>
 </table>
 <p class="note">Experiments 21–35 (this session) all confirm the wall from new angles. The user-directed <b>Goal Extraction Engine</b> (§9) validated that symbolic <b>perception works</b> — a real, reusable positive — but every way of <i>converting</i> perception to score (planners, transfer-augmentation, VLM, structured discovery) fails, because the exact objective + action-mechanic is idiosyncratic per game and underdetermined by appearance.</p>
@@ -295,6 +296,16 @@ that pipeline showed, tested end-to-end.</p>
     <li><b>Corrected the movement model</b> — action 2 is <i>down</i> (looked inert only because the agent started against a wall); full 4-way movement.</li>
   </ul>
   <p style="margin-bottom:0">But it <b>still doesn't convert to a level-up</b>: grammar-driven planners (paint-all, collect-all) both fail in 3000 actions, and movement-aware systematic coverage reaches <b>only 7 cells in 3947 actions</b> — the agent is wall-trapped, so progress requires <i>changing the environment</i> (painting opens paths), not free movement. The residual moved one level deeper: from "what goal-type?" to <b>"what exact win-condition over the known dynamics?"</b> — still idiosyncratic per game, and ls20-specific reverse-engineering wouldn't generalize to the unseen games that decide the score. <b>Net: mechanic induction is the most promising lever for understanding, but the exact-win-condition residual persists.</b></p>
+</div>
+<div class="panel accent">
+  <h3>Level-up contrastive analysis — the completion predicate is spatial, not a global count</h3>
+  <p style="margin-bottom:0">Treating the captured success transition as a <i>training signal</i> (per review), I contrasted ls20's
+  <b>pre-win state against all 7901 ordinary states</b> to find which variable gates the level-up. Result: <b>no
+  global feature is the predicate</b> — at the win, unpainted-cells = mid-range (not "all painted"),
+  collectibles = their <i>starting</i> value (not "all collected"), green-coverage = mid-range (no threshold).
+  So completion is a <b>spatial / relational</b> condition (agent at a specific cell + local pattern), not a
+  global count. The residual localizes one level further: from "which state variables?" to "the predicate is
+  spatial-relational" — higher-dimensional, game-specific, and the genuine remaining hard part.</p>
 </div>
 
 <div class="footer">
