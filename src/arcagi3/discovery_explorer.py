@@ -53,6 +53,7 @@ class DiscoveryExplorer:
         self._terminal = None
         self._transform_steps = 0
         self._prev_attr = None
+        self._world_obs: list[dict] = []
 
     def on_level_change(self, new_level: int):
         """KEEP the induced grammar (deltas/tiles/terminal); FLUSH the layout state."""
@@ -174,6 +175,24 @@ class DiscoveryExplorer:
                     "attr": "shape", "before": prev.shape_sig, "after": attr.shape_sig,
                 })
 
+    def _ingest_world_delta(self, grid):
+        """Record non-agent cells that changed color this step (paint / collect signal).
+
+        Excludes the agent's current and previous footprint so the agent's own movement isn't
+        mistaken for a world transform. vanished == cell became background.
+        """
+        if self._bg is None or self._prev_grid is None or grid.shape != self._prev_grid.shape:
+            return
+        footprint = set(self._agent_cells(grid)) | set(self._agent_cells(self._prev_grid))
+        changed = np.argwhere(grid != self._prev_grid)
+        for r, c in changed:
+            if (int(r), int(c)) in footprint:
+                continue
+            f = int(self._prev_grid[r, c]); t = int(grid[r, c])
+            if f == int(self._agent_color) or t == int(self._agent_color):
+                continue
+            self._world_obs.append({"from_color": f, "to_color": t, "vanished": t == self._bg})
+
     # ------------------------------------------------------------------ phase machine
     def _decide_inner(self, grid, available):
         if self._bg is None:
@@ -194,6 +213,7 @@ class DiscoveryExplorer:
         if self._phase == "PROBE_TRANSFORMS":
             self._ingest_movement(grid)   # keep refining walls/deltas while wandering
             self._ingest_transform(grid)
+            self._ingest_world_delta(grid)
             self._transform_steps += 1
             h = P.state_hash(grid)
             covered = h in self._seen_hashes

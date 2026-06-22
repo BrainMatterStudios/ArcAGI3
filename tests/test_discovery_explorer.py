@@ -181,3 +181,16 @@ def test_build_plan_enumerates_shape_goals():
     # A shape spec must have been among the enumerated attr_req specs.
     shape_specs = [r for r in captured if "shape" in r]
     assert shape_specs, f"_build_plan never tried a shape goal-spec; tried: {captured}"
+
+
+def test_world_delta_excludes_agent_and_records_recolor():
+    import numpy as np
+    from arcagi3.discovery_explorer import DiscoveryExplorer
+    eng = DiscoveryExplorer(seed=0); eng.reset_all()
+    eng._bg = 0; eng._agent_color = 9
+    prev = np.zeros((3, 3), dtype=np.int8); prev[0, 0] = 9; prev[1, 1] = 11
+    cur = np.zeros((3, 3), dtype=np.int8); cur[0, 1] = 9; cur[1, 1] = 3
+    eng._prev_grid = prev
+    eng._ingest_world_delta(cur)
+    assert {"from_color": 11, "to_color": 3, "vanished": False} in eng._world_obs
+    assert all(o["from_color"] != 9 and o["to_color"] != 9 for o in eng._world_obs)
