@@ -304,8 +304,26 @@ that pipeline showed, tested end-to-end.</p>
   global feature is the predicate</b> — at the win, unpainted-cells = mid-range (not "all painted"),
   collectibles = their <i>starting</i> value (not "all collected"), green-coverage = mid-range (no threshold).
   So completion is a <b>spatial / relational</b> condition (agent at a specific cell + local pattern), not a
-  global count. The residual localizes one level further: from "which state variables?" to "the predicate is
-  spatial-relational" — higher-dimensional, game-specific, and the genuine remaining hard part.</p>
+  global count.</p>
+  <p style="margin-bottom:0"><b>Then the spatial capture cracked it:</b> at the win the agent moved <b>up onto a
+  color-9 cell</b> (color-9 adjacent only 2.6% of steps). So <b>the goal is "reach color-9"</b> — which means the
+  scene-graph's <i>original</i> reach_target hypothesis was <b>right all along</b>; the planner failed only on the
+  wrong movement model (action 2 = down, mismapped) + the paint-opens-paths mechanic. <b>Full ls20 mechanic:</b>
+  the agent is wall-trapped (~7 cells), paints color-11→green as it moves which <i>opens paths</i>, and the
+  color-9 goal <i>moves</i> — so winning is strategic path-opening toward a moving target. Even with the correct
+  goal + full movement, greedy navigation still fails (it's a multi-step puzzle; salience only cracks it via 7961
+  blind actions).</p>
+</div>
+<div class="panel kill">
+  <h3>The honest culmination</h3>
+  <p style="margin-bottom:0">Mechanic induction + contrastive produced <b>complete, correct understanding</b> of the
+  canary game where every prior approach was wrong or partial — <b>the rules-first reframe is fully validated as the
+  most revealing paradigm.</b> But complete understanding still doesn't yield a <i>win</i>, for two reasons: (1)
+  solving ls20 even <i>with</i> full knowledge needs real multi-step planning (path-opening toward a moving target)
+  that greedy/coverage can't do; (2) the understanding is <b>ls20-specific</b> — each hidden game's idiosyncratic
+  mechanic requires the same ~8k-action in-game derivation we're trying to avoid, and doesn't transfer. The paradigm
+  reveals the structure; the win needs general multi-step planning over per-game-derived idiosyncratic mechanics —
+  beyond offline-feasible reach. <b>v13 = 0.33 remains the banked, firewalled result.</b></p>
 </div>
 
 <div class="footer">
