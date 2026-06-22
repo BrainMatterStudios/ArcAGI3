@@ -128,11 +128,19 @@ def main():
         print("     correct model (discovery), not a hard planning problem.", flush=True)
 
 
-def bfs_solve_current(game, max_nodes=500_000):
+def bfs_solve_current(game, max_nodes=500_000, key_fn=None, moves=None):
     """BFS from the game's CURRENT level/state (deepcopy snapshots from `game`). Returns the
-    action list that clears the current level, or None. Mirrors bfs_solve but does not reset."""
+    action list that clears the current level, or None. Mirrors bfs_solve but does not reset.
+
+    key_fn  -- callable(game) -> hashable dedup key; defaults to state_key (ls20-specific).
+    moves   -- iterable of GameAction to try; defaults to MOVES (directional 1-4).
+    """
+    if key_fn is None:
+        key_fn = state_key
+    if moves is None:
+        moves = MOVES
     start_idx = game.level_index
-    seen = {state_key(game)}
+    seen = {key_fn(game)}
     q = deque([(game, [])])
     expanded = 0
     while q:
@@ -140,28 +148,31 @@ def bfs_solve_current(game, max_nodes=500_000):
         expanded += 1
         if expanded > max_nodes:
             return None
-        for a in MOVES:
+        for a in moves:
             child = copy.deepcopy(g)
             apply(child, a)
             if child.level_index > start_idx or child._score > game._score:
                 return path + [a.value]
             if child._state == GameState.GAME_OVER:
                 continue
-            k = state_key(child)
+            k = key_fn(child)
             if k not in seen:
                 seen.add(k)
                 q.append((child, path + [a.value]))
     return None
 
 
-def optimal_actions_per_level(GameClass, up_to_level=0, max_nodes=500_000):
+def optimal_actions_per_level(GameClass, up_to_level=0, max_nodes=500_000, key_fn=None, moves=None):
     """Per-level A_h via solve->advance: solve the current level, apply that optimal solution to
-    reach the next, repeat. Returns [A_h[0], A_h[1], ...] (None for any level the BFS can't solve)."""
+    reach the next, repeat. Returns [A_h[0], A_h[1], ...] (None for any level the BFS can't solve).
+
+    key_fn / moves -- threaded through to bfs_solve_current; defaults preserve ls20 behavior.
+    """
     g = GameClass()
     g.perform_action(ActionInput(id=GameAction.RESET))
     out = []
     for _ in range(up_to_level + 1):
-        sol = bfs_solve_current(g, max_nodes=max_nodes)
+        sol = bfs_solve_current(g, max_nodes=max_nodes, key_fn=key_fn, moves=moves)
         out.append(None if sol is None else len(sol))
         if sol is None:
             break

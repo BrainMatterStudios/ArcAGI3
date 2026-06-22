@@ -1,4 +1,5 @@
 import math
+import inspect
 import pytest
 from arcagi3.bakeoff_metrics import efficiency, transfer_slope
 
@@ -23,6 +24,19 @@ def test_human_baseline_level1_is_optimal():
     from arcagi3.bakeoff_metrics import human_baseline_actions
     a_h = human_baseline_actions(level=0)
     assert a_h is not None and 1 <= a_h <= 30   # Exp-42 found 13
+
+
+def test_efficiency_dispatch_signature():
+    from arcagi3.bakeoff_metrics import human_baseline_actions
+    sig = inspect.signature(human_baseline_actions)
+    assert "game" in sig.parameters and "level" in sig.parameters
+
+
+@pytest.mark.integration
+def test_sk48_baseline_level1():
+    from arcagi3.bakeoff_metrics import human_baseline_actions
+    a_h = human_baseline_actions(game="sk48", level=0)
+    assert a_h is None or a_h >= 1   # tolerant: confirms the grader runs without error
 
 
 @pytest.mark.integration
