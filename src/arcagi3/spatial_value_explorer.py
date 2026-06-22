@@ -59,7 +59,7 @@ if _TORCH:
 
 class SpatialValueExplorer(SalienceExplorer):
     def __init__(self, *args, enable_value_cnn: bool = True, train_steps: int = 150,
-                 conf_margin: float = 0.3, **kwargs) -> None:
+                 conf_margin: float = 0.6, **kwargs) -> None:
         self.enable_value_cnn = bool(enable_value_cnn) and _TORCH
         self.train_steps = int(train_steps)
         self.conf_margin = float(conf_margin)
