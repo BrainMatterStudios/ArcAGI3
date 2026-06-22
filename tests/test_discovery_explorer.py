@@ -78,3 +78,82 @@ def test_color_triple_records_tile_color_not_agent_color():
     assert color_triples[0]["entered_color"] == 4, (
         f"entered_color should be 4 (tile color) but got {color_triples[0]['entered_color']}"
     )
+
+
+def test_on_level_change_resets_coverage_budget():
+    """Fix C: on_level_change must reset the transform-probe budget (_transform_steps) and
+    _probe_queue so deeper levels get a full coverage budget, while KEEPING the induced grammar
+    (deltas) for cross-level transfer."""
+    eng = DiscoveryExplorer(seed=0)
+    eng.reset_all()
+    eng._deltas = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
+    eng._transform_steps = 399
+    eng._probe_queue = [1, 2, 3]
+
+    eng.on_level_change(1)
+
+    assert eng._transform_steps == 0
+    assert eng._probe_queue == []
+    assert eng._deltas == {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}  # grammar kept
+
+
+def test_build_plan_enumerates_shape_goals():
+    """Fix A: _build_plan must enumerate SHAPE goal-specs, not only color. A rotation/orientation
+    goal manifests as a target shape_sig value (not a color), so the planner must be able to
+    express a slot whose attr_req carries a "shape" key.
+
+    We construct an engine whose ONLY attainable transform is a shape change, place the agent and
+    a transformer tile such that the only way to satisfy the slot is to acquire the target shape,
+    and assert the produced plan's slot carried a "shape" requirement (by checking the model can
+    only be solved via a shape goal — i.e. a plan exists and was found under a shape spec)."""
+    import arcagi3.factored_model as FM
+    import arcagi3.scene_graph as SG
+
+    eng = DiscoveryExplorer(seed=0)
+    eng.reset_all()
+    eng._bg = 0
+    eng._agent_color = 9
+    eng._deltas = {4: (0, 1)}  # move right
+    # A shape-change cycle on tile color 5: shape () -> ((0,0),(0,1)).
+    shape_a = ()
+    shape_b = ((0, 0), (0, 1))
+    eng._triples = [
+        {"entered_color": 5, "attr": "shape", "before": shape_a, "after": shape_b},
+    ]
+
+    # Grid: agent at (0,0) color 9; transformer tile color 5 at (0,1); slot target at (0,2).
+    grid = np.zeros((1, 3), dtype=np.int8)
+    grid[0, 0] = 9
+    grid[0, 1] = 5
+    # Build the cached cycles/tiles the way the phase machine would.
+    eng._build_model(grid)
+
+    # Capture which attr_req specs the planner is asked to solve.
+    captured: list[dict] = []
+    real_plan = FM.plan
+
+    def spy_plan(model, start, slots, **kw):
+        req = dict(slots[0]["attr_req"])
+        captured.append(req)
+        # Make non-shape specs (reach-only, color) "unsatisfiable" so enumeration is forced to
+        # proceed to the shape spec — this isolates the question "is shape ever enumerated?".
+        if "shape" not in req:
+            return None
+        return real_plan(model, start, slots, **kw)
+
+    # Force a single slot target at (0,2) regardless of scene-graph heuristics.
+    orig_extract = SG.extract
+    monkey = {"target_candidates": [{"centroid": (0.0, 2.0)}]}
+
+    import arcagi3.discovery_explorer as DE
+    DE.plan = spy_plan
+    DE.SG.extract = lambda g, bg: monkey
+    try:
+        eng._build_plan(grid)
+    finally:
+        DE.plan = real_plan
+        DE.SG.extract = orig_extract
+
+    # A shape spec must have been among the enumerated attr_req specs.
+    shape_specs = [r for r in captured if "shape" in r]
+    assert shape_specs, f"_build_plan never tried a shape goal-spec; tried: {captured}"

@@ -17,8 +17,6 @@ transform_induction/factored_model/scene_graph; nothing here is game-specific.
 """
 from __future__ import annotations
 
-import itertools
-
 import numpy as np
 
 from arcagi3 import perception as P, movement as Mv, scene_graph as SG
@@ -41,7 +39,9 @@ class DiscoveryExplorer:
         self._deltas: dict[int, tuple[int, int]] = {}
         self._walls: set = set()
         self._tiles: dict = {}
+        self._cycles: list = []
         self._triples: list[dict] = []
+        self._last_induced_len = -1
         self._plan: list = []
         self._seen_hashes: set = set()
         self._last_level = 0
@@ -60,6 +60,7 @@ class DiscoveryExplorer:
         self._walls = set()
         self._plan = []
         self._seen_hashes = set()
+        self._probe_queue = []
         self._transform_steps = 0
         self._prev_attr = None
         # grammar known -> jump straight to re-mapping the new layout's transforms; else re-probe.
@@ -104,6 +105,8 @@ class DiscoveryExplorer:
         A simple action that produced NO motion marks the attempted direction as a candidate
         wall in front of the agent.
         """
+        if self._bg is None:
+            return
         if self._prev_grid is None or self._prev_token is None:
             return
         if self._prev_token[0] != "S":
@@ -111,8 +114,9 @@ class DiscoveryExplorer:
         action = self._prev_token[1]
         movers = Mv.infer_all_translations(self._prev_grid, grid, self._bg)
         if movers:
-            # smallest mover = agent (decorations/counters move as a block but rarely smallest)
-            color = min(movers, key=lambda c: int(np.count_nonzero(self._prev_grid == c)))
+            # smallest mover = agent; ties broken by smallest color value for determinism
+            # (decorations/counters move as a block but rarely the smallest component).
+            color = min(movers, key=lambda c: (int(np.count_nonzero(self._prev_grid == c)), int(c)))
             self._agent_color = int(color)
             self._deltas[action] = movers[color]
         else:
@@ -132,7 +136,12 @@ class DiscoveryExplorer:
         """
         if self._agent_color is None:
             return
-        attr = agent_attributes(grid, self._agent_cells(grid))
+        cells = self._agent_cells(grid)
+        attr = agent_attributes(grid, cells)
+        # Sentinel guard: if the agent isn't located this frame, agent_attributes returns
+        # AttrVec(color=-1, shape_sig=()). Don't record a triple or pollute _prev_attr with it.
+        if not cells or attr.color == -1:
+            return
         prev = self._prev_attr
         self._prev_attr = attr
         if prev is None:
@@ -193,9 +202,26 @@ class DiscoveryExplorer:
                     return ("S", a)
             self._phase = "INDUCE"
 
+        # REFINE: log the surprise (the state where the plan ran out) and re-induce. Placed
+        # BEFORE INDUCE so REFINE -> INDUCE -> PLAN -> EXECUTE all run within this one decide()
+        # and EXECUTE can emit the first replanned action — REFINE costs no wasted, un-ingested
+        # action (Fix E).
+        if self._phase == "REFINE":
+            self._ingest_transform(grid)  # capture any unexpected attribute change as a new triple
+            self._phase = "INDUCE"
+
         # INDUCE: assemble the factored model from the fitted grammar + discovered layout.
         if self._phase == "INDUCE":
+            # Guard against re-inducing every call when nothing changed (Fix F): if the last
+            # induction already failed to yield a plan and no new evidence has arrived since,
+            # don't loop back through INDUCE — emit a coverage/fallback action to gather more.
+            if not self._plan and len(self._triples) == self._last_induced_len:
+                if simple:
+                    return ("S", self._next_coverage_action(grid, simple) or
+                            simple[self._transform_steps % len(simple)])
+                return ("S", available[0] if available else 1)
             self._build_model(grid)
+            self._last_induced_len = len(self._triples)
             self._phase = "PLAN"
 
         # PLAN: enumerate candidate slot attr-specs, BFS-plan, cache the action list.
@@ -208,12 +234,6 @@ class DiscoveryExplorer:
             if self._plan:
                 return ("S", self._plan.pop(0))
             self._phase = "REFINE"
-
-        # REFINE: log the surprise (the state where the plan ran out) and re-induce.
-        if self._phase == "REFINE":
-            self._ingest_transform(grid)  # capture any unexpected attribute change as a new triple
-            self._phase = "INDUCE"
-            # fall through to a safe action this step; next call re-enters INDUCE
 
         # Fallback: keep moving (and discovering) rather than stalling.
         if self._plan:
@@ -243,10 +263,12 @@ class DiscoveryExplorer:
 
     def _build_model(self, grid):
         """Build InducedModel: deltas + on_enter cycles + walls + terminal predicate."""
-        cycles = induce_on_enter_cycles(self._triples)
+        # Induce cycles ONCE and cache them, so the tile map and the attainable-value
+        # enumeration (which reuses self._cycles) can't diverge.
+        self._cycles = induce_on_enter_cycles(self._triples)
         # tiles: map every cell currently showing a cycling tile-color to its OnEnterCycle.
         self._tiles = {}
-        cycle_by_color = {c.tile_color: c for c in cycles}
+        cycle_by_color = {c.tile_color: c for c in self._cycles}
         if cycle_by_color and self._bg is not None:
             for o in P.connected_components(grid, background=self._bg):
                 cyc = cycle_by_color.get(int(o.color))
@@ -258,7 +280,7 @@ class DiscoveryExplorer:
     def _attainable_attr_values(self):
         """The small set of attribute values the agent can take, from observed cycle orders."""
         vals = {"color": set(), "shape": set()}
-        for c in induce_on_enter_cycles(self._triples):
+        for c in self._cycles:  # reuse the cached induction (see _build_model)
             vals.setdefault(c.attribute, set()).update(c.order)
         return vals
 
@@ -288,15 +310,21 @@ class DiscoveryExplorer:
                              width=W, height=H, terminal=self._terminal)
         start = FactoredState(pos=start_pos, attrs=start_attrs, completed=frozenset())
 
-        # Enumerate attribute requirements per slot over the small attainable set. The simplest
-        # spec (no attr requirement = just reach the slot) is tried first; then single-attr reqs.
+        # Enumerate single-attribute requirements per slot over the small attainable set.
+        # Our attribute vector is AttrVec(color, shape_sig); shape_sig is rotation-SENSITIVE,
+        # so an orientation goal (e.g. ls20 level 1) manifests as a target "shape" value, NOT a
+        # color. We therefore try reach-only first, then each attainable color value, then each
+        # attainable shape value. Keys ("color"/"shape") match FactoredState.attrs, the cycle
+        # `attribute` field, and InducedModel.step's tile.attribute, so the goal is reachable
+        # end-to-end. Bounded (no cross-product) so the black-box game can't blow up the search.
         attainable = self._attainable_attr_values()
-        color_opts = [None] + sorted(attainable.get("color", set()))
-        for color_req in color_opts:
-            slots = []
-            for pos in slot_positions:
-                req = {} if color_req is None else {"color": color_req}
-                slots.append({"pos": pos, "attr_req": req, "done": False})
+        reqs: list[dict] = [{}]  # reach-only
+        for v in sorted(attainable.get("color", set())):
+            reqs.append({"color": v})
+        for v in sorted(attainable.get("shape", set())):
+            reqs.append({"shape": v})
+        for req in reqs:
+            slots = [{"pos": pos, "attr_req": req, "done": False} for pos in slot_positions]
             actions = plan(model, start, slots)
             if actions:
                 self._plan = list(actions)
