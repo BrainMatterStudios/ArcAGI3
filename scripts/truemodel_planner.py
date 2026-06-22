@@ -48,7 +48,13 @@ def fresh_game(Ls20):
 
 
 def state_key(g):
-    """The real latent state the win predicate (bejndxqqzf/pbznecvnfr) depends on."""
+    """The real latent state the win predicate (bejndxqqzf/pbznecvnfr) depends on.
+
+    The step counter is included because ls20 L2+ uses step-reset tiles to refuel the
+    step budget; without it, BFS prunes post-reset states as 'already seen' and
+    incorrectly concludes those levels are unsolvable.
+    """
+    steps = getattr(getattr(g, "_step_counter_ui", None), "current_steps", None)
     return (
         g.gudziatsk.x,
         g.gudziatsk.y,
@@ -56,6 +62,7 @@ def state_key(g):
         g.hiaauhahz,                 # color index
         g.cklxociuu,                 # rotation index
         tuple(g.lvrnuajbl),          # which goal slots are already satisfied
+        steps,                       # remaining step budget (None if no counter)
     )
 
 
