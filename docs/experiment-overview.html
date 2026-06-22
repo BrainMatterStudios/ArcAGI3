@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARC-AGI-3 — Experiment Overview</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#30363d;
+    --txt:#e6edf3; --dim:#9da7b3; --faint:#6e7681;
+    --green:#3fb950; --red:#f85149; --amber:#d29922; --blue:#58a6ff; --purple:#bc8cff;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;padding:0 0 80px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+  header{padding:40px 0 28px;border-bottom:1px solid var(--border);margin-bottom:32px}
+  h1{font-size:27px;margin:0 0 6px;letter-spacing:-.4px}
+  .sub{color:var(--dim);font-size:15px}
+  h2{font-size:19px;margin:40px 0 14px;letter-spacing:-.2px;display:flex;align-items:center;gap:10px}
+  h2 .n{font:600 12px var(--mono);color:var(--faint);border:1px solid var(--border);
+    border-radius:5px;padding:2px 7px}
+  p{color:var(--txt);margin:10px 0}
+  .lead{color:var(--dim)}
+  code,.m{font-family:var(--mono);font-size:.9em}
+  .grid{display:grid;gap:14px}
+  .cards{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:760px){.cards{grid-template-columns:repeat(2,1fr)}}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px}
+  .card .k{color:var(--faint);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+  .card .v{font-size:26px;font-weight:700;margin-top:4px;font-family:var(--mono)}
+  .card .d{color:var(--dim);font-size:12.5px;margin-top:3px}
+  table{width:100%;border-collapse:collapse;margin:8px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--faint);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:600}
+  tbody tr:hover{background:var(--panel2)}
+  td.m,th.m{font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+  .tag{display:inline-block;font:600 11px var(--mono);padding:2px 8px;border-radius:20px;white-space:nowrap}
+  .t-kill{background:rgba(248,81,73,.13);color:#ff7b72;border:1px solid rgba(248,81,73,.3)}
+  .t-inert{background:rgba(110,118,129,.15);color:#9da7b3;border:1px solid rgba(110,118,129,.3)}
+  .t-win{background:rgba(63,185,80,.13);color:#56d364;border:1px solid rgba(63,185,80,.3)}
+  .t-mixed{background:rgba(210,153,34,.13);color:#e3b341;border:1px solid rgba(210,153,34,.3)}
+  .t-ship{background:rgba(88,166,255,.13);color:#79c0ff;border:1px solid rgba(88,166,255,.3)}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin:14px 0}
+  .panel.accent{border-left:3px solid var(--blue)}
+  .panel.warn{border-left:3px solid var(--amber)}
+  .panel.kill{border-left:3px solid var(--red)}
+  .panel h3{margin:0 0 8px;font-size:15.5px}
+  ul{margin:8px 0;padding-left:20px}li{margin:5px 0;color:var(--dim)}li b{color:var(--txt)}
+  .formula{background:#0a0d12;border:1px solid var(--border);border-radius:8px;padding:14px 16px;
+    font-family:var(--mono);font-size:13px;color:var(--blue);margin:10px 0}
+  .pos{color:var(--green)}.neg{color:var(--red)}.warnc{color:var(--amber)}
+  .best{background:rgba(88,166,255,.08)}
+  .note{color:var(--faint);font-size:12.5px;margin-top:6px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin:10px 0 0;font-size:12px;color:var(--dim)}
+  .footer{margin-top:40px;padding-top:20px;border-top:1px solid var(--border);color:var(--faint);font-size:12.5px}
+  .bar{height:7px;background:var(--panel2);border-radius:4px;overflow:hidden;margin-top:5px;min-width:90px}
+  .bar>i{display:block;height:100%}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>ARC-AGI-3 — Complete Experiment Overview</h1>
+  <div class="sub">ARC Prize 2026 · branch <code>phase0-prune-oracle</code> · compiled 2026-06-22</div>
+</header>
+
+<!-- STANDING -->
+<div class="grid cards">
+  <div class="card"><div class="k">Banked best</div><div class="v pos">0.33</div><div class="d">v13 TransferExplorer (public)</div></div>
+  <div class="card"><div class="k">Reproducible cluster</div><div class="v">0.58–0.70</div><div class="d">target to "reach"</div></div>
+  <div class="card"><div class="k">Leaderboard #1</div><div class="v">1.21</div><div class="d">Tufa Labs (lone outlier)</div></div>
+  <div class="card"><div class="k">Measured experiments</div><div class="v">20+</div><div class="d">5 Kaggle submissions</div></div>
+</div>
+<p class="lead" style="margin-top:18px">Every distinct paradigm has been built and measured on a fixed TUNE/HOLDOUT dev split. The
+public Kaggle score has held at <b>0.33</b> across every submission. This document is the full
+ledger: what was tried, what it scored, and <i>why</i> it didn't move.</p>
+
+<!-- SCORING -->
+<h2><span class="n">01</span> The scoring model (corrected)</h2>
+<p>The objective was mis-modelled early on. The verified formula (docs.arcprize.org/methodology):</p>
+<div class="formula">
+per&nbsp;level&nbsp;&nbsp;S<sub>L</sub> = min(1.15, (human_actions / agent_actions)²)&nbsp;&nbsp;&nbsp;# uncompleted level = 0<br>
+per&nbsp;game&nbsp;&nbsp;&nbsp;weighted&nbsp;avg&nbsp;of&nbsp;S<sub>L</sub>, weight = 1-indexed level number&nbsp;&nbsp;# level 8 counts 8× level 1<br>
+total&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;average&nbsp;over&nbsp;the&nbsp;HIDDEN&nbsp;games&nbsp;only
+</div>
+<p>Two consequences drive everything below: <b class="pos">reaching deep levels</b> dominates (they're
+weighted heaviest, and a missed level scores 0), and <b class="pos">efficiency is squared</b> (halving
+actions quadruples the level score, capped at 1.15). So the real lever is <i>reach deep levels, efficiently,
+on games you've never seen.</i></p>
+
+<!-- ROOT CAUSE -->
+<h2><span class="n">02</span> The unified root cause</h2>
+<div class="panel kill">
+  <h3>An accurate world model is useless without a goal — and the goal is provably unlearnable offline here.</h3>
+  <p style="margin-bottom:6px">Across 20+ experiments, every dead end reduces to a <b>single measured wall</b>, not many separate ones:</p>
+  <ul>
+    <li><b>Offline goal-identification is not learnable.</b> A raw-pixel CNN trained to flag "on-path-to-reward" states scored <b class="neg">LOGO AUC 0.457</b> — below chance. Hand-feature models: also chance.</li>
+    <li><b>Goal-direction levers</b> fail because there's no signal to steer by.</li>
+    <li><b>Rule-synthesis / forward models</b> fail because a perfect predictor still can't tell you <i>which</i> state is the goal.</li>
+    <li><b>The wall games are learning-starved</b> — they offer nothing to learn from in-game (no-op clicks, triggers absent from the candidate set, no level completed to transfer from).</li>
+    <li><b>Any exploration-order change corrupts coverage</b> — confirmed across 5 independent reordering levers (frontier order is load-bearing).</li>
+  </ul>
+  <p class="note">The reproducible cluster (0.58–0.70) sidesteps this: they don't identify goals offline — they learn a <i>within-game distance to a reward already found</i> and spend compute on coverage efficiency. The leader (1.21) likely uses a hosted-LLM / TTT class method that's hard to reproduce offline.</p>
+</div>
+
+<!-- KAGGLE SUBMISSIONS -->
+<h2><span class="n">03</span> What actually scored on Kaggle</h2>
+<table>
+  <thead><tr><th>Version</th><th>Approach</th><th class="m">Public</th><th>Outcome</th></tr></thead>
+  <tbody>
+    <tr><td class="m">v6</td><td>SalienceExplorer (object-segmentation + salience + shortest-path-to-frontier)</td><td class="m">0.33</td><td><span class="tag t-ship">baseline floor</span></td></tr>
+    <tr><td class="m">v10</td><td>Multi-seed ensemble</td><td class="m neg">0.18</td><td><span class="tag t-kill">regressed</span></td></tr>
+    <tr><td class="m">v11/12</td><td>PortfolioPolicy (added dev <i>levels</i>)</td><td class="m">0.33</td><td><span class="tag t-inert">flat — levels don't move it</span></td></tr>
+    <tr class="best"><td class="m">v13</td><td>TransferExplorer (within-game reward-color transfer) — <b>+41% dev eff</b></td><td class="m pos">0.33</td><td><span class="tag t-ship">BANKED BEST</span></td></tr>
+    <tr><td class="m">v15</td><td>TransferCAI combo (+ no-op click pruning) — <b>+47% dev eff</b></td><td class="m neg">0.28</td><td><span class="tag t-kill">dev win didn't translate</span></td></tr>
+  </tbody>
+</table>
+<p class="note">Best-counts ranking means v15's 0.28 can't displace the banked 0.33. The recurring lesson: <b>a byte-identical HOLDOUT is a red flag</b> the lever won't move the score, and <b>big TUNE/dev wins have not translated to Kaggle</b> — dev has only ever misled <i>optimistically</i>.</p>
+
+<!-- DEV GRAVEYARD -->
+<h2><span class="n">04</span> The full experiment ledger</h2>
+<div class="legend">
+  <span><span class="tag t-win">win</span> measurable gain</span>
+  <span><span class="tag t-mixed">mixed</span> gain + regression</span>
+  <span><span class="tag t-kill">kill</span> net-negative</span>
+  <span><span class="tag t-inert">inert</span> no effect</span>
+  <span><span class="tag t-ship">ship</span> in submission</span>
+</div>
+<table>
+  <thead><tr><th>#</th><th>Experiment</th><th>Paradigm</th><th>Result</th><th>Verdict</th></tr></thead>
+  <tbody>
+    <tr><td class="m">1</td><td><b>Transfer</b></td><td>within-game cross-level reward transfer</td><td>+41% dev eff, lp85 L1→L5; <b>Kaggle 0.33 (inert)</b></td><td><span class="tag t-ship">ships</span></td></tr>
+    <tr><td class="m">2</td><td>Prior</td><td>core-knowledge palette priors</td><td>regresses HOLDOUT (su15/m0r0 1→0)</td><td><span class="tag t-kill">kill</span></td></tr>
+    <tr><td class="m">3</td><td>Relational</td><td>translation-invariant abstract state key</td><td>cracks walls (sk48/ls20 L0→L1) but craters eff</td><td><span class="tag t-kill">net-neg</span></td></tr>
+    <tr><td class="m">4</td><td>Transfer×Relational</td><td>combo</td><td>most TUNE levels (2.5) but inherits crater</td><td><span class="tag t-kill">kill</span></td></tr>
+    <tr><td class="m">5</td><td>Mechanic inference</td><td>active mechanic ID over core-knowledge ontology</td><td><b class="pos">PASS 4/4</b> — mechanic IS inferable (slide-to-wall)</td><td><span class="tag t-win">finding</span></td></tr>
+    <tr><td class="m">6</td><td>SlideNav planner</td><td>inference-gated slide-aware BFS nav</td><td>isolated ls20 win was a probe-prefix artifact; won't compose</td><td><span class="tag t-kill">kill</span></td></tr>
+    <tr><td class="m">7</td><td>GoalDirectedSlide</td><td>slide nav + goal-color detect</td><td>probe failed to detect avatar/goal</td><td><span class="tag t-kill">kill</span></td></tr>
+    <tr><td class="m">8</td><td>SalientState</td><td>rare-exact / common-merged key</td><td>relevant state is <b>irreducibly large</b> — nothing safe to merge</td><td><span class="tag t-inert">inert</span></td></tr>
+    <tr><td class="m">9</td><td>CNN prune-probe</td><td>raw-pixel learned goal-signal (LOGO)</td><td><b class="neg">AUC 0.457 (below chance)</b> — goal-id unlearnable</td><td><span class="tag t-kill">decisive</span></td></tr>
+    <tr><td class="m">10</td><td>Symbolic forward model</td><td>induced next-frame rule synthesis</td><td>10% pred acc; perfect model can't locate goal anyway</td><td><span class="tag t-kill">kill</span></td></tr>
+    <tr><td class="m">11</td><td>StructuralNovelty</td><td>goal-FREE intrinsic motivation</td><td>fires on cosmetic changes; reorder corrupts coverage</td><td><span class="tag t-kill">kill</span></td></tr>
+    <tr><td class="m">12</td><td>rtransfer</td><td>Gentner relational-schema transfer (cognitive)</td><td>worse than color-transfer (schema too coarse)</td><td><span class="tag t-kill">kill</span></td></tr>
+    <tr><td class="m">13</td><td>irr</td><td>irreversible symmetry-breaking (physics)</td><td>byte-identical to salience</td><td><span class="tag t-inert">inert</span></td></tr>
+    <tr><td class="m">14</td><td>StallRelational</td><td>relational key on-stall (3 triggers: level/satur./bisim)</td><td>real sk48 8.7× unlock but never strictly additive</td><td><span class="tag t-kill">kill</span></td></tr>
+    <tr><td class="m">15</td><td>On-device LLM/VLM prior</td><td>affordance-prior goal-guess (qwen/gemma)</td><td>both models fail the <i>easy known</i> game (trigger not visually determinate)</td><td><span class="tag t-kill">kill</span></td></tr>
+    <tr><td class="m">16</td><td>Go-Explore</td><td>cell-archive + deterministic replay (Nature 2021)</td><td>random explore &lt; salience</td><td><span class="tag t-kill">kill</span></td></tr>
+    <tr><td class="m">17</td><td>ValueRanker</td><td>per-game distance-to-milestone, ranks frontiers</td><td>tu93 L5→L2 (reranking corrupts coverage)</td><td><span class="tag t-kill">kill</span></td></tr>
+    <tr><td class="m">18</td><td><b>CAI-prune</b></td><td>prune proven-no-op click colors</td><td>+47% dev eff, lp85 L1→L5; <b class="neg">Kaggle 0.28</b></td><td><span class="tag t-kill">v15 regress</span></td></tr>
+    <tr><td class="m">19</td><td><b>Spatial value-CNN</b></td><td>cluster-faithful per-game CNN + hardening</td><td>vc33 exploit 34–86×; net-safe vs salience, <b class="neg">net-NEG vs transfer</b></td><td><span class="tag t-mixed">see §5</span></td></tr>
+    <tr><td class="m">20</td><td><b>Transfer + value-CNN</b></td><td>combo (banked base + learned exploit)</td><td>CNN hijacks transfer's deep reach; unstable</td><td><span class="tag t-mixed">see §5</span></td></tr>
+  </tbody>
+</table>
+
+<!-- VALUE CNN DEEP DIVE -->
+<h2><span class="n">05</span> The value-CNN investigation (this session)</h2>
+<p class="lead">The reproducible cluster's actual machinery: a per-game CNN trained online on BFS
+distance-to-milestone labels, exploiting toward the next milestone. Built faithfully, with novel
+hardening (confidence-gated exploit + salience backbone + post-reward gate) to prevent the
+overfit-collapse that sank the preview leaders. The dev numbers, against the <b>correct</b> baseline:</p>
+<table>
+  <thead><tr><th>Variant</th><th class="m">TUNE levels</th><th class="m">TUNE eff</th><th class="m">cd82</th><th class="m">lp85</th><th class="m">vc33 L1→L2</th><th>vs banked</th></tr></thead>
+  <tbody>
+    <tr><td>salience-dense</td><td class="m">1.75</td><td class="m">6.26</td><td class="m">[367,242]</td><td class="m">L1</td><td class="m">688</td><td class="dim">old baseline</td></tr>
+    <tr><td>pure value-CNN</td><td class="m">1.75</td><td class="m">7.32</td><td class="m">[367,242]</td><td class="m">L1</td><td class="m pos">20</td><td><span class="tag t-kill">worse</span></td></tr>
+    <tr class="best"><td><b>transfer-dense (BANKED v13)</b></td><td class="m pos">2.25</td><td class="m pos">8.81</td><td class="m">[367,242]</td><td class="m pos">L5</td><td class="m">99</td><td><span class="tag t-ship">best</span></td></tr>
+    <tr><td>transfer + value-CNN (run 1)</td><td class="m">2.00</td><td class="m">6.96</td><td class="m neg">[367,3644]</td><td class="m warnc">L3</td><td class="m pos">12</td><td><span class="tag t-kill">worse</span></td></tr>
+    <tr><td>transfer + value-CNN (run 2)</td><td class="m">2.12</td><td class="m">7.36</td><td class="m neg">L1 only</td><td class="m pos">L5</td><td class="m pos">8</td><td><span class="tag t-kill">worse</span></td></tr>
+  </tbody>
+</table>
+<p class="note">Both combo runs land <b>below</b> banked transfer-dense (2.25 / 8.81) on levels and efficiency, and break a <i>different</i> game each run (run 1: lp85 L5→L3; run 2: cd82 L2→L1). The CNN's nondeterministic training destabilizes transfer's otherwise-deterministic deep reach — the instability is itself the verdict. <b class="neg">Kill confirmed.</b></p>
+<div class="panel warn">
+  <h3>Why it looked good, then didn't</h3>
+  <p>The value-CNN <b>only helps on top of salience</b> — salience never reaches lp85 L5, so the CNN's
+  exploit has no deep trajectory to disturb, and the vc33 win (L2 in 20 vs 688) looks spectacular.
+  But on top of <b>transfer</b> (the banked config that already reaches lp85 <b>L5</b>), the CNN's
+  exploit <b class="neg">hijacks the trajectory away from transfer's deep-level reach</b> — and because
+  CNN training is nondeterministic, it breaks a <i>different</i> game each run. The vc33 "win" is a
+  trivial efficiency gain on an already-solved early level; the cost is the heavily-weighted deep levels.</p>
+  <p style="margin-bottom:0"><b>Verdict:</b> a well-built negative result. The cluster's exploit machinery,
+  in this harness, <b>interferes with the transfer lever that actually carries our score.</b>
+  Recommendation: <b class="pos">keep the banked transfer; ship neither value-CNN variant.</b>
+  Spending the scarce daily slot on a dev-worse, unstable variant is poor EV.</p>
+</div>
+
+<!-- LESSONS -->
+<h2><span class="n">06</span> Durable lessons</h2>
+<div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">
+  <div class="panel accent"><h3>Dev metrics mislead Kaggle</h3><p class="note" style="margin:0">Transfer +41% and CAI +47% dev efficiency both → flat-or-worse on Kaggle. Big TUNE gains are not evidence of a real lever; HOLDOUT engagement is.</p></div>
+  <div class="panel accent"><h3>Byte-identical HOLDOUT = red flag</h3><p class="note" style="margin:0">If a lever is byte-identical on the held-out split, it's inert on the games that gate the score — it won't move publicScore no matter the TUNE win.</p></div>
+  <div class="panel accent"><h3>Frontier order is load-bearing</h3><p class="note" style="margin:0">5 reordering levers (walk-reduction, struct, value-ranker, bisim, stallrel) all corrupt tu93's coverage. Pruning/coverage is the only safe class; reranking is not.</p></div>
+  <div class="panel accent"><h3>Verify the mechanism, not the metric</h3><p class="note" style="margin:0">The "ls20 2.3×" slide-nav win was a probe-prefix artifact — the planner never actually ran. A lucky opening sequence, not a generalizable lever.</p></div>
+  <div class="panel accent"><h3>Reach &gt; efficiency</h3><p class="note" style="margin:0">Level weighting means reaching lp85 L5 beats shaving actions on an already-solved level. The value-CNN optimized the wrong thing.</p></div>
+  <div class="panel accent"><h3>The wall is one wall</h3><p class="note" style="margin:0">Goal-id is unlearnable offline (AUC 0.457). Every paradigm — learned, symbolic, intrinsic, prior-based — reduces to this. 0.33 is the honest offline ceiling for this agent family.</p></div>
+</div>
+
+<!-- PATH FORWARD -->
+<h2><span class="n">07</span> Where this leaves us</h2>
+<div class="panel">
+  <p style="margin-top:0"><b>Banked and protected:</b> v13 TransferExplorer = 0.33. Best-counts means nothing tested
+  can lower it. The transfer lever's lp85 L1→L5 deep reach is the genuine asset — worth protecting, not perturbing.</p>
+  <p><b>Honest standing:</b> 0.33 public is robust across every paradigm tried. The public games sit in
+  the "wall regime" (learning-starved, goal-unlearnable). The prize is the <i>private</i> hidden games
+  (scored ~Nov 2) where transfer's strict-superset behavior <i>may</i> help on multi-level-click games — unobservable now.</p>
+  <p style="margin-bottom:0"><b>What would actually move it:</b> the cluster's 0.58–0.70 needs <i>within-game
+  distance-value done without disturbing coverage</i> (the value-CNN got the value part but broke coverage);
+  the leader's 1.21 needs a hosted-LLM / test-time-training class method that's hard to run inside the
+  offline Kaggle constraints. Neither is yet reproduced. The search continues.</p>
+</div>
+
+<div class="footer">
+  All figures from <code>scripts/eval_efficiency.py</code> on the fixed TUNE/HOLDOUT split (budget 6000–30000).
+  TUNE = vc33 cd82 sc25 lp85 lf52 tu93 ar25 sp80 · HOLDOUT = su15 sk48 re86 wa30 m0r0 ls20 tn36 tr87.
+  Kaggle scores are real submission results. Full detail in memory <code>arcagi3-scoring-and-transfer.md</code>.
+</div>
+</div>
+</body>
+</html>
