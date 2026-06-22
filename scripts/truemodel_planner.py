@@ -121,5 +121,47 @@ def main():
         print("     correct model (discovery), not a hard planning problem.", flush=True)
 
 
+def bfs_solve_current(game, max_nodes=500_000):
+    """BFS from the game's CURRENT level/state (deepcopy snapshots from `game`). Returns the
+    action list that clears the current level, or None. Mirrors bfs_solve but does not reset."""
+    start_idx = game.level_index
+    seen = {state_key(game)}
+    q = deque([(game, [])])
+    expanded = 0
+    while q:
+        g, path = q.popleft()
+        expanded += 1
+        if expanded > max_nodes:
+            return None
+        for a in MOVES:
+            child = copy.deepcopy(g)
+            apply(child, a)
+            if child.level_index > start_idx or child._score > game._score:
+                return path + [a.value]
+            if child._state == GameState.GAME_OVER:
+                continue
+            k = state_key(child)
+            if k not in seen:
+                seen.add(k)
+                q.append((child, path + [a.value]))
+    return None
+
+
+def optimal_actions_per_level(GameClass, up_to_level=0, max_nodes=500_000):
+    """Per-level A_h via solve->advance: solve the current level, apply that optimal solution to
+    reach the next, repeat. Returns [A_h[0], A_h[1], ...] (None for any level the BFS can't solve)."""
+    g = GameClass()
+    g.perform_action(ActionInput(id=GameAction.RESET))
+    out = []
+    for _ in range(up_to_level + 1):
+        sol = bfs_solve_current(g, max_nodes=max_nodes)
+        out.append(None if sol is None else len(sol))
+        if sol is None:
+            break
+        for aid in sol:
+            g.perform_action(ActionInput(id=GameAction.from_id(aid)))
+    return out
+
+
 if __name__ == "__main__":
     main()
