@@ -54,19 +54,29 @@ class EngineResult:
         return transfer_slope([lr.actions for lr in self.levels if lr.cleared])
 
 
-def make_ls20():
+_BUNDLED = {"collect"}  # offline dev games in src/arcagi3/games
+
+
+def make_game(game: str):
+    if game in _BUNDLED:
+        client = Arcade(operation_mode=OperationMode.OFFLINE,
+                        environments_dir="src/arcagi3/games", logger=logging.getLogger("bo"))
+        return client.make(game_id=game, scorecard_id=f"sc-{game}")
     client = Arcade(operation_mode=OperationMode.NORMAL, logger=logging.getLogger("bo"))
-    gid = next(e.game_id for e in client.get_environments() if e.game_id.startswith("ls20"))
+    gid = next(e.game_id for e in client.get_environments() if e.game_id.startswith(game))
     return client.make(game_id=gid, scorecard_id=client.open_scorecard(tags=["bakeoff"]))
 
 
-def run_engine(name: str, engine, budget: int, max_level: int = 4) -> EngineResult:
+make_ls20 = lambda: make_game("ls20")
+
+
+def run_engine(name: str, engine, budget: int, game: str = "ls20", max_level: int = 4) -> EngineResult:
     """Drive `engine.decide(...)`; charge each environment-altering action to the current level.
 
     max_level is the bake-off depth target (harness-level, not an engine constant) — ls20 has more levels;
     we compare engines over L1..L4.
     """
-    env = make_ls20()
+    env = make_game(game)
     obs = _retry(env.reset)
     res = EngineResult(name=name, levels_cleared=0)
     actions_this_level = 0
@@ -98,7 +108,7 @@ def run_engine(name: str, engine, budget: int, max_level: int = 4) -> EngineResu
             n += 1
         new_level = int(obs.levels_completed or 0)
         if new_level > cur_level:
-            a_h = a_h_cache.setdefault(cur_level, human_baseline_actions(level=cur_level))
+            a_h = a_h_cache.setdefault(cur_level, human_baseline_actions(game=game, level=cur_level))
             res.levels.append(LevelResult(cur_level, True, actions_this_level, a_h,
                                           efficiency(a_h or 0, actions_this_level)))
             res.levels_cleared = new_level
@@ -117,19 +127,21 @@ def print_table(results: list[EngineResult]) -> None:
 
 
 def main():
-    budget = int(sys.argv[1]) if len(sys.argv) > 1 else 30000
+    budget = int(sys.argv[1]) if len(sys.argv) > 1 else 10000
     from arcagi3.discovery_explorer import DiscoveryExplorer
-    engines = [
-        ("discovery(#1)", DiscoveryExplorer(seed=0)),
-        ("salience(#2)", SalienceExplorer(seed=0)),
-        ("spatial_value(#3)", SpatialValueExplorer(seed=0)),
+    runs = [
+        ("discovery-A1(ls20)", DiscoveryExplorer(seed=0, planner_backend="traversal"), "ls20"),
+        ("discovery-A2(ls20)", DiscoveryExplorer(seed=0, planner_backend="painted_set"), "ls20"),
+        ("salience(ls20)", SalienceExplorer(seed=0), "ls20"),
+        ("discovery-collect(collect)", DiscoveryExplorer(seed=0, planner_backend="traversal"), "collect"),
+        ("salience(collect)", SalienceExplorer(seed=0), "collect"),
     ]
     results = []
-    for name, eng in engines:
+    for name, eng, game in runs:
         if hasattr(eng, "reset_all"):
             eng.reset_all()
         print(f"running {name}...", flush=True)
-        results.append(run_engine(name, eng, budget))
+        results.append(run_engine(name, eng, budget, game=game))
     print_table(results)
 
 
