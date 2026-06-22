@@ -78,6 +78,10 @@ def make_policy(name: str):
     if name == "rtransfer":
         from arcagi3.relational_transfer_explorer import RelationalTransferExplorer
         return RelationalTransferExplorer(seed=0, trust_threshold=3, border_mask=2)
+    if name in ("goexplore", "goexplore16"):
+        from arcagi3.go_explore_explorer import GoExploreExplorer
+        return GoExploreExplorer(seed=0, trust_threshold=3, border_mask=2,
+                                 block=16 if name == "goexplore16" else 8)
     if name == "cai":
         from arcagi3.cai_prune_explorer import CAIPruneExplorer
         return CAIPruneExplorer(seed=0, trust_threshold=3, border_mask=2)
