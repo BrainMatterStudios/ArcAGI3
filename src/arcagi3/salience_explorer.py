@@ -26,7 +26,10 @@ import numpy as np
 
 from . import perception as P
 
-SIMPLE_IDS = [1, 2, 3, 4, 5]
+SIMPLE_IDS = [1, 2, 3, 4, 5]  # NB: SDK also defines ACTION7 (exposed by ar25/bp35/lf52/sb26/
+# sk48/su15), but testing it (2026-06-22) showed it's INERT on all of them — no game leveled up
+# via it across 6000 actions, and adding it as a candidate regressed ar25 L2->L1 (coverage
+# perturbation). Action 7 is a no-op button on these games; deliberately excluded. Do not re-add.
 MAX_TIER = 9
 
 
