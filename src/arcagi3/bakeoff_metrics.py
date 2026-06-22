@@ -9,7 +9,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-_TRUEMODEL = Path("scripts/truemodel_planner.py")
+_TRUEMODEL = Path(__file__).resolve().parents[2] / "scripts" / "truemodel_planner.py"
 
 
 def efficiency(a_h: int, a_m: int | None) -> float:

@@ -15,25 +15,25 @@ def test_induces_color_cycle_on_tile_contact():
 
 
 def test_terminal_is_position_and_attr_match():
-    prewin = {"agent_pos": (3, 5), "agent_attr": ("color9", "S0"),
-              "slots": [{"pos": (3, 5), "attr": ("color9", "S0")}]}
+    prewin = {"agent_pos": (3, 5), "agent_attrs": {"color": 9, "shape": "S0"},
+              "slots": [{"pos": (3, 5), "attr_req": {"color": 9, "shape": "S0"}, "done": False}]}
     pred = induce_terminal(prewin)
     assert pred.kind == "attr_match_at_slot"
     # holds when agent on slot with matching attrs
-    assert pred.holds(agent_pos=(3, 5), agent_attr=("color9", "S0"),
-                      slots=[{"pos": (3, 5), "attr": ("color9", "S0"), "done": False}])
+    assert pred.holds(agent_pos=(3, 5), agent_attrs={"color": 9, "shape": "S0"},
+                      slots=[{"pos": (3, 5), "attr_req": {"color": 9, "shape": "S0"}, "done": False}])
     # fails when attrs don't match
-    assert not pred.holds(agent_pos=(3, 5), agent_attr=("color9", "S1"),
-                          slots=[{"pos": (3, 5), "attr": ("color9", "S0"), "done": False}])
+    assert not pred.holds(agent_pos=(3, 5), agent_attrs={"color": 9, "shape": "S1"},
+                          slots=[{"pos": (3, 5), "attr_req": {"color": 9, "shape": "S0"}, "done": False}])
 
 
 def test_terminal_all_slots_must_be_satisfied():
     pred = TerminalPredicate()
     # two slots, agent satisfies slot 0 but slot 1 not done and agent not on it -> not terminal
-    assert not pred.holds(agent_pos=(0, 0), agent_attr=("c", "s"),
-                          slots=[{"pos": (0, 0), "attr": ("c", "s"), "done": False},
-                                 {"pos": (9, 9), "attr": ("c", "s"), "done": False}])
+    assert not pred.holds(agent_pos=(0, 0), agent_attrs={"color": "c", "shape": "s"},
+                          slots=[{"pos": (0, 0), "attr_req": {"color": "c", "shape": "s"}, "done": False},
+                                 {"pos": (9, 9), "attr_req": {"color": "c", "shape": "s"}, "done": False}])
     # slot 1 already done, agent on slot 0 with match -> terminal
-    assert pred.holds(agent_pos=(0, 0), agent_attr=("c", "s"),
-                      slots=[{"pos": (0, 0), "attr": ("c", "s"), "done": False},
-                             {"pos": (9, 9), "attr": ("c", "s"), "done": True}])
+    assert pred.holds(agent_pos=(0, 0), agent_attrs={"color": "c", "shape": "s"},
+                      slots=[{"pos": (0, 0), "attr_req": {"color": "c", "shape": "s"}, "done": False},
+                             {"pos": (9, 9), "attr_req": {"color": "c", "shape": "s"}, "done": True}])

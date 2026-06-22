@@ -36,8 +36,15 @@ def induce_on_enter_cycles(triples: list[dict], min_support: int = 1) -> list[On
 class TerminalPredicate:
     kind: str = "attr_match_at_slot"
 
-    def holds(self, agent_pos, agent_attr, slots) -> bool:
-        return all(s["done"] or (agent_pos == s["pos"] and agent_attr == s["attr"]) for s in slots)
+    def holds(self, agent_pos, agent_attrs, slots) -> bool:
+        """Terminal iff every slot is satisfied: already done, or the agent stands on it with all
+        required attributes matching. `agent_attrs` is a dict {name: value}; slots use "attr_req"
+        (a dict), matching the live planner schema (factored_model._satisfied)."""
+        return all(
+            s["done"] or (agent_pos == s["pos"]
+                          and all(agent_attrs.get(k) == v for k, v in s["attr_req"].items()))
+            for s in slots
+        )
 
 
 def induce_terminal(prewin: dict) -> TerminalPredicate:

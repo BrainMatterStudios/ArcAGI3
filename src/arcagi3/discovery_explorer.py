@@ -105,6 +105,8 @@ class DiscoveryExplorer:
         A simple action that produced NO motion marks the attempted direction as a candidate
         wall in front of the agent.
         """
+        # TODO(phase2): consolidate agent identification with movement.MotionModel /
+        # reach_target_test.identify_agent (multi-color avatars) instead of this inline heuristic.
         if self._bg is None:
             return
         if self._prev_grid is None or self._prev_token is None:
