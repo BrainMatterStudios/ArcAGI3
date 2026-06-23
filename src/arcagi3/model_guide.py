@@ -8,13 +8,15 @@ model can't yield a plan, suggest() returns None and the explorer falls back to 
 from __future__ import annotations
 
 from arcagi3 import perception as P
+from arcagi3.attribute_state import agent_attributes
 from arcagi3.discovery_explorer import DiscoveryExplorer
 
 
 class ModelGuide:
+    # Couples to DiscoveryExplorer private internals (_bg/_deltas/_prev_*/_build_*/_plan) by design (DRY);
+    # see plan spec §6 fallback if that breaks.
     def __init__(self):
         self._d = DiscoveryExplorer(seed=0)
-        self._d.reset_all()
         self._obs_count = 0
         self._built_at = -1
         self._plan_cache: list = []
@@ -27,6 +29,10 @@ class ModelGuide:
             d.on_level_change(level)
         d._prev_grid, d._prev_token = prev_grid, prev_action
         d._ingest_movement(grid)
+        # Seed _prev_attr once the agent is identified, mirroring DiscoveryExplorer's
+        # PROBE_MOVEMENT->PROBE_TRANSFORMS seeding, so the FIRST attribute-change isn't dropped.
+        if d._agent_color is not None and d._prev_attr is None:
+            d._prev_attr = agent_attributes(prev_grid, d._agent_cells(prev_grid))
         d._ingest_transform(grid)
         d._ingest_world_delta(grid)
         self._obs_count += 1
