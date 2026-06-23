@@ -178,6 +178,8 @@ on games you've never seen.</i></p>
     <tr><td class="m">44</td><td>World-transform bake-off (paint + collect)</td><td>Phase-2 DSL extension: <code>recolor_on_move</code> paint + <code>collect_on_contact</code>; A1 (paint-as-traversal) vs A2 (exact painted-set) path-opening planners; ls20 + bundled collect game, black-box, budget 10000</td><td>induction machinery fires (4582 paint deltas, 6 rules, 1038 paintable cells) but 0 levels cleared — wall moved to perception/coordinate contract (pixel-frame vs motion-lattice mismatch)</td><td><span class="tag t-kill">negative — localized</span></td></tr>
     <tr><td class="m">45</td><td>Motion-lattice snap + broadened collect targets</td><td>Phase-3 coordinate fix: <code>motion_lattice</code> derives pixel pitch from agent <code>_deltas</code> and snaps scene-graph centroids onto reachable lattice; broadened fallback surfaces small non-agent objects (collect items); ls20 (A1/A2) + collect, black-box, budget 10000</td><td>coordinate gap closed (single-target <code>plan()</code> succeeds); 0 levels cleared — two new <code>_build_plan</code> defects: conjunctive-slot poison (ls20) + snap-off-footprint (collect); salience(collect) 3 levels confirms game solvable</td><td><span class="tag t-kill">negative — localized</span></td></tr>
     <tr><td class="m">46</td><td>Hybrid: explore-to-clear + model-guide-to-deepen</td><td>Phase-4 Strategic Option C: <code>HybridTransferExplorer</code> wraps <code>TransferExplorer</code>; <code>ModelGuide</code> (advisory induction/plan) promotes a goal-directed action to tier-0 if it fires; firewall (<code>enable_model_guidance=False</code>) makes it byte-identical to <code>TransferExplorer</code>; <code>guide_fires</code> counter added; 3-arm lp85 bake-off, budget 8000</td><td>hybrid arm byte-identical to transfer (4281 actions, 5 levels) — <b>guide_fires=0 on all arms</b>; ModelGuide never fired: lp85 is click-only (<code>available_actions==[6]</code>), movement model fit nothing (<code>_deltas={}</code>, <code>world_obs=0</code>), <code>suggest()</code> returned None every step; firewall degraded gracefully; decisive question (does guidance beat transfer?) unanswered — wrong testbed</td><td><span class="tag t-kill">safe — unanswered</span></td></tr>
+    <tr><td class="m">47</td><td><b>TUNE/HOLDOUT four-policy measurement</b></td><td>salience / transfer / valuecnn / transfer-valuecnn across all 16 games, budget 6000 — does anything beat v13=0.33 on the held-out (unseen-game) proxy?</td><td><b>HOLDOUT byte-identical across all four (0.38 levels, eff 1.19)</b>; SOTA CNN net-negative on TUNE (1.62&lt;1.75 levels; cratered cd82/lp85). Transfer's +41% is TUNE-only — HOLDOUT immovable at the 0.33 ceiling</td><td><span class="tag t-kill">decisive — ceiling confirmed</span></td></tr>
+    <tr><td class="m">48</td><td>First-level-acquisition diagnosis</td><td>read source of the 5 zero-level HOLDOUT games (sk48, re86, wa30, ls20, tn36) — what blocks the FIRST level-up on each?</td><td>5 unrelated paradigms (transform-match / snake-align / spatial-align / adversarial-sokoban / visual-programming) — <b>no common first-level lever</b>; each needs bespoke goal-perception+planning. First-level acquisition on novel games is the AGI-complete wall (frontier &lt;2%)</td><td><span class="tag t-win">finding</span></td></tr>
   </tbody>
 </table>
 <p class="note">Experiments 21–35 (this session) all confirm the wall from new angles. The user-directed <b>Goal Extraction Engine</b> (§9) validated that symbolic <b>perception works</b> — a real, reusable positive — but every way of <i>converting</i> perception to score (planners, transfer-augmentation, VLM, structured discovery) fails, because the exact objective + action-mechanic is idiosyncratic per game and underdetermined by appearance.</p>
@@ -469,6 +471,44 @@ that pipeline showed, tested end-to-end.</p>
   <p><b>Finding — safe degradation, but the model never engaged.</b> The hybrid arm is <b>byte-identical</b> to signature-transfer, action for action, with <code>guide_fires=0</code>. Instrumentation confirmed the cause: lp85 is a pure CLICK game — <code>available_actions==[6]</code> only; ~398/400 chosen actions were clicks. The movement-centric discovery model has nothing to fit: <code>_deltas={}</code>, <code>world_obs=0</code>, <code>_agent_color=None</code>, so <code>suggest()</code> returned None every step. The firewall/fallback worked exactly as designed: the hybrid degraded to the proven baseline with <span class="pos">zero regression</span>.</p>
   <p>But the decisive question — does model guidance <b>beat</b> signature-transfer? — is <b>unanswered</b>. lp85 was structurally the wrong testbed: its +41% lift comes entirely from CLICK-signature transfer, orthogonal to the movement/world-transform model. No movement game was tested.</p>
   <p style="margin-bottom:0"><b>Verdict (honest, sobering).</b> The hybrid <b>architecture</b> is validated as safe — graceful degradation to the banked baseline; the firewall holds at the behavior level. But the discovery model has now failed to demonstrate value on both game types available for testing: it cannot gate (Phases 1–3: movement games ls20/collect — 0 levels cleared) and it does not fire (Phase 4: click game lp85 — <code>guide_fires=0</code>). The strong performer remains the shallow <code>TransferExplorer</code> (5 lp85 levels via click-signature transfer). The discovery model and the proven transfer lever operate on <b>disjoint game types</b> (movement vs click) and have not composed into a net win anywhere. <b>v13 = 0.33 remains banked; no submission from Phase 4.</b> Open question for the next direction: is the movement-centric discovery model worth pursuing, given that it neither gates (movement games) nor fires (click games) where the points actually are?</p>
+</div>
+
+<div class="panel kill">
+  <h3>Experiment 47 — TUNE/HOLDOUT four-policy measurement: the held-out ceiling is immovable</h3>
+  <p><b>Setup.</b> After Phase 4, measure where we actually stand: four policies across the full 16-game TUNE/HOLDOUT split (budget 6000) on one harness — <code>salience</code> (banked v13=0.33), <code>transfer</code> (signature, +41%), and the faithfully-ported StochasticGoose/Blind-Squirrel SOTA CNN (<code>valuecnn</code>, <code>transfer-valuecnn</code>). HOLDOUT ≈ the unseen games that decide the Kaggle score.</p>
+  <table style="margin:10px 0 14px">
+    <thead><tr><th>policy</th><th class="m">TUNE levels</th><th class="m">TUNE eff</th><th class="m">HOLDOUT levels</th><th class="m">HOLDOUT eff</th></tr></thead>
+    <tbody>
+      <tr><td>salience <span class="note">(v13=0.33)</span></td><td class="m">1.75</td><td class="m">6.26</td><td class="m">0.38</td><td class="m">1.19</td></tr>
+      <tr><td>transfer <span class="note">(signature)</span></td><td class="m pos">2.38</td><td class="m pos">8.72</td><td class="m">0.38</td><td class="m">1.19</td></tr>
+      <tr><td>valuecnn <span class="note">(SOTA CNN)</span></td><td class="m neg">1.62</td><td class="m">6.64</td><td class="m">0.38</td><td class="m">1.19</td></tr>
+      <tr><td>transfer-valuecnn</td><td class="m neg">2.25</td><td class="m neg">7.67</td><td class="m">0.38</td><td class="m">1.19</td></tr>
+    </tbody>
+  </table>
+  <p><b>Finding.</b> HOLDOUT is <b>byte-identical across all four policies</b> (0.38 levels, 1.19 eff; same per-game). Every value-add method moves TUNE and <b>nothing moves HOLDOUT</b>. The ported SOTA CNN is <span class="neg">net-negative on TUNE</span> — fewer levels and lower efficiency than the explorer it augments (cratered cd82, slowed lp85) — confirming the earlier net-negative result on the full split.</p>
+  <p style="margin-bottom:0"><b>Why.</b> Every learned lever (transfer signatures, CNN value) trains on level-ups, but on HOLDOUT the agent rarely clears a level to learn from (5/8 games clear 0) — so each collapses to the salience floor. The binding constraint is first-level acquisition on novel games. <b>v13 = 0.33 is the confirmed offline ceiling for this agent family.</b></p>
+</div>
+
+<div class="panel accent">
+  <h3>Experiment 48 — First-level-acquisition diagnosis: no common lever</h3>
+  <p><b>Setup.</b> Since HOLDOUT is gated on the first level-up, read the source of the five 0-level HOLDOUT games to find what blocks L0→L1 on each.</p>
+  <table style="margin:10px 0 14px">
+    <thead><tr><th>game</th><th class="m">actions</th><th>first-level mechanic</th><th>first-level barrier</th></tr></thead>
+    <tbody>
+      <tr><td class="m">ls20</td><td class="m">1-4</td><td>transform-match (shape+color+rotation = goal, on slot)</td><td>invisible state-match, no gradient</td></tr>
+      <tr><td class="m">sk48</td><td class="m">1-4,6,7</td><td>paired-snake color-sequence alignment</td><td>joint multi-constraint planning</td></tr>
+      <tr><td class="m">re86</td><td class="m">1-4,5</td><td>align colored pieces to matching-color markers</td><td>silent global goal, no partial credit</td></tr>
+      <tr><td class="m">wa30</td><td class="m">1-4,5</td><td>adversarial Sokoban (grab + carry 3 to a zone)</td><td>enemies undo random progress</td></tr>
+      <tr><td class="m">tn36</td><td class="m">6 only</td><td>visual programming (encode a transform program via bit-clicks)</td><td>must encode exact instruction sequences</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-bottom:0"><b>Finding.</b> Five <b>unrelated paradigms</b> — no shared first-level lever exists. Every "minimal capability" is the same <i>shape</i> (read this game's goal, plan to it) = the discover→plan paradigm six phases could not make robust. First-level acquisition on unseen games <b>is</b> ARC-AGI-3's core difficulty (frontier models &lt;2%).</p>
+</div>
+
+<div class="panel kill">
+  <h3>Campaign conclusion — consolidate &amp; ship</h3>
+  <p>Across <b>six phases</b>, <b>no method — including the faithfully-ported SOTA CNN — beats the salience baseline on the held-out (unseen-game) proxy.</b> HOLDOUT is pinned at <code>v13 = 0.33</code> regardless of approach (discovery model, transfer, hybrid, value-CNN). The unbeaten wall is first-level acquisition on novel games — the AGI-complete benchmark core, not something more engineering closes.</p>
+  <p style="margin-bottom:0"><b>Decision.</b> Bank <code>v13 = 0.33</code> (salience) as the firewalled submission; <code>transfer</code> (signature) is the strongest dev config (helps only where multi-level clears already happen). Ship a clean, reproducible open-source repo (the open-source milestone rewards reproducibility, not top score) + this negative-results map. Full decision document: <code>docs/arc-agi-3-strategic-synthesis.html</code>.</p>
 </div>
 
 <div class="footer">
