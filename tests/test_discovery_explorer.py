@@ -262,6 +262,8 @@ def test_planner_backend_flag_default_and_set():
 
 
 def test_a1_treats_paint_cells_as_passable():
+    """A1 plans THROUGH a paintable cell that is NOT a confirmed wall. (No bump recorded for the
+    paint cell, so it stays passable.)"""
     import numpy as np
     from arcagi3.discovery_explorer import DiscoveryExplorer
     from arcagi3.transform_induction import RecolorOnMove
@@ -270,7 +272,7 @@ def test_a1_treats_paint_cells_as_passable():
     eng._deltas = {3: (0, -1), 4: (0, 1)}
     eng._recolors = [RecolorOnMove(11, 3)]; eng._paint_colors = {11}
     grid = np.zeros((1, 3), dtype=np.int8); grid[0, 0] = 9; grid[0, 1] = 11
-    eng._walls = {(0, 1)}                 # naive probe marked the 11-cell blocked
+    eng._walls = set()                    # the 11-cell was never bumped -> not a confirmed wall
     eng._tiles = {}; eng._cycles = []; eng._terminal = None
     import arcagi3.discovery_explorer as DE
     orig = DE.SG.extract
@@ -280,6 +282,64 @@ def test_a1_treats_paint_cells_as_passable():
     finally:
         DE.SG.extract = orig
     assert eng._plan and eng._plan[0] == 4   # A1 plans THROUGH the paint cell, not blocked by it
+
+
+def test_confirmed_wall_overrides_paint_color():
+    """Fix 2 (walls-override-paint): a cell the agent CONFIRMED is a wall (a real bump) stays
+    IMPASSABLE even when its color matches a paint from_color. ls20's color-3 maze wall is the
+    same color as the agent's painted trail, but a bump proves it solid — the planner must NOT
+    route through it.
+
+    Layout (1x5): agent at (0,0); a confirmed-wall paint-colored cell at (0,1) (color 11, which is
+    a paint from_color AND in _walls); goal at (0,2). With the wall honored there is NO path right
+    (the wall blocks col 1), so A1 cannot reach (0,2) and produces an empty plan."""
+    import numpy as np
+    from arcagi3.discovery_explorer import DiscoveryExplorer
+    from arcagi3.transform_induction import RecolorOnMove
+    eng = DiscoveryExplorer(seed=0, planner_backend="traversal")
+    eng.reset_all(); eng._bg = 0; eng._agent_color = 9
+    eng._deltas = {3: (0, -1), 4: (0, 1)}   # only horizontal motion; no way around the wall
+    eng._recolors = [RecolorOnMove(11, 3)]; eng._paint_colors = {11}
+    grid = np.zeros((1, 5), dtype=np.int8); grid[0, 0] = 9; grid[0, 1] = 11
+    eng._walls = {(0, 1)}                    # CONFIRMED wall (a real bump), and 11 is a paint color
+    eng._tiles = {}; eng._cycles = []; eng._terminal = None
+    import arcagi3.discovery_explorer as DE
+    orig = DE.SG.extract
+    DE.SG.extract = lambda g, bg: {"target_candidates": [{"centroid": (0.0, 2.0)}]}
+    try:
+        eng._build_plan(grid)
+    finally:
+        DE.SG.extract = orig
+    # The wall at (0,1) blocks the only route to (0,2): plan must be empty (no paint-through).
+    assert eng._plan == [], f"confirmed wall was treated as passable paint; plan={eng._plan}"
+
+
+def test_failed_planned_move_marks_wall_and_replans():
+    """Fix 1 (learn walls during EXECUTE): while EXECUTING a plan, if a planned simple action
+    produces NO agent displacement, the cell the agent tried to enter is marked a wall AND the
+    stalled plan is abandoned (phase drops to REFINE) so the engine re-routes."""
+    import numpy as np
+    from arcagi3.discovery_explorer import DiscoveryExplorer
+    eng = DiscoveryExplorer(seed=0, planner_backend="traversal")
+    eng.reset_all(); eng._bg = 0; eng._agent_color = 9
+    eng._deltas = {4: (0, 1)}                # action 4 = move right by 1
+    eng._phase = "EXECUTE"
+    eng._plan = [4, 4]                       # a cached plan that walks the agent right
+    eng._goal_pos = (0, 4)
+
+    # The previous step was a planned move-right that FAILED: the agent is still at (0,0) in both
+    # prev and current frames (no displacement), so (0,1) is a wall.
+    grid = np.zeros((1, 5), dtype=np.int8); grid[0, 0] = 9
+    eng._prev_grid = grid.copy()
+    eng._prev_token = ("S", 4)
+
+    eng.decide(grid=grid, gstate_terminal=False, gstate_notplayed=False,
+               levels=0, available=[4])
+
+    assert (0, 1) in eng._walls, "failed planned move did not mark the blocked cell as a wall"
+    assert eng._plan != [4, 4], "stalled plan was not abandoned after the failed move"
+    # the goal itself must NOT be blacklisted (the route was wrong, not the target)
+    assert (0, 4) not in eng._tried_goals
 
 
 def test_build_plan_snaps_offlattice_target_to_reachable_cell():

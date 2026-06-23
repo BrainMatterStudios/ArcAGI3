@@ -119,16 +119,18 @@ class DiscoveryExplorer:
         """From prev_grid -> grid, find the moving color (the agent) and fit the action's delta.
 
         A simple action that produced NO motion marks the attempted direction as a candidate
-        wall in front of the agent.
+        wall in front of the agent. Returns True iff the previous simple action FAILED to move the
+        agent (a confirmed wall bump) — the caller uses this to abandon a stalled plan during
+        EXECUTE so it can re-route with the new wall knowledge (Fix 1).
         """
         # TODO(phase2): consolidate agent identification with movement.MotionModel /
         # reach_target_test.identify_agent (multi-color avatars) instead of this inline heuristic.
         if self._bg is None:
-            return
+            return False
         if self._prev_grid is None or self._prev_token is None:
-            return
+            return False
         if self._prev_token[0] != "S":
-            return
+            return False
         action = self._prev_token[1]
         movers = Mv.infer_all_translations(self._prev_grid, grid, self._bg)
         if movers:
@@ -137,13 +139,17 @@ class DiscoveryExplorer:
             color = min(movers, key=lambda c: (int(np.count_nonzero(self._prev_grid == c)), int(c)))
             self._agent_color = int(color)
             self._deltas[action] = movers[color]
-        else:
-            # no motion: if we knew where the agent was, the cell it tried to enter is a wall
-            if self._agent_color is not None and action in self._deltas:
-                pos = self._agent_pos(self._prev_grid)
-                if pos is not None:
-                    dr, dc = self._deltas[action]
-                    self._walls.add((pos[0] + dr, pos[1] + dc))
+            return False
+        # no motion: if we knew where the agent was, the cell it tried to enter is a wall.
+        # This fires on EVERY step (probe OR execute) where a known simple action produced no
+        # agent displacement, so the maze structure is discovered as the agent traverses it.
+        if self._agent_color is not None and action in self._deltas:
+            pos = self._agent_pos(self._prev_grid)
+            if pos is not None:
+                dr, dc = self._deltas[action]
+                self._walls.add((pos[0] + dr, pos[1] + dc))
+                return True  # confirmed wall bump
+        return False
 
     def _ingest_transform(self, grid):
         """If the agent's attribute vector changed this step, record an on-enter triple.
@@ -191,18 +197,35 @@ class DiscoveryExplorer:
                 })
 
     def _ingest_world_delta(self, grid):
-        """Record non-agent cells that changed color this step (paint / collect signal).
+        """Record cells the agent's own movement transformed this step (paint / collect signal).
 
-        Excludes the agent's current and previous footprint so the agent's own movement isn't
-        mistaken for a world transform. vanished == cell became background.
+        Fix 3 — TRAIL-ONLY paint induction. A recolor/collect rule should be induced only from the
+        agent's OWN trail — cells the agent just vacated or entered (or immediately adjacent to that
+        path) — NOT arbitrary world cells or static structure. ls20's color-3 maze wall is present
+        at frame 0 and the agent never successfully occupies it, so it must be classified as wall,
+        not paint; only the cells the agent actually steps on/off form its painted trail. We
+        therefore restrict observations to changes co-located with the agent's just-vacated/entered
+        footprint (and its 4-neighborhood, to catch a paint that lands on the cell behind the move).
+        Changes ON the agent's current cell or that involve the agent color are still skipped (that
+        is the avatar itself, not a world transform). vanished == cell became background.
         """
         if self._bg is None or self._prev_grid is None or grid.shape != self._prev_grid.shape:
             return
-        footprint = set(self._agent_cells(grid)) | set(self._agent_cells(self._prev_grid))
+        cur_cells = set(self._agent_cells(grid))
+        prev_cells = set(self._agent_cells(self._prev_grid))
+        # Trail = cells the agent occupied last frame and no longer occupies (just vacated), plus a
+        # 1-cell halo around the agent's path. A painted trail manifests at the vacated cell.
+        trail = (prev_cells - cur_cells)
+        halo: set = set()
+        for r, c in (prev_cells | cur_cells):
+            for dr, dc in ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)):
+                halo.add((r + dr, c + dc))
+        considered = (trail | halo) - cur_cells  # never the agent's current footprint
         changed = np.argwhere(grid != self._prev_grid)
         for r, c in changed:
-            if (int(r), int(c)) in footprint:
-                continue
+            cell = (int(r), int(c))
+            if cell not in considered:
+                continue  # only the agent's own trail counts as paint/collect evidence
             f = int(self._prev_grid[r, c]); t = int(grid[r, c])
             if f == int(self._agent_color) or t == int(self._agent_color):
                 continue
@@ -214,9 +237,22 @@ class DiscoveryExplorer:
             self._bg = P.detect_background(grid)
         simple = self._simple_actions(available)
 
+        # Fix 1 — learn walls from EVERY step, including while EXECUTING a plan. If the previous
+        # simple action produced no agent displacement, that cell is a wall; if we were executing
+        # a plan when the move failed, the plan is routing through newly-discovered maze structure,
+        # so abandon it and drop to REFINE to re-route with the wall now known.
+        bumped = self._ingest_movement(grid)
+        if bumped and self._phase == "EXECUTE":
+            self._plan = []
+            # a failed planned move is genuine new evidence: don't blacklist the goal (the route
+            # was wrong, not the target). Clear _goal_pos so REFINE's blacklist add is skipped,
+            # and reset the induce guard so we re-plan around the freshly-found wall.
+            self._goal_pos = None
+            self._last_induced_len = (-1, -1)
+            self._phase = "REFINE"
+
         # PROBE_MOVEMENT: try each simple action once, fitting deltas/walls from the transition.
         if self._phase == "PROBE_MOVEMENT":
-            self._ingest_movement(grid)
             if not self._probe_queue and not self._deltas_fully_probed(simple):
                 self._probe_queue = list(simple)
             if self._probe_queue:
@@ -225,8 +261,8 @@ class DiscoveryExplorer:
             self._prev_attr = agent_attributes(grid, self._agent_cells(grid)) if self._agent_color else None
 
         # PROBE_TRANSFORMS: graph-scaffolded coverage; log attribute-change triples on entry.
+        # (Walls/deltas are refined by the top-of-call _ingest_movement above.)
         if self._phase == "PROBE_TRANSFORMS":
-            self._ingest_movement(grid)   # keep refining walls/deltas while wandering
             self._ingest_transform(grid)
             self._ingest_world_delta(grid)
             self._transform_steps += 1
@@ -355,15 +391,35 @@ class DiscoveryExplorer:
         for t in cands:
             cy, cx = t["centroid"]
             raw_positions.append((int(round(cy)), int(round(cx))))
-        # Broadened fallback (Phase-3): when the scene graph surfaces no framed targets, treat
-        # small non-agent, non-background objects as targets (e.g. collectible items). reach-all
-        # over them == collect-all. Only fires when scene-graph found nothing, so games with framed
-        # targets (ls20) are unaffected.
-        if not raw_positions:
-            for o in P.connected_components(grid, background=self._bg):
-                if int(o.color) != int(self._agent_color) and o.size <= _MAX_TARGET_OBJ_SIZE:
-                    cy, cx = o.centroid
-                    raw_positions.append((int(round(cy)), int(round(cx))))
+        # Broadened goal extraction (Fix 4). The framed scene `target_candidates` sometimes MISS the
+        # real goal cell (ls20 L1's goal is not framed). So ALSO consider small, distinct-color,
+        # non-agent, non-wall objects as candidate goals and ADD them to the disjunction sweep — the
+        # nearest-first sweep tries each candidate and the env tells us (via level-up) which is real.
+        # "Distinct" = a rare color (small total pixel footprint, not the dominant maze/wall colour);
+        # objects sitting on confirmed-wall cells are skipped. General: size/rarity, no colour const.
+        # Nearest-first ordering keeps framed scene targets preferred when they ARE present, so games
+        # with correct framed targets are unaffected.
+        extra_positions: list = []
+        comps = P.connected_components(grid, background=self._bg)
+        # per-color total footprint, to gauge distinctness/rarity (dominant colors are structure).
+        color_area: dict = {}
+        for o in comps:
+            color_area[int(o.color)] = color_area.get(int(o.color), 0) + int(o.size)
+        for o in comps:
+            col = int(o.color)
+            if col == int(self._agent_color):
+                continue
+            if o.size > _MAX_TARGET_OBJ_SIZE:
+                continue
+            # a goal object should be small AND a rare color (not the bulk maze/wall material).
+            if color_area.get(col, 0) > _MAX_TARGET_OBJ_SIZE:
+                continue
+            if set(o.cells) & self._walls:   # don't aim at a confirmed wall
+                continue
+            cy, cx = o.centroid
+            extra_positions.append((int(round(cy)), int(round(cx))))
+        # de-dup while preserving order: framed scene candidates first, then broadened ones.
+        raw_positions = list(dict.fromkeys(raw_positions + extra_positions))
         if not raw_positions:
             return
         # Footprint map: each non-agent, non-bg object indexed by the cells it occupies. Used so
@@ -434,15 +490,22 @@ class DiscoveryExplorer:
             snapped.append(s)
         slot_positions = list(dict.fromkeys(snapped))
 
-        # Paintable cells (Task 7): cells whose color is a known paint `from_color`. Under A1
-        # they are treated as passable (removed from walls); under A2 they must be painted to
-        # be traversed. Computed from the same connected-components view used everywhere else.
+        # Paintable cells (Task 7): cells whose color is a known paint `from_color`, EXCEPT any
+        # cell the agent confirmed is a wall (Fix 2 below). Under A1 a paintable cell that is not a
+        # confirmed wall is passable (not added to true_walls); under A2 it must be painted to be
+        # traversed. Computed from the same connected-components view used everywhere else.
         paintable_cells: set = set()
         if self._paint_colors and self._bg is not None:
             for o in P.connected_components(grid, background=self._bg):
                 if int(o.color) in self._paint_colors:
                     paintable_cells.update(o.cells)
-        true_walls = self._walls - paintable_cells
+        # Fix 2 — WALLS OVERRIDE PAINT. A cell the agent confirmed impassable (bumped) stays a wall
+        # even if its color matches a paint from_color: static maze structure (e.g. ls20's color-3
+        # wall) is often the same color as the agent's painted trail, but a confirmed bump proves
+        # it is solid. So keep ALL confirmed walls in true_walls, and strip them from paintable so
+        # the planner can't try to "paint through" a known wall.
+        paintable_cells -= self._walls
+        true_walls = set(self._walls)
 
         # Enumerate single-attribute requirements per slot over the small attainable set.
         # Our attribute vector is AttrVec(color, shape_sig); shape_sig is rotation-SENSITIVE,
