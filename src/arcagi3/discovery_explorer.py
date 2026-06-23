@@ -21,6 +21,7 @@ import numpy as np
 
 from arcagi3 import perception as P, movement as Mv, scene_graph as SG
 from arcagi3.attribute_state import agent_attributes
+from arcagi3.motion_lattice import lattice_pitch, snap
 from arcagi3.transform_induction import (
     induce_on_enter_cycles, induce_terminal,
     induce_recolor_on_move, induce_collect_on_contact,
@@ -341,6 +342,11 @@ class DiscoveryExplorer:
             slot_positions.append((int(round(cy)), int(round(cx))))
         if not slot_positions:
             return
+        # Snap targets to the agent's motion lattice (pitch from _deltas, origin = start_pos) so
+        # they are reachable by the planner's pitch-sized steps (Phase-3 fix for Exp-44).
+        pitch = lattice_pitch(self._deltas)
+        slot_positions = list(dict.fromkeys(
+            snap(p, start_pos, pitch, (H, W)) for p in slot_positions))
 
         # Paintable cells (Task 7): cells whose color is a known paint `from_color`. Under A1
         # they are treated as passable (removed from walls); under A2 they must be painted to

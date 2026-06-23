@@ -265,3 +265,22 @@ def test_a1_treats_paint_cells_as_passable():
     finally:
         DE.SG.extract = orig
     assert eng._plan and eng._plan[0] == 4   # A1 plans THROUGH the paint cell, not blocked by it
+
+
+def test_build_plan_snaps_offlattice_target_to_reachable_cell():
+    import numpy as np
+    from arcagi3.discovery_explorer import DiscoveryExplorer
+    eng = DiscoveryExplorer(seed=0, planner_backend="traversal")
+    eng.reset_all(); eng._bg = 0; eng._agent_color = 9
+    eng._deltas = {1: (-5, 0), 2: (5, 0), 3: (0, -5), 4: (0, 5)}  # 5px lattice
+    eng._tiles = {}; eng._cycles = []; eng._terminal = None
+    grid = np.zeros((64, 64), dtype=np.int8); grid[10, 10] = 9   # agent single cell at (10,10)
+    import arcagi3.discovery_explorer as DE
+    orig = DE.SG.extract
+    DE.SG.extract = lambda g, bg: {"target_candidates": [{"centroid": (12.0, 18.0)}]}  # OFF-lattice
+    try:
+        eng._build_plan(grid)
+    finally:
+        DE.SG.extract = orig
+    # (12,18) snaps to (10,20) on the 5px lattice from origin (10,10); reachable by 2x action-4.
+    assert eng._plan == [4, 4]
