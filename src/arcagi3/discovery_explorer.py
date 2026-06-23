@@ -61,6 +61,15 @@ class DiscoveryExplorer:
         self._terminal = None
         self._transform_steps = 0
         self._prev_attr = None
+        # Multi-color avatar: a rigid sprite can be made of several colors that translate together
+        # (e.g. a "head" color over a "body" color). We track the WHOLE set so attribute extraction
+        # (orientation/shape) sees the full sprite, not one fragment, and so the avatar's own colors
+        # are not mistaken for a world recolor/paint. `_agent_anchor` localizes the avatar cluster
+        # (its colors also appear elsewhere — goals, UI — so we can't take all cells globally).
+        self._agent_colors: set = set()
+        self._agent_anchor = None
+        self._visited: set = set()  # avatar anchors visited (for frontier-seeking coverage)
+        self._wall_order: list = []  # walls in the order learned (for boxed-in escape)
         self._world_obs: list[dict] = []
         # World-transform rules induced from _world_obs (Task 6/7):
         self._recolors: list = []        # RecolorOnMove(from_color, to_color) — paint
@@ -79,6 +88,9 @@ class DiscoveryExplorer:
         self._transform_steps = 0
         self._prev_attr = None
         self._prev_grid = None
+        self._agent_anchor = None  # avatar colors (grammar) kept; its location (layout) reset
+        self._visited = set()
+        self._wall_order = []
         # grammar known -> jump straight to re-mapping the new layout's transforms; else re-probe.
         self._phase = "PROBE_TRANSFORMS" if self._deltas else "PROBE_MOVEMENT"
 
@@ -97,16 +109,84 @@ class DiscoveryExplorer:
     def _simple_actions(self, available):
         return [a for a in available if a in (1, 2, 3, 4)]
 
+    def _avatar_colors(self) -> set:
+        """All colors that translate together as the avatar; falls back to the single _agent_color."""
+        cols = set(self._agent_colors)
+        if self._agent_color is not None:
+            cols.add(int(self._agent_color))
+        if self._bg is not None:
+            cols.discard(int(self._bg))  # the background is never part of the avatar
+        return cols
+
     def _agent_cells(self, grid):
-        """Cells of the identified agent (its connected component of `self._agent_color`)."""
-        if self._agent_color is None or self._bg is None:
+        """Cells of the identified avatar — the connected cluster of avatar-colored cells nearest
+        the avatar's last known anchor.
+
+        A multi-color avatar (e.g. ls20's color-12 head over a color-9 body) translates as ONE
+        rigid sprite, so we group ALL avatar colors. But those same colors also appear elsewhere on
+        the board (goal markers, UI), so we must NOT take every cell of those colors globally — we
+        take the single 8-connected component (over the union of avatar colors) closest to the
+        avatar's last anchor. This keeps attribute extraction (orientation) on the real sprite and
+        prevents distant same-color decorations from polluting the agent footprint."""
+        cols = self._avatar_colors()
+        if not cols or self._bg is None:
             return ()
-        objs = P.connected_components(grid, background=self._bg)
-        cells: list = []
-        for o in objs:
-            if int(o.color) == int(self._agent_color):
-                cells.extend(o.cells)
-        return tuple(cells)
+        import numpy as _np
+        mask = _np.isin(grid, list(cols))
+        if not mask.any():
+            return ()
+        # 8-connected components of the avatar-color mask
+        comps = self._connected_mask_components(mask)
+        if not comps:
+            return ()
+        anchor = self._agent_anchor
+        if anchor is None:
+            # no prior anchor: pick the largest cluster (the avatar sprite is a solid block, whereas
+            # stray same-color decorations are typically small/scattered).
+            best = max(comps, key=len)
+        else:
+            def _cdist(cells):
+                rs = [r for r, _ in cells]; cs = [c for _, c in cells]
+                cy = sum(rs) / len(rs); cx = sum(cs) / len(cs)
+                return abs(cy - anchor[0]) + abs(cx - anchor[1])
+            best = min(comps, key=_cdist)
+        return tuple(best)
+
+    @staticmethod
+    def _connected_mask_components(mask):
+        """8-connected components of a boolean mask -> list of cell-tuple lists."""
+        import numpy as _np
+        h, w = mask.shape
+        seen = _np.zeros_like(mask, dtype=bool)
+        out: list = []
+        for r in range(h):
+            for c in range(w):
+                if not mask[r, c] or seen[r, c]:
+                    continue
+                stack = [(r, c)]; seen[r, c] = True; comp = []
+                while stack:
+                    cr, cc = stack.pop(); comp.append((cr, cc))
+                    for dr in (-1, 0, 1):
+                        for dc in (-1, 0, 1):
+                            nr, nc = cr + dr, cc + dc
+                            if 0 <= nr < h and 0 <= nc < w and mask[nr, nc] and not seen[nr, nc]:
+                                seen[nr, nc] = True; stack.append((nr, nc))
+                out.append(comp)
+        return out
+
+    @staticmethod
+    def _grow_within(allowed: set, seed: set) -> set:
+        """8-connected flood fill from `seed`, staying within `allowed` cells."""
+        out = set(); stack = [c for c in seed if c in allowed]
+        out.update(stack)
+        while stack:
+            cr, cc = stack.pop()
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    n = (cr + dr, cc + dc)
+                    if n in allowed and n not in out:
+                        out.add(n); stack.append(n)
+        return out
 
     def _agent_pos(self, grid):
         cells = self._agent_cells(grid)
@@ -114,6 +194,17 @@ class DiscoveryExplorer:
             return None
         # representative position = the (min-row, min-col) anchor of the agent cell-set
         return (min(r for r, _ in cells), min(c for _, c in cells))
+
+    def _update_anchor(self, grid):
+        """Refresh the avatar's tracked centroid so _agent_cells can follow the right cluster."""
+        cols = self._avatar_colors()
+        if not cols or self._bg is None:
+            return
+        cells = self._agent_cells(grid)
+        if cells:
+            cy = sum(r for r, _ in cells) / len(cells)
+            cx = sum(c for _, c in cells) / len(cells)
+            self._agent_anchor = (cy, cx)
 
     def _ingest_movement(self, grid):
         """From prev_grid -> grid, find the moving color (the agent) and fit the action's delta.
@@ -134,11 +225,53 @@ class DiscoveryExplorer:
         action = self._prev_token[1]
         movers = Mv.infer_all_translations(self._prev_grid, grid, self._bg)
         if movers:
-            # smallest mover = agent; ties broken by smallest color value for determinism
-            # (decorations/counters move as a block but rarely the smallest component).
-            color = min(movers, key=lambda c: (int(np.count_nonzero(self._prev_grid == c)), int(c)))
-            self._agent_color = int(color)
-            self._deltas[action] = movers[color]
+            # The avatar is a rigid sprite: ALL its colors translate by the SAME vector. Independent
+            # animations/counters translate by a DIFFERENT vector (or none). So group the colors
+            # sharing the single most-common translation as the multi-color avatar, rather than
+            # picking the smallest single mover (which would grab only a fragment, e.g. a sprite's
+            # head, fragmenting orientation/attribute reads).
+            from collections import Counter
+            vote = Counter(movers.values())
+            best_delta, _ = vote.most_common(1)[0]
+            # Colors whose ENTIRE footprint translated by best_delta (rigid global movers). A
+            # multi-color sprite's body color often FAILS this test, because that color also paints
+            # static decor/goals that stay put — so the global color set isn't a rigid translation.
+            rigid_cols = {int(c) for c, d in movers.items() if d == best_delta}
+            self._deltas[action] = best_delta
+            # Recover the FULL avatar footprint: the connected (8-neighbour) cluster of non-background
+            # cells in the CURRENT frame that contains a rigid mover. A multi-color sprite's body
+            # color often FAILS the global per-color rigid test (it also paints static decor/goals),
+            # so we grow OUT from the rigid-mover cells through the contiguous sprite. To avoid the
+            # cluster bleeding into a large maze/background FILL the moving sprite merely passes over,
+            # we exclude dominant-area colors from the walkable set.
+            avatar_cols = set(rigid_cols)
+            cap = 256  # generous sprite-size ceiling; dominant fills (maze interior) are far larger
+            non_dom = {int(c) for c in np.unique(grid)
+                       if int(c) != int(self._bg) and int(np.count_nonzero(grid == c)) <= cap}
+            walkable = {(int(r), int(c)) for r, c in np.argwhere(np.isin(grid, list(non_dom)))} \
+                if non_dom else set()
+            seed = {(int(r), int(c)) for r, c in np.argwhere(np.isin(grid, list(rigid_cols)))}
+            seed &= walkable
+            cluster = set()
+            if seed:
+                cluster = self._grow_within(walkable, seed)
+                for cell in cluster:
+                    avatar_cols.add(int(grid[cell]))
+            avatar_cols.discard(int(self._bg))  # never let the background join the avatar
+            self._agent_colors |= avatar_cols
+            # Anchor DIRECTLY to the cluster that actually moved this step — NOT to the nearest
+            # same-color cluster (which can snap onto a static same-colored decoration the avatar
+            # passes near, desyncing the tracked agent from the real one). This keeps _agent_cells
+            # locked onto the genuine moving sprite.
+            if cluster:
+                cy = sum(r for r, _ in cluster) / len(cluster)
+                cx = sum(c for _, c in cluster) / len(cluster)
+                self._agent_anchor = (cy, cx)
+            # primary color (for single-color callers) = the cleanest rigid mover (smallest footprint
+            # among rigid_cols tends to be the unique head color), else largest avatar color.
+            self._agent_color = (min(rigid_cols, key=lambda c: int(np.count_nonzero(grid == c)))
+                                 if rigid_cols else max(
+                avatar_cols, key=lambda c: int(np.count_nonzero(grid == c))))
             return False
         # no motion: if we knew where the agent was, the cell it tried to enter is a wall.
         # This fires on EVERY step (probe OR execute) where a known simple action produced no
@@ -147,7 +280,10 @@ class DiscoveryExplorer:
             pos = self._agent_pos(self._prev_grid)
             if pos is not None:
                 dr, dc = self._deltas[action]
-                self._walls.add((pos[0] + dr, pos[1] + dc))
+                w = (pos[0] + dr, pos[1] + dc)
+                if w not in self._walls:
+                    self._walls.add(w)
+                    self._wall_order.append(w)
                 return True  # confirmed wall bump
         return False
 
@@ -227,7 +363,12 @@ class DiscoveryExplorer:
             if cell not in considered:
                 continue  # only the agent's own trail counts as paint/collect evidence
             f = int(self._prev_grid[r, c]); t = int(grid[r, c])
-            if f == int(self._agent_color) or t == int(self._agent_color):
+            # Skip ANY transition touching an avatar color: a multi-color sprite vacating/entering a
+            # cell flips that cell between its own colors and the background (head<->body<->bg). That
+            # is the avatar moving, NOT a world recolor/paint — counting it hallucinates a paint
+            # mechanic (ls20: the color-9 body over color-3 background looks like a 9<->3 "recolor").
+            avatar = self._avatar_colors()
+            if f in avatar or t in avatar:
                 continue
             self._world_obs.append({"from_color": f, "to_color": t, "vanished": t == self._bg})
 
@@ -329,20 +470,78 @@ class DiscoveryExplorer:
         return all(a in self._deltas for a in simple) and bool(simple)
 
     def _next_coverage_action(self, grid, simple):
-        """Prefer an action whose resulting cell is unseen/unblocked; else round-robin."""
+        """Pick an action that advances exploration. First preference: a one-step move into a cell
+        that is neither a known wall nor already visited. If every immediate neighbour is walled or
+        visited (the agent is in an explored pocket), FRONTIER-SEEK: BFS over the known-passable
+        lattice to the nearest UNVISITED cell and step toward it — this escapes local pockets so the
+        agent can reach distant transformer tiles/goals it would never hit by local round-robin.
+        Falls back to round-robin if no frontier is reachable. General; no game constants."""
         if not simple:
             return None
         pos = self._agent_pos(grid)
-        if pos is not None and self._deltas:
-            # try actions that lead to a not-yet-walled cell, biasing toward exploration
-            for a in simple:
-                if a not in self._deltas:
-                    return a
+        if pos is None or not self._deltas:
+            return simple[self._transform_steps % len(simple)]
+        self._visited.add(pos)
+        # 0) BOXED-IN ESCAPE. If EVERY immediate neighbour is a known wall, the agent has trapped
+        # itself — but a solvable level never fully boxes the avatar, so some of those "walls" are
+        # not static (e.g. an orientation/attribute-GATED cell that bumped while mis-oriented, or a
+        # mis-registered bump). Forget the walls immediately around this position so the agent can
+        # re-probe and leave the pocket. General: triggered purely by the impossible all-walled state.
+        neigh = []
+        for a in simple:
+            if a in self._deltas:
                 dr, dc = self._deltas[a]
-                nxt = (pos[0] + dr, pos[1] + dc)
-                if nxt not in self._walls:
-                    return a
+                neigh.append((a, (pos[0] + dr, pos[1] + dc)))
+        if neigh and all(n in self._walls for _, n in neigh):
+            for _, n in neigh:
+                self._walls.discard(n)
+                if n in self._wall_order:
+                    self._wall_order.remove(n)
+            # re-probe a freshly-unblocked direction this very step
+            return neigh[self._transform_steps % len(neigh)][0]
+        # 1) immediate unvisited, unwalled neighbour
+        for a in simple:
+            if a not in self._deltas:
+                return a
+            dr, dc = self._deltas[a]
+            nxt = (pos[0] + dr, pos[1] + dc)
+            if nxt not in self._walls and nxt not in self._visited:
+                return a
+        # 2) frontier BFS: route to the nearest unvisited, non-wall lattice cell.
+        a = self._frontier_step(grid, pos, simple)
+        if a is not None:
+            return a
+        # 3) any unwalled neighbour (revisit is OK to traverse toward unexplored regions)
+        for a in simple:
+            dr, dc = self._deltas.get(a, (0, 0))
+            if (pos[0] + dr, pos[1] + dc) not in self._walls:
+                return a
         return simple[self._transform_steps % len(simple)]
+
+    def _frontier_step(self, grid, pos, simple):
+        """BFS over the known-passable lattice (4-neighbour via _deltas) from `pos` to the nearest
+        cell not in _visited; return the first action along that path, or None if no frontier."""
+        from collections import deque
+        H, W = grid.shape
+        act_deltas = [(a, self._deltas[a]) for a in simple if a in self._deltas]
+        if not act_deltas:
+            return None
+        q = deque([(pos, None)])
+        seen = {pos}
+        while q:
+            cur, first = q.popleft()
+            for a, (dr, dc) in act_deltas:
+                nxt = (cur[0] + dr, cur[1] + dc)
+                if not (0 <= nxt[0] < H and 0 <= nxt[1] < W):
+                    continue
+                if nxt in self._walls or nxt in seen:
+                    continue
+                fa = a if first is None else first
+                if nxt not in self._visited:
+                    return fa  # reached a frontier cell; step the first action of the route
+                seen.add(nxt)
+                q.append((nxt, fa))
+        return None
 
     def _build_model(self, grid):
         """Build InducedModel: deltas + on_enter cycles + walls + terminal predicate."""

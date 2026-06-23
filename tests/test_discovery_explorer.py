@@ -434,3 +434,67 @@ def test_build_plan_does_not_use_fallback_when_scene_has_candidates():
         DE.SG.extract = orig
     # plan reaches the scene target (10,20) = 2x right; it must NOT detour to the (10,40) small object.
     assert eng._plan == [4, 4]
+
+
+def test_multicolor_avatar_identified_as_one_sprite():
+    """A rigid avatar made of several colors (e.g. a distinct 'head' color over a 'body' color)
+    must be identified as ONE sprite, not a single fragment. ls20's avatar is a 5x5 block whose top
+    rows are color 12 and bottom rows color 9; picking only the smaller color-12 fragment breaks
+    orientation reads and goal targeting. After one observed move, BOTH colors must be in the avatar
+    set and _agent_cells must return the whole 5x5 cluster (not a fragment, not the whole board)."""
+    import numpy as np
+    from arcagi3.discovery_explorer import DiscoveryExplorer
+    eng = DiscoveryExplorer(seed=0)
+    eng.reset_all(); eng._bg = 3
+    H = W = 20
+    prev = np.full((H, W), 3, dtype=np.int8)
+    cur = np.full((H, W), 3, dtype=np.int8)
+    # avatar 5x5: rows 0-1 color 12 (head), rows 2-4 color 9 (body), at cols 5-9.
+    def paint(g, r0, c0):
+        g[r0:r0 + 2, c0:c0 + 5] = 12
+        g[r0 + 2:r0 + 5, c0:c0 + 5] = 9
+    paint(prev, 5, 5)
+    paint(cur, 4, 5)  # moved up by 1
+    # a STATIC color-9 decoration elsewhere (a goal marker) must NOT join the avatar.
+    prev[15, 15] = 9; cur[15, 15] = 9
+    eng._prev_grid = prev; eng._prev_token = ("S", 1)
+    eng._ingest_movement(cur)
+    assert eng._agent_colors == {9, 12}, eng._agent_colors
+    cells = eng._agent_cells(cur)
+    assert len(cells) == 25, f"expected the 5x5 avatar (25 cells), got {len(cells)}"
+    assert (15, 15) not in set(cells), "static same-color decoration leaked into the avatar"
+
+
+def test_multicolor_avatar_does_not_hallucinate_paint():
+    """The avatar moving over the background flips cells between its own colors and the background.
+    That is the sprite translating, NOT a world recolor — it must NOT be recorded as a paint
+    observation (which would hallucinate a paint mechanic from a plain navigation game)."""
+    import numpy as np
+    from arcagi3.discovery_explorer import DiscoveryExplorer
+    eng = DiscoveryExplorer(seed=0)
+    eng.reset_all(); eng._bg = 3
+    eng._agent_colors = {9, 12}; eng._agent_color = 12
+    H = W = 20
+    prev = np.full((H, W), 3, dtype=np.int8)
+    cur = np.full((H, W), 3, dtype=np.int8)
+    prev[5:7, 5:10] = 12; prev[7:10, 5:10] = 9   # avatar at rows 5-9
+    cur[4:6, 5:10] = 12; cur[6:9, 5:10] = 9       # moved up 1 row
+    eng._prev_grid = prev
+    eng._ingest_world_delta(cur)
+    assert eng._world_obs == [], f"avatar motion hallucinated paint: {eng._world_obs}"
+
+
+def test_orientation_change_is_observable_in_shape_sig():
+    """A multi-color avatar whose silhouette is rotation-invariant (a solid block) must still expose
+    its ORIENTATION through the color-aware shape signature: rotating the head color to a different
+    edge changes the signature even though the silhouette is identical."""
+    import numpy as np
+    from arcagi3.attribute_state import agent_attributes
+    g_up = np.full((5, 5), 3, dtype=np.int8)
+    g_up[0:2, :] = 12; g_up[2:5, :] = 9           # head on top
+    g_right = np.full((5, 5), 3, dtype=np.int8)
+    g_right[:, 3:5] = 12; g_right[:, 0:3] = 9      # head on the right (a 90deg rotation)
+    cells = [(r, c) for r in range(5) for c in range(5)]
+    a_up = agent_attributes(g_up, cells)
+    a_right = agent_attributes(g_right, cells)
+    assert a_up.shape_sig != a_right.shape_sig, "orientation not captured by the shape signature"
