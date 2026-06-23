@@ -318,3 +318,24 @@ def test_build_plan_falls_back_to_small_objects_when_no_scene_targets():
         DE.SG.extract = orig
     # fallback surfaces the item at (0,2); reach-all plans to it: right, right.
     assert eng._plan == [4, 4]
+
+
+def test_build_plan_does_not_use_fallback_when_scene_has_candidates():
+    import numpy as np
+    from arcagi3.discovery_explorer import DiscoveryExplorer
+    eng = DiscoveryExplorer(seed=0, planner_backend="traversal")
+    eng.reset_all(); eng._bg = 0; eng._agent_color = 9
+    eng._deltas = {1: (-5, 0), 2: (5, 0), 3: (0, -5), 4: (0, 5)}
+    eng._tiles = {}; eng._cycles = []; eng._terminal = None
+    # agent at (10,10); a small NON-agent object (color 6) at (10,40) that the fallback WOULD pick.
+    grid = np.zeros((64, 64), dtype=np.int8); grid[10, 10] = 9; grid[10, 40] = 6
+    import arcagi3.discovery_explorer as DE
+    orig = DE.SG.extract
+    # scene graph DOES return a framed target at (10,20) -> fallback must NOT fire.
+    DE.SG.extract = lambda g, bg: {"target_candidates": [{"centroid": (10.0, 20.0)}]}
+    try:
+        eng._build_plan(grid)
+    finally:
+        DE.SG.extract = orig
+    # plan reaches the scene target (10,20) = 2x right; it must NOT detour to the (10,40) small object.
+    assert eng._plan == [4, 4]
