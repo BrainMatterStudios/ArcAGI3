@@ -50,6 +50,18 @@ def _select_device(allow_cpu: bool = False):
     except Exception:
         pass
     if allow_cpu:
+        # LOCAL DEV ONLY (allow_cpu is never set at eval). Prefer the Apple Metal GPU if present
+        # so the GPU model path can be exercised on this hardware; fall back to CPU. This does NOT
+        # change eval behavior — at eval allow_cpu=False, so the path is still cuda-or-disabled.
+        try:
+            mps = getattr(torch.backends, "mps", None)
+            if mps is not None and mps.is_available():
+                dev = torch.device("mps")
+                _x = torch.zeros((8, 8), device=dev)
+                float((_x @ _x).sum().item())  # forces a real Metal kernel launch
+                return torch, dev
+        except Exception:
+            pass
         try:
             dev = torch.device("cpu")
             _x = torch.zeros((4, 4), device=dev)
