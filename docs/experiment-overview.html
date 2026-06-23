@@ -64,7 +64,7 @@
 <div class="wrap">
 <header>
   <h1>ARC-AGI-3 — Complete Experiment Overview</h1>
-  <div class="sub">ARC Prize 2026 · branch <code>phase0-prune-oracle</code> · compiled 2026-06-22</div>
+  <div class="sub">ARC Prize 2026 · branch <code>factory/experiment</code> · compiled 2026-06-23</div>
 </header>
 
 <!-- STANDING -->
@@ -72,7 +72,7 @@
   <div class="card"><div class="k">Banked best</div><div class="v pos">0.33</div><div class="d">v13 TransferExplorer (public)</div></div>
   <div class="card"><div class="k">Reproducible cluster</div><div class="v">0.58–0.70</div><div class="d">target to "reach"</div></div>
   <div class="card"><div class="k">Leaderboard #1</div><div class="v">1.21</div><div class="d">Tufa Labs (lone outlier)</div></div>
-  <div class="card"><div class="k">Measured experiments</div><div class="v">41+</div><div class="d">5 Kaggle submissions</div></div>
+  <div class="card"><div class="k">Measured experiments</div><div class="v">49</div><div class="d">6 Kaggle submissions (transfer-dense pending)</div></div>
 </div>
 <p class="lead" style="margin-top:18px">Every distinct paradigm has been built and measured on a fixed TUNE/HOLDOUT dev split. The
 public Kaggle score has held at <b>0.33</b> across every submission. This document is the full
@@ -528,6 +528,44 @@ that pipeline showed, tested end-to-end.</p>
   <p><b>Decision.</b> Ship <code>transfer-dense</code> (TransferExplorer + dense click lattice, CPU-only) — the shipped <code>my_agent.py</code> already passes <code>coarse_grid_step=4, max_click_targets=256</code>. A clean HOLDOUT head-to-head (budget 6000, live API) gives it <b>mean-levels 0.500</b> vs <b>0.375</b> for salience / plain transfer / valuecnn / transfer-valuecnn. The whole gain is <code>tn36</code> L0→L1 via the dense lattice (zero regressions). The value-CNN is <b>CPU and exactly neutral on HOLDOUT</b> (ties salience), so it is correctly excluded — not for GPU reasons (it runs fine on CPU; an MPS test confirms the GPU path is sound) but because it adds nothing on unseen games. The banked <i>real Kaggle</i> score is <code>0.33</code> (the level-weighted competition metric ≠ the offline mean-levels proxy); the one fancier combo we shipped (v15) <i>regressed</i> to 0.28 — the cautionary precedent for trusting offline gains.</p>
   <p style="margin-bottom:0">The discover→plan loop is banked as a <b>proven-architecture research result</b> (Exp 49) that activates on directional-avatar games but is firewalled out of the submission (0/6 on holdouts). Ship a clean, reproducible open-source repo + this negative-results map. Full decision document: <code>docs/arc-agi-3-strategic-synthesis.html</code>.</p>
 </div>
+
+<!-- CODEBASE MAP -->
+<h2><span class="n">10</span> Codebase map (detailed view)</h2>
+<div class="grid cards">
+  <div class="card"><div class="k">Source</div><div class="v">~10.6k</div><div class="d">LOC · 55 modules in <code>src/arcagi3</code></div></div>
+  <div class="card"><div class="k">Tests</div><div class="v">299</div><div class="d">unit (40 files) + 7 integration</div></div>
+  <div class="card"><div class="k">Ship path</div><div class="v t-ship" style="font-size:18px">7 files</div><div class="d">perception→salience→transfer→policy→agent</div></div>
+  <div class="card"><div class="k">Explorers</div><div class="v">30+</div><div class="d">one <code>decide()</code> contract, pluggable</div></div>
+</div>
+
+<p class="lead" style="margin-top:16px">The architecture is a <b>shared perception/state core</b> plus a <b>family of pluggable explorers</b>, all behind a single reactive contract. Each explorer is one paradigm; swapping the policy swaps the whole strategy with zero core changes. Only a 7-file slice is on the live submission path — the rest is the measured negative-results catalogue.</p>
+
+<div class="formula">
+decide(grid, gstate_terminal, gstate_notplayed, levels, available) → ("S", action_id) | ("C", x, y) | ("reset",)<br>
+<span style="color:var(--faint)"># one action per call · all state persists on the explorer object · engine-agnostic</span><br><br>
+raw 64×64 frame → <b style="color:var(--txt)">perception</b> (objects, bg, avatar, hashes) → <b style="color:var(--txt)">explorer.decide()</b> → action token → engine.step() ↺
+</div>
+
+<table style="margin-top:14px">
+  <thead><tr><th>subsystem</th><th>key modules</th><th class="m">LOC</th><th>role</th><th>status</th></tr></thead>
+  <tbody>
+    <tr><td><b>Perception &amp; state core</b></td><td class="m">perception · movement · scene_graph · tracking · world_model · spatial · attribute_state · motion_lattice</td><td class="m">~1.6k</td><td>Frame→object-centric state; avatar/motion model; goal-extraction; object persistence; state graph; occupancy+A*. Shared by every explorer.</td><td><span class="tag t-inert">foundation</span></td></tr>
+    <tr class="best"><td><b>Shipped submission line</b></td><td class="m">salience_explorer · transfer_explorer · policy · agent · runner · bakeoff_metrics · submission/my_agent</td><td class="m">~1.5k</td><td>SOTA hierarchical-salience reimpl (0.33 backbone) + within-game reward-signature transfer. <code>my_agent</code> ships this with the dense click lattice = <b>transfer-dense</b>.</td><td><span class="tag t-ship">SHIPPED</span></td></tr>
+    <tr><td><b>Discover→plan loop</b><br><span class="note">Exp 43–49</span></td><td class="m">discovery_explorer · factored_model · transform_induction · model_guide · hybrid_transfer_explorer</td><td class="m">~1.1k</td><td>Active model discovery (probe→induce→plan→execute→refine) over a factored transition model with a BFS planner. Clears <code>collect</code> at 14×; family-locked on holdouts.</td><td><span class="tag t-win">proven, firewalled</span></td></tr>
+    <tr><td><b>World-model rebuild</b><br><span class="note">C1–C7</span></td><td class="m">events(C2) · affordance(C3) · forward_model(C4) · goals(C5) · planner(C6) · wm_policy(C7) · symbolic_forward_model</td><td class="m">~3.2k</td><td>Full object-tracking → causal events → affordances → forward model → goal inference → lookahead planner → integration policy. Built &amp; gated; ties-but-doesn't-beat the reactive explorer on real games.</td><td><span class="tag t-mixed">research foundation</span></td></tr>
+    <tr><td><b>Learned-model / CNN</b><br><span class="note">Phase A / A′</span></td><td class="m">online_model · online_explorer · primary_model_explorer · spatial_value_explorer · value_ranker_explorer · batch_value_explorer · transfer_value_explorer</td><td class="m">~0.9k</td><td>Online action-effect CNN (GPU-gated, +MPS dev branch) as re-ranker and as primary; StochasticGoose value-CNN port. Re-ranker &amp; primary both regress games the explorer wins; value-CNN is CPU &amp; neutral on HOLDOUT.</td><td><span class="tag t-kill">killed / neutral</span></td></tr>
+    <tr><td><b>Causal-probe &amp; certificates</b></td><td class="m">causal_probe_explorer · mechanic_inference · mechanic_certificates · prune_analysis · cai_prune_explorer</td><td class="m">~0.8k</td><td>Proof-gated structural exploitation: induce a mechanic, certify it, then prune proven-no-op clicks. CAI pruning over-pruned a hidden trigger (v15 → 0.28).</td><td><span class="tag t-mixed">mixed</span></td></tr>
+    <tr><td><b>Exploration-variant zoo</b><br><span class="note">measured, not shipped</span></td><td class="m">go_explore · slide_nav · goal_slide · infer_nav · relational(+transfer/stall) · structural_novelty · irreversible_impact · salient_state · prior · tour · depth_stall · perception_transfer · instrumented</td><td class="m">~1.5k</td><td>One module per exploration paradigm tried and measured on the TUNE/HOLDOUT split. Every reordering/re-keying lever was coverage-unsafe or HOLDOUT-inert — the catalogue behind "no lever beats 0.33".</td><td><span class="tag t-inert">negative results</span></td></tr>
+  </tbody>
+</table>
+<div class="legend">
+  <span><span class="tag t-ship">SHIPPED</span> on the live Kaggle path</span>
+  <span><span class="tag t-win">proven</span> works in its regime, firewalled out</span>
+  <span><span class="tag t-mixed">research</span> built, gated, doesn't promote</span>
+  <span><span class="tag t-kill">killed</span> measured worse, reverted</span>
+  <span><span class="tag t-inert">foundation / neg.</span> shared core or inert lever</span>
+</div>
+<p class="note" style="margin-top:12px">Discipline that holds across all of it: every non-shipped paradigm is <b>firewalled</b> (default-OFF flag or separate policy class) so it can never regress the banked submission; the reactive ship path stays byte-identical unless a lever is <i>measured</i> a strict improvement. Harnesses: <code>scripts/eval_efficiency.py</code> (TUNE/HOLDOUT), <code>scripts/discovery_bakeoff.py</code> (discover→plan), <code>submission/build_notebook.py</code> (self-contained notebook, 13 embedded modules).</p>
 
 <div class="footer">
   Dev figures from <code>scripts/eval_efficiency.py</code> on the fixed TUNE/HOLDOUT split (budget 6000–30000);
