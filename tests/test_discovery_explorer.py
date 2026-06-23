@@ -26,6 +26,50 @@ def test_discovery_beats_salience_on_l1():
     assert l1 is not None and l1.actions < 2000   # vastly under salience's 7901
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(os.getenv("RUN_BAKEOFF") != "1", reason="live bake-off; set RUN_BAKEOFF=1")
+def test_phase2_ls20_paint_clears_l1():
+    # TARGET, NOT YET MET (Task 9 bake-off, 2026-06-23). NEITHER ls20 backend cleared L1:
+    # discovery-A1(traversal) and discovery-A2(painted_set) both cleared 0 levels. Phase-2 paint
+    # induction itself WORKS end-to-end (deltas fit; agent_color=12; 4582 world-delta obs;
+    # induce_recolor_on_move produced 6 RecolorOnMove rules; paint_colors={11,9,3,8}). The wall is
+    # PLAN, caused by a perception/planner COORDINATE-CONTRACT mismatch: to_grid yields the raw
+    # 64x64 PIXEL frame, so the agent moves in 5-pixel steps (deltas (+-5,0)/(0,+-5)) on a lattice
+    # anchored at the start pixel, but scene_graph slot centroids (e.g. (12,36) from start (15,34))
+    # do NOT lie on that 5-step lattice. So A1 plan() returns None for every slot and A2
+    # plan_painted_set returns "intractable" (200k node cap). No plan -> no clear. Fix is upstream
+    # of this guard (logical-cell downscaling / lattice-snapped targets), NOT a threshold change.
+    # The `traversal` backend is used here as the general default; do NOT weaken the threshold.
+    import importlib.util, sys
+    spec = importlib.util.spec_from_file_location("bo", "scripts/discovery_bakeoff.py")
+    bo = importlib.util.module_from_spec(spec); sys.modules["bo"] = bo; spec.loader.exec_module(bo)
+    from arcagi3.discovery_explorer import DiscoveryExplorer
+    eng = DiscoveryExplorer(seed=0, planner_backend="traversal"); eng.reset_all()
+    res = bo.run_engine("ls20-paint", eng, budget=8000, game="ls20", max_level=2)
+    l1 = next((x for x in res.levels if x.level == 0 and x.cleared), None)
+    assert l1 is not None and l1.actions < 2000   # vastly under salience's ~7901
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(os.getenv("RUN_BAKEOFF") != "1", reason="live bake-off; set RUN_BAKEOFF=1")
+def test_phase2_collect_clears_l1():
+    # TARGET, NOT YET MET (Task 9 bake-off, 2026-06-23). discovery-collect(traversal) cleared 0
+    # levels. Two phase-level walls: (1) scene_graph.extract surfaces 0 target_candidates on the
+    # collect frame (the items are not 'framed' objects), so _build_plan returns with no slots;
+    # (2) the collect mechanic was never induced (_world_obs==0, _collects==[]) because the agent
+    # never contacted an item during probing. salience(collect) DOES clear L0 in 1123 actions
+    # (a_h=39), so the game is solvable; the discovery loop just lacks target perception + a
+    # collect-reach plan. Keep this as a documented failing target; do NOT weaken to pass.
+    import importlib.util, sys
+    spec = importlib.util.spec_from_file_location("bo", "scripts/discovery_bakeoff.py")
+    bo = importlib.util.module_from_spec(spec); sys.modules["bo"] = bo; spec.loader.exec_module(bo)
+    from arcagi3.discovery_explorer import DiscoveryExplorer
+    eng = DiscoveryExplorer(seed=0, planner_backend="traversal"); eng.reset_all()
+    res = bo.run_engine("collect", eng, budget=8000, game="collect", max_level=2)
+    l1 = next((x for x in res.levels if x.level == 0 and x.cleared), None)
+    assert l1 is not None and l1.actions < 1100   # collect L0 a_h=39; under salience's 1123
+
+
 def _grid_with_agent(pos, color=9):
     g = np.zeros((8, 8), dtype=np.int8)
     g[pos] = color
