@@ -72,7 +72,7 @@
   <div class="card"><div class="k">Banked best</div><div class="v pos">0.33</div><div class="d">v13 TransferExplorer (public)</div></div>
   <div class="card"><div class="k">Reproducible cluster</div><div class="v">0.58–0.70</div><div class="d">target to "reach"</div></div>
   <div class="card"><div class="k">Leaderboard #1</div><div class="v">1.21</div><div class="d">Tufa Labs (lone outlier)</div></div>
-  <div class="card"><div class="k">Measured experiments</div><div class="v">50</div><div class="d">6 Kaggle submissions (transfer-dense 0.33 — ties floor)</div></div>
+  <div class="card"><div class="k">Measured experiments</div><div class="v">51</div><div class="d">6 Kaggle submissions (transfer-dense 0.33 — ties floor)</div></div>
 </div>
 <p class="lead" style="margin-top:18px">Every distinct paradigm has been built and measured on a fixed TUNE/HOLDOUT dev split. The
 public Kaggle score has held at <b>0.33</b> across every submission. This document is the full
@@ -548,6 +548,26 @@ that pipeline showed, tested end-to-end.</p>
     </tbody>
   </table>
   <p style="margin-bottom:0"><b>Finding (Wall A, confirmed, backend-independent).</b> The planner is genuinely fixed — discovery induces a model, builds plans, and executes them to reachable candidates. But it clears <b>0 levels</b> because the static scene-graph candidate set never contains ls20's real goal: the win is "reach color-9," and <b>color-9 MOVES</b> (Exp 40) via strategic path-opening. The static-slot DSL can express "reach fixed cell C," not "reach a moving target through painted paths" — so no candidate sweep over fixed positions can win, on either backend. <b>The residual on the canary is the induction ontology (Wall A) — not the planner (Wall C, now spent) and not search (Wall B).</b> The next concrete lever is a moving-goal / relational-terminal primitive + thicker candidate generation, to be <i>measured</i> (frozen-vocabulary, solvability-gated) not assumed. Caveat unchanged: even a perfect ls20 clear scores ≈0 on the level-weighted metric — this sharpens the research map, it does not breach 0.33.</p>
+</div>
+
+<div class="panel accent">
+  <h3>Experiment 51 — Pipeline-phase diagnostic: where does each holdout game die?</h3>
+  <p><b>Setup.</b> Exp 50 localized the wall to perception/induction, not search. This generalizes the ls20 probe across the whole HOLDOUT set: run the current <code>DiscoveryExplorer</code> on each game (live API, budget 800) with phase instrumentation, recording the death point — <b>FRONT-END</b> (no directional avatar perceived), <b>ONTOLOGY</b> (avatar found but no candidate/plan), <b>TERMINAL</b> (plans + executes but clears nothing — goal mis-modelled), or <b>CLEARS</b>. Harness <code>scripts/pipeline_diagnostic.py</code>; seeded/deterministic, reproduced exactly.</p>
+  <table style="margin:10px 0 14px">
+    <thead><tr><th>game</th><th class="m">family</th><th class="m">avatar?</th><th class="m">plan+exec?</th><th class="m">goals tried</th><th>death point</th></tr></thead>
+    <tbody>
+      <tr><td class="m">collect</td><td class="m">directional + collect</td><td class="m">yes (4)</td><td class="m">yes</td><td class="m">4</td><td><b>CLEARS</b> (on-family)</td></tr>
+      <tr><td class="m">ls20</td><td class="m">reach moving-goal</td><td class="m">yes (4)</td><td class="m">yes</td><td class="m">2</td><td><b>TERMINAL</b> — goal moves</td></tr>
+      <tr><td class="m">re86</td><td class="m">align to matching-color</td><td class="m">yes (4)</td><td class="m">yes</td><td class="m">22</td><td><b>TERMINAL</b> — win is relational, not positional</td></tr>
+      <tr><td class="m">wa30</td><td class="m">adversarial sokoban</td><td class="m">yes (3)</td><td class="m">yes</td><td class="m">4</td><td><b>TERMINAL</b> — carry-3-to-zone</td></tr>
+      <tr><td class="m">m0r0</td><td class="m">symmetry / paired-block</td><td class="m">spurious (2)</td><td class="m">no</td><td class="m">0</td><td><b>ONTOLOGY</b> — no frameable goal</td></tr>
+      <tr><td class="m">tr87</td><td class="m">rule-induction / cursor-edit</td><td class="m">spurious (2)</td><td class="m">no</td><td class="m">0</td><td><b>ONTOLOGY</b> — not an avatar game</td></tr>
+      <tr><td class="m">su15</td><td class="m">aiming</td><td class="m">no (0)</td><td class="m">no</td><td class="m">0</td><td><b>FRONT-END</b> — no avatar</td></tr>
+      <tr><td class="m">sk48</td><td class="m">snake-switch</td><td class="m">no (0)</td><td class="m">no</td><td class="m">0</td><td><b>FRONT-END</b> — no avatar</td></tr>
+      <tr><td class="m">tn36</td><td class="m">visual programming (click)</td><td class="m">no (0)</td><td class="m">no</td><td class="m">0</td><td><b>FRONT-END</b> — click family</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-bottom:0"><b>Finding — the gap is an even three-way split, and the goal is bespoke.</b> Of 8 holdout games: <b>3 die at the FRONT-END</b> (su15/sk48/tn36 — no directional avatar to perceive), <b>2 at the ONTOLOGY</b> (m0r0/tr87 — a spurious 2-delta "avatar" but no frameable goal), and <b>3 at the TERMINAL</b> (ls20/re86/wa30 — they perceive an avatar, induce a model, and successfully plan + execute, yet clear nothing). The TERMINAL group answers the reusability question directly: each needs a <i>different</i> win-condition — ls20 a <b>moving</b> goal, re86 a color-<b>match</b> (it swept 22 candidate positions in vain because the win is relational, not positional), wa30 a sokoban <b>carry</b>-to-zone. So mechanic induction is <b>reusable up to the goal</b> (movement, paint, BFS planning all fire across games) and <b>bespoke at the goal</b> — and the goal is the layer that gates the score. <b>No single primitive unlocks more than one holdout.</b> This quantifies the family-lock: the residual is not one wall but a spread of per-game win-conditions, each needing its own derivation that does not transfer — the empirical answer to "is induction reusable or one-at-a-time?" is <b>one-at-a-time, at the terminal.</b></p>
 </div>
 
 <div class="panel kill">
