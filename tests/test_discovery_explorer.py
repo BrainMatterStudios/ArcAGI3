@@ -320,6 +320,41 @@ def test_build_plan_falls_back_to_small_objects_when_no_scene_targets():
     assert eng._plan == [4, 4]
 
 
+def test_build_plan_disjunction_reaches_one_reachable_candidate():
+    """Fix 1 (disjunction): with MULTIPLE scene candidates where only ONE is reachable and the
+    others are walled/unreachable, _build_plan must produce a non-empty plan to the reachable one.
+
+    The OLD conjunctive code built ONE slot list containing ALL candidates and asked plan() to
+    satisfy ALL of them — one unreachable poison candidate returned None for every attr_req, so
+    the plan was empty. The disjunctive sweep tries each candidate individually and accepts the
+    first reachable one."""
+    import numpy as np
+    from arcagi3.discovery_explorer import DiscoveryExplorer
+    eng = DiscoveryExplorer(seed=0, planner_backend="traversal")
+    eng.reset_all(); eng._bg = 0; eng._agent_color = 9
+    eng._deltas = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}  # 1px lattice
+    eng._tiles = {}; eng._cycles = []; eng._terminal = None
+    grid = np.zeros((8, 8), dtype=np.int8); grid[0, 0] = 9       # agent at (0,0)
+    # Wall off two of the three candidates so they are individually unreachable; the third (0,2)
+    # is reachable by 2x right. The conjunction over all three is unsatisfiable.
+    eng._walls = {(4, 4), (4, 3), (3, 4), (5, 4), (4, 5),        # ring around (4,4)
+                  (0, 6), (0, 7), (1, 7), (1, 6)}               # box around (0,7)
+    import arcagi3.discovery_explorer as DE
+    orig = DE.SG.extract
+    DE.SG.extract = lambda g, bg: {"target_candidates": [
+        {"centroid": (4.0, 4.0)},   # walled-in, unreachable
+        {"centroid": (0.0, 7.0)},   # walled-in, unreachable
+        {"centroid": (0.0, 2.0)},   # REACHABLE: 2x right
+    ]}
+    try:
+        eng._build_plan(grid)
+    finally:
+        DE.SG.extract = orig
+    assert eng._plan, "disjunction failed: no plan produced though one candidate is reachable"
+    # nearest-first ordering means the reachable (0,2) is reached directly: right, right.
+    assert eng._plan == [4, 4], f"expected reach to (0,2); got {eng._plan}"
+
+
 def test_build_plan_does_not_use_fallback_when_scene_has_candidates():
     import numpy as np
     from arcagi3.discovery_explorer import DiscoveryExplorer

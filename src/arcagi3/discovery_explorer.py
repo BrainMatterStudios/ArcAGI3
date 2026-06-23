@@ -49,6 +49,8 @@ class DiscoveryExplorer:
         self._triples: list[dict] = []
         self._last_induced_len = (-1, -1)
         self._plan: list = []
+        self._goal_pos = None           # the candidate position the current plan targets
+        self._tried_goals: set = set()  # candidate positions already reached without a level-up
         self._seen_hashes: set = set()
         self._last_level = 0
         self._prev_grid = None
@@ -70,6 +72,8 @@ class DiscoveryExplorer:
         self._last_level = new_level
         self._walls = set()
         self._plan = []
+        self._goal_pos = None
+        self._tried_goals = set()
         self._seen_hashes = set()
         self._probe_queue = []
         self._transform_steps = 0
@@ -241,6 +245,12 @@ class DiscoveryExplorer:
         # action (Fix E).
         if self._phase == "REFINE":
             self._ingest_transform(grid)  # capture any unexpected attribute change as a new triple
+            # A plan that reached its goal candidate WITHOUT a level-up means that candidate is not
+            # the real goal (or not the right attr): blacklist it so the disjunctive sweep advances
+            # to the NEXT candidate instead of re-selecting the same nearest one (Exp-46).
+            if self._goal_pos is not None:
+                self._tried_goals.add(self._goal_pos)
+                self._goal_pos = None
             self._phase = "INDUCE"
 
         # INDUCE: assemble the factored model from the fitted grammar + discovered layout.
@@ -248,13 +258,17 @@ class DiscoveryExplorer:
             # Guard against re-inducing every call when nothing changed (Fix F): if the last
             # induction already failed to yield a plan and no new evidence has arrived since,
             # don't loop back through INDUCE — emit a coverage/fallback action to gather more.
-            if not self._plan and (len(self._triples), len(self._world_obs)) == self._last_induced_len:
+            # The guard key includes the tried-goal count: when a candidate was just blacklisted in
+            # REFINE, that IS new planning evidence (the sweep will now try a DIFFERENT candidate),
+            # so don't short-circuit — fall through and re-PLAN against the remaining candidates.
+            ev = (len(self._triples), len(self._world_obs), len(self._tried_goals))
+            if not self._plan and ev == self._last_induced_len:
                 if simple:
                     return ("S", self._next_coverage_action(grid, simple) or
                             simple[self._transform_steps % len(simple)])
                 return ("S", available[0] if available else 1)
             self._build_model(grid)
-            self._last_induced_len = (len(self._triples), len(self._world_obs))
+            self._last_induced_len = ev
             self._phase = "PLAN"
 
         # PLAN: enumerate candidate slot attr-specs, BFS-plan, cache the action list.
@@ -337,26 +351,88 @@ class DiscoveryExplorer:
         scene = SG.extract(grid, self._bg)
         cands = scene.get("target_candidates", [])
         # candidate goal positions: rounded centroids of framed/rare-static targets
-        slot_positions = []
+        raw_positions = []
         for t in cands:
             cy, cx = t["centroid"]
-            slot_positions.append((int(round(cy)), int(round(cx))))
+            raw_positions.append((int(round(cy)), int(round(cx))))
         # Broadened fallback (Phase-3): when the scene graph surfaces no framed targets, treat
         # small non-agent, non-background objects as targets (e.g. collectible items). reach-all
         # over them == collect-all. Only fires when scene-graph found nothing, so games with framed
         # targets (ls20) are unaffected.
-        if not slot_positions:
+        if not raw_positions:
             for o in P.connected_components(grid, background=self._bg):
                 if int(o.color) != int(self._agent_color) and o.size <= _MAX_TARGET_OBJ_SIZE:
                     cy, cx = o.centroid
-                    slot_positions.append((int(round(cy)), int(round(cx))))
-        if not slot_positions:
+                    raw_positions.append((int(round(cy)), int(round(cx))))
+        if not raw_positions:
             return
+        # Footprint map: each non-agent, non-bg object indexed by the cells it occupies. Used so
+        # that lattice-snapping doesn't land a target OFF the object (Fix 2 / Exp-45 defect 2):
+        # we clamp the snapped lattice cell into the candidate object's bbox so the planned cell is
+        # actually ON the goal object's footprint, not an adjacent empty cell.
+        footprints = []  # (set_of_cells, bbox=(r0,c0,r1,c1))
+        for o in P.connected_components(grid, background=self._bg):
+            if int(o.color) == int(self._agent_color):
+                continue
+            footprints.append((set(o.cells), o.bbox))
+
+        def _object_for(pos):
+            """Object whose footprint contains pos, else the nearest object (by centroid)."""
+            best = None; best_d = None
+            for cells, bbox in footprints:
+                if pos in cells:
+                    return (cells, bbox)
+                r0, c0, r1, c1 = bbox
+                cy, cx = (r0 + r1) / 2.0, (c0 + c1) / 2.0
+                d = abs(pos[0] - cy) + abs(pos[1] - cx)
+                if best_d is None or d < best_d:
+                    best_d, best = d, (cells, bbox)
+            return best
+
         # Snap targets to the agent's motion lattice (pitch from _deltas, origin = start_pos) so
-        # they are reachable by the planner's pitch-sized steps (Phase-3 fix for Exp-44).
+        # they are reachable by the planner's pitch-sized steps (Phase-3 fix for Exp-44). Then
+        # footprint-align: if the snap landed off the candidate object, clamp the snapped cell into
+        # the object's bbox so the planned cell sits ON the goal footprint (Fix 2).
         pitch = lattice_pitch(self._deltas)
-        slot_positions = list(dict.fromkeys(
-            snap(p, start_pos, pitch, (H, W)) for p in slot_positions))
+        # clamp tolerance: a snap is "off the object" only if the candidate object is within ~1
+        # lattice pitch of the centroid — otherwise we'd drag a centroid onto an unrelated far object.
+        tol = max(pitch[0], pitch[1], 1)
+
+        def _lattice_cells_in_bbox(bbox):
+            """All motion-lattice cells (anchored at start_pos, given pitch) inside bbox, clamped
+            to the grid. Used to find a target cell that is BOTH on the object footprint AND
+            reachable by the agent's pitch-sized steps."""
+            r0, c0, r1, c1 = bbox
+            pr, pc = pitch
+            sr, sc = start_pos
+            rows = [sr] if pr == 0 else range(sr - ((sr - r0) // pr + 1) * pr, r1 + pr, pr)
+            cols = [sc] if pc == 0 else range(sc - ((sc - c0) // pc + 1) * pc, c1 + pc, pc)
+            out = []
+            for rr in rows:
+                if r0 <= rr <= r1 and 0 <= rr < H:
+                    for cc in cols:
+                        if c0 <= cc <= c1 and 0 <= cc < W:
+                            out.append((int(rr), int(cc)))
+            return out
+
+        snapped = []
+        for p in raw_positions:
+            s = snap(p, start_pos, pitch, (H, W))
+            obj = _object_for(p)
+            if obj is not None and s not in obj[0]:
+                r0, c0, r1, c1 = obj[1]
+                near = (r0 - tol <= p[0] <= r1 + tol) and (c0 - tol <= p[1] <= c1 + tol)
+                in_bbox = r0 <= s[0] <= r1 and c0 <= s[1] <= c1
+                if near and not in_bbox:
+                    # Fix 2: align onto the object footprint, but ONLY to a cell that is ALSO on the
+                    # motion lattice (else the target is on the object yet unreachable). Pick the
+                    # in-bbox lattice cell nearest the centroid; if NONE exists, keep the plain
+                    # lattice snap `s` (reachable) rather than an off-lattice bbox cell (unreachable).
+                    lat = _lattice_cells_in_bbox(obj[1])
+                    if lat:
+                        s = min(lat, key=lambda q: abs(q[0] - p[0]) + abs(q[1] - p[1]))
+            snapped.append(s)
+        slot_positions = list(dict.fromkeys(snapped))
 
         # Paintable cells (Task 7): cells whose color is a known paint `from_color`. Under A1
         # they are treated as passable (removed from walls); under A2 they must be painted to
@@ -390,8 +466,8 @@ class DiscoveryExplorer:
                                  width=W, height=H, terminal=self._terminal)
             start = FactoredState(pos=start_pos, attrs=start_attrs, completed=frozenset())
 
-        for req in reqs:
-            slots = [{"pos": pos, "attr_req": req, "done": False} for pos in slot_positions]
+        def _try(slots):
+            """Plan to satisfy `slots`; return a non-empty action list or None."""
             if self._backend == "painted_set":
                 # A2: paintable cells must be painted (entered) to be traversed.
                 actions, status = plan_painted_set(
@@ -400,11 +476,41 @@ class DiscoveryExplorer:
                     width=W, height=H, start_pos=start_pos, start_attrs=start_attrs,
                     slots=slots, max_paints=None, max_nodes=200_000,
                 )
-                if status == "solved":
-                    self._plan = list(actions)
-                    return
-            else:
-                actions = plan(model, start, slots)
+                return list(actions) if (status == "solved" and actions) else None
+            actions = plan(model, start, slots)
+            return list(actions) if actions else None
+
+        # Fix 1 — DISJUNCTION over candidates (Exp-45 ls20 blocker). A reach-target game has ONE
+        # real goal slot among ~9 scene candidates; requiring ALL satisfied (a conjunction) made
+        # plan() return None whenever ANY candidate was unreachable (on a wall / the agent start /
+        # no path). So FIRST sweep each candidate INDIVIDUALLY, nearest-first, and accept the first
+        # req x candidate that yields a non-empty plan — "reach candidate C with attr-req R". The
+        # execute/REFINE loop retries other candidates if the env doesn't level-up. The full
+        # all-candidates conjunction is kept as a FALLBACK below (collect's reach-all relies on it).
+        ordered = sorted(slot_positions,
+                         key=lambda p: abs(p[0] - start_pos[0]) + abs(p[1] - start_pos[1]))
+        # Skip candidates already reached without a level-up (blacklisted in REFINE). When EVERY
+        # candidate has been tried, clear the blacklist so the sweep re-attempts from the current
+        # position rather than stalling forever — a reach-only candidate may level-up once we hold a
+        # different attr, and the layout/attrs evolve as we move.
+        untried = [p for p in ordered if p != start_pos and p not in self._tried_goals]
+        if not untried:
+            self._tried_goals = set()
+            untried = [p for p in ordered if p != start_pos]
+        for pos in untried:
+            for req in reqs:
+                actions = _try([{"pos": pos, "attr_req": req, "done": False}])
                 if actions:
-                    self._plan = list(actions)
+                    self._plan = actions
+                    self._goal_pos = pos   # remember the goal so REFINE can blacklist it on failure
                     return
+
+        # Fallback: the all-candidates CONJUNCTION (reach-all) — needed for collect-all, where the
+        # goal genuinely is to reach EVERY small object. Tried after the single-candidate sweep so a
+        # reach-ONE goal (ls20) is preferred and a poison candidate can't kill the single-target plan.
+        for req in reqs:
+            slots = [{"pos": pos, "attr_req": req, "done": False} for pos in slot_positions]
+            actions = _try(slots)
+            if actions:
+                self._plan = actions
+                return
