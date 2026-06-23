@@ -29,17 +29,22 @@ def test_discovery_beats_salience_on_l1():
 @pytest.mark.integration
 @pytest.mark.skipif(os.getenv("RUN_BAKEOFF") != "1", reason="live bake-off; set RUN_BAKEOFF=1")
 def test_phase2_ls20_paint_clears_l1():
-    # TARGET, NOT YET MET (Task 9 bake-off, 2026-06-23). NEITHER ls20 backend cleared L1:
-    # discovery-A1(traversal) and discovery-A2(painted_set) both cleared 0 levels. Phase-2 paint
-    # induction itself WORKS end-to-end (deltas fit; agent_color=12; 4582 world-delta obs;
-    # induce_recolor_on_move produced 6 RecolorOnMove rules; paint_colors={11,9,3,8}). The wall is
-    # PLAN, caused by a perception/planner COORDINATE-CONTRACT mismatch: to_grid yields the raw
-    # 64x64 PIXEL frame, so the agent moves in 5-pixel steps (deltas (+-5,0)/(0,+-5)) on a lattice
-    # anchored at the start pixel, but scene_graph slot centroids (e.g. (12,36) from start (15,34))
-    # do NOT lie on that 5-step lattice. So A1 plan() returns None for every slot and A2
-    # plan_painted_set returns "intractable" (200k node cap). No plan -> no clear. Fix is upstream
-    # of this guard (logical-cell downscaling / lattice-snapped targets), NOT a threshold change.
-    # The `traversal` backend is used here as the general default; do NOT weaken the threshold.
+    # TARGET, STILL NOT MET (Phase-3 bake-off, 2026-06-23). NEITHER ls20 backend cleared L1:
+    # discovery-A1(traversal) and discovery-A2(painted_set) both cleared 0/10000 levels.
+    #
+    # Phase-3 (motion-lattice snapping) DID fix the Exp-44 coordinate wall: with pitch=(5,5) and
+    # start (15,34), off-lattice scene centroids like (12,36) now snap onto the lattice (10,34),
+    # and single-slot reach-only plan() succeeds for the reachable snapped targets (e.g. (30,19)
+    # -> [2,2,2,3,3,3], (60,9) -> 14 actions). Perception is fully healthy: agent_color=12, 4582
+    # world-delta obs, 6 RecolorOnMove rules, paint_colors={11,9,3,8}, 9 scene target_candidates.
+    #
+    # The wall has MOVED, not closed: _build_plan builds ONE slot list containing ALL snapped
+    # candidates and asks plan() to satisfy the CONJUNCTION. Some snapped slots are unreachable
+    # (e.g. (10,34) lands on a true_wall; (15,34) is the agent's own start; (60,63) has no path),
+    # so the all-slots plan() returns None for every attr_req even though most slots are reachable
+    # individually. One poison slot kills the whole plan -> empty plan -> no EXECUTE -> engine
+    # spins in INDUCE for the rest of the budget. Fix is in _build_plan (plan to ONE reachable
+    # target at a time / drop unreachable slots), NOT a threshold change. Do NOT weaken.
     import importlib.util, sys
     spec = importlib.util.spec_from_file_location("bo", "scripts/discovery_bakeoff.py")
     bo = importlib.util.module_from_spec(spec); sys.modules["bo"] = bo; spec.loader.exec_module(bo)
@@ -53,13 +58,23 @@ def test_phase2_ls20_paint_clears_l1():
 @pytest.mark.integration
 @pytest.mark.skipif(os.getenv("RUN_BAKEOFF") != "1", reason="live bake-off; set RUN_BAKEOFF=1")
 def test_phase2_collect_clears_l1():
-    # TARGET, NOT YET MET (Task 9 bake-off, 2026-06-23). discovery-collect(traversal) cleared 0
-    # levels. Two phase-level walls: (1) scene_graph.extract surfaces 0 target_candidates on the
-    # collect frame (the items are not 'framed' objects), so _build_plan returns with no slots;
-    # (2) the collect mechanic was never induced (_world_obs==0, _collects==[]) because the agent
-    # never contacted an item during probing. salience(collect) DOES clear L0 in 1123 actions
-    # (a_h=39), so the game is solvable; the discovery loop just lacks target perception + a
-    # collect-reach plan. Keep this as a documented failing target; do NOT weaken to pass.
+    # TARGET, STILL NOT MET (Phase-3 bake-off, 2026-06-23). discovery-collect(traversal) cleared
+    # 0/10000 levels (salience(collect) clears L0 in 1123 actions, a_h=39 — so the game IS solvable).
+    #
+    # Phase-3 (broadened fallback + snapping) made real progress: scene_graph still surfaces 0
+    # framed target_candidates, but the broadened fallback now finds the collectible (color 6,
+    # size 16, centroid (57.5,5.5)) as a small non-agent object, and _build_plan PRODUCES a 26-
+    # action plan that the engine reaches EXECUTE and runs. So perception + planning are no longer
+    # the wall.
+    #
+    # The remaining wall is a SNAP-OFF-TARGET / no-contact problem: with pitch=(4,4) and start
+    # (4,56), the item at (57.5,5.5) snaps to (56,8), which is ~4px off the item's actual cells
+    # (rows 56-58, cols 4-5). The agent traverses to the snapped cell (observed: reaches (56,8))
+    # but never steps ONTO an item cell, so the color-6 object never vanishes and the level never
+    # advances. Compounding it, the collect mechanic was never induced (_world_obs==0, _collects==[])
+    # because the agent didn't contact an item during probing, so even a glancing pass isn't modeled
+    # as progress. Fix is in snapping/target selection (snap to a CELL the object occupies, or reach
+    # the object footprint, not its lattice-snapped centroid), NOT a threshold change. Do NOT weaken.
     import importlib.util, sys
     spec = importlib.util.spec_from_file_location("bo", "scripts/discovery_bakeoff.py")
     bo = importlib.util.module_from_spec(spec); sys.modules["bo"] = bo; spec.loader.exec_module(bo)
