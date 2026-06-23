@@ -284,3 +284,22 @@ def test_build_plan_snaps_offlattice_target_to_reachable_cell():
         DE.SG.extract = orig
     # (12,18) snaps to (10,20) on the 5px lattice from origin (10,10); reachable by 2x action-4.
     assert eng._plan == [4, 4]
+
+
+def test_build_plan_falls_back_to_small_objects_when_no_scene_targets():
+    import numpy as np
+    from arcagi3.discovery_explorer import DiscoveryExplorer
+    eng = DiscoveryExplorer(seed=0, planner_backend="traversal")
+    eng.reset_all(); eng._bg = 0; eng._agent_color = 14
+    eng._deltas = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}  # 1px lattice (collect-like)
+    eng._tiles = {}; eng._cycles = []; eng._terminal = None
+    grid = np.zeros((6, 6), dtype=np.int8); grid[0, 0] = 14; grid[0, 2] = 6  # agent + one item
+    import arcagi3.discovery_explorer as DE
+    orig = DE.SG.extract
+    DE.SG.extract = lambda g, bg: {"target_candidates": []}   # scene graph finds nothing
+    try:
+        eng._build_plan(grid)
+    finally:
+        DE.SG.extract = orig
+    # fallback surfaces the item at (0,2); reach-all plans to it: right, right.
+    assert eng._plan == [4, 4]

@@ -30,6 +30,7 @@ from arcagi3.factored_model import FactoredState, InducedModel, plan, plan_paint
 
 # Bounded coverage so a black-box game can't trap the explorer in a phase forever.
 _MAX_TRANSFORM_STEPS = 400
+_MAX_TARGET_OBJ_SIZE = 64   # objects this small (non-agent, non-bg) can be collect targets
 
 
 class DiscoveryExplorer:
@@ -340,6 +341,15 @@ class DiscoveryExplorer:
         for t in cands:
             cy, cx = t["centroid"]
             slot_positions.append((int(round(cy)), int(round(cx))))
+        # Broadened fallback (Phase-3): when the scene graph surfaces no framed targets, treat
+        # small non-agent, non-background objects as targets (e.g. collectible items). reach-all
+        # over them == collect-all. Only fires when scene-graph found nothing, so games with framed
+        # targets (ls20) are unaffected.
+        if not slot_positions:
+            for o in P.connected_components(grid, background=self._bg):
+                if int(o.color) != int(self._agent_color) and o.size <= _MAX_TARGET_OBJ_SIZE:
+                    cy, cx = o.centroid
+                    slot_positions.append((int(round(cy)), int(round(cx))))
         if not slot_positions:
             return
         # Snap targets to the agent's motion lattice (pitch from _deltas, origin = start_pos) so
