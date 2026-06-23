@@ -21,6 +21,7 @@ class HybridTransferExplorer(TransferExplorer):
         self._guide_prev_grid = None
         self._guide_prev_token = None
         self._guide_suggestion = None
+        self._guide_fires = 0
 
     def decide(self, grid, gstate_terminal, gstate_notplayed, levels, available):
         if (self.enable_model_guidance and self._guide_prev_grid is not None
@@ -35,6 +36,8 @@ class HybridTransferExplorer(TransferExplorer):
                 self._guide_suggestion = self._guide.suggest(grid, available)
             except Exception:  # noqa: BLE001
                 self._guide_suggestion = None
+        if self._guide_suggestion is not None:
+            self._guide_fires += 1
         token = super().decide(grid, gstate_terminal, gstate_notplayed, levels, available)
         self._guide_prev_grid, self._guide_prev_token = grid, token
         return token

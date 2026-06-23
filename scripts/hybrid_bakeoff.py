@@ -61,7 +61,7 @@ def run_arm(name, engine, budget):
         nl = int(obs.levels_completed or 0)
         if nl > cur_level:
             per_level.append((cur_level, actions_this)); cur_level = nl; actions_this = 0
-    return name, cur_level, per_level
+    return name, cur_level, per_level, getattr(engine, "_guide_fires", 0)
 
 
 def main():
@@ -71,12 +71,12 @@ def main():
         ("transfer(signature)", TransferExplorer(seed=0)),
         ("hybrid(+model)", HybridTransferExplorer(seed=0)),
     ]
-    print(f"{'arm':<24}{'levels':<8}{'per-level (lvl,actions)':<40}{'total'}", flush=True)
+    print(f"{'arm':<24}{'levels':<8}{'per-level (lvl,actions)':<34}{'total':<8}{'guide'}", flush=True)
     for name, eng in arms:
         print(f"running {name}...", flush=True)
-        nm, levels, per = run_arm(name, eng, budget)
+        nm, levels, per, fires = run_arm(name, eng, budget)
         total = sum(a for _, a in per)
-        print(f"{nm:<24}{levels:<8}{str(per):<40}{total}", flush=True)
+        print(f"{nm:<24}{levels:<8}{str(per):<34}{total:<8}{'fires=' + str(fires)}", flush=True)
 
 
 if __name__ == "__main__":
