@@ -175,6 +175,7 @@ on games you've never seen.</i></p>
     <tr><td class="m">41</td><td>General reach-target nav</td><td>perceive target + induce movement + navigate, across 5 nav games</td><td><b>0/5</b> reach L1 — solving doesn't generalize; each win-mechanic is idiosyncratic</td><td><span class="tag t-kill">refuted</span></td></tr>
     <tr><td class="m">42</td><td><b>BFS-optimal planner (source)</b></td><td>BFS over true ls20 symbolic model; establishes A_h = 13 for L1</td><td>13-action optimal plan confirmed — planning is cheap given a correct model</td><td><span class="tag t-win">finding</span></td></tr>
     <tr><td class="m">43</td><td>Model-discovery bake-off</td><td>3-way: DiscoveryExplorer (factored DSL induction + BFS) vs salience vs spatial_value — black-box, budget 10000</td><td>discovery 0 levels — PROBE_TRANSFORMS = 0 triples (wrong primitive class: agent-attr-cycle vs world-paint); baselines L1 at 0.00 eff</td><td><span class="tag t-kill">negative — localized</span></td></tr>
+    <tr><td class="m">44</td><td>World-transform bake-off (paint + collect)</td><td>Phase-2 DSL extension: <code>recolor_on_move</code> paint + <code>collect_on_contact</code>; A1 (paint-as-traversal) vs A2 (exact painted-set) path-opening planners; ls20 + bundled collect game, black-box, budget 10000</td><td>induction machinery fires (4582 paint deltas, 6 rules, 1038 paintable cells) but 0 levels cleared — wall moved to perception/coordinate contract (pixel-frame vs motion-lattice mismatch)</td><td><span class="tag t-kill">negative — localized</span></td></tr>
   </tbody>
 </table>
 <p class="note">Experiments 21–35 (this session) all confirm the wall from new angles. The user-directed <b>Goal Extraction Engine</b> (§9) validated that symbolic <b>perception works</b> — a real, reusable positive — but every way of <i>converting</i> perception to score (planners, transfer-augmentation, VLM, structured discovery) fails, because the exact objective + action-mechanic is idiosyncratic per game and underdetermined by appearance.</p>
@@ -363,6 +364,47 @@ that pipeline showed, tested end-to-end.</p>
   win L1 only by brute exploration at ~0 efficiency. The bake-off localized the wall precisely to <i>primitive coverage in
   the discovery phase</i> — Phase 2 clean next step: extend the DSL with a world-paint primitive and re-run.
   <b>v13 = 0.33 remains the banked, firewalled result; no submission from Phase 1.</b></p>
+</div>
+
+<div class="panel kill">
+  <h3>Experiment 44 — World-transform bake-off: paint (A1/A2) on ls20 + collect, black-box</h3>
+  <p><b>Setup.</b> Phase 2 extended the discovery DSL with two world-transform primitives: <code>recolor_on_move</code>
+  (paint trail) and <code>collect_on_contact</code>. Two path-opening planner backends were added to engine #1
+  (DiscoveryExplorer): <b>A1</b> (paint-as-traversal — paintable cells treated as passable in BFS) and
+  <b>A2</b> (exact painted-set, 200k-node cap). Bake-off across two games with source used only as automated grader:
+  <b>ls20</b> (paint mechanic, A1 vs A2; A_h = 13 for L1, L2 = 45) and the bundled <b>collect</b> game
+  (collect mechanic; A_h = 39 for L0). Note: sk48 was the original second-game pick but its source revealed a
+  snake/block-push puzzle, not a collect game — swapped to the bundled collect game (another "labels lie" correction).</p>
+  <table style="margin:10px 0 14px">
+    <thead><tr><th>engine</th><th class="m">levels</th><th class="m">L1 actions</th><th class="m">L1 eff</th><th class="m">slope</th></tr></thead>
+    <tbody>
+      <tr><td>discovery-A1 (ls20)</td><td class="m neg">0</td><td class="m dim">—</td><td class="m dim">—</td><td class="m dim">—</td></tr>
+      <tr><td>discovery-A2 (ls20)</td><td class="m neg">0</td><td class="m dim">—</td><td class="m dim">—</td><td class="m dim">—</td></tr>
+      <tr><td>salience (ls20)</td><td class="m neg">not captured (&gt;60 min, killed)</td><td class="m dim">—</td><td class="m dim">—</td><td class="m dim">—</td></tr>
+      <tr><td>discovery-collect (collect)</td><td class="m neg">0</td><td class="m dim">—</td><td class="m dim">—</td><td class="m dim">—</td></tr>
+      <tr><td>salience (collect)</td><td class="m pos">3</td><td class="m">1123</td><td class="m neg">0.001</td><td class="m neg">−337</td></tr>
+    </tbody>
+  </table>
+  <p><b>The induction machinery works — the wall moved upstream to perception/planning.</b> On ls20, the probe→induce
+  pipeline fully succeeded: <code>_world_obs</code> captured <b>4582 paint-trail recolor deltas</b>,
+  <code>induce_recolor_on_move</code> produced <b>6 rules</b> (<code>paint_colors={11,9,3,8}</code>), and
+  <code>_build_plan</code> computed <b>1038 paintable cells</b>. But no discovery variant clears L1. The localized
+  cause is a <b>coordinate-lattice mismatch outside Phase 2's scope</b>: <code>perception.to_grid</code> returns the
+  raw 64×64 pixel frame; the agent moves in 5-pixel steps on a lattice anchored at its start pixel; but
+  <code>scene_graph</code> slot centroids are off-lattice pixels → unreachable by construction. A1's <code>plan()</code>
+  returns None; A2's <code>plan_painted_set</code> returns "intractable" (200k node cap) for every slot. The
+  <b>A1-vs-A2 / monotone-paint question was never exercised</b> — both blocked upstream before any path-opening
+  search mattered. For the collect game, <code>scene_graph.extract</code> surfaced 0 target candidates (items aren't
+  "framed" objects) and the agent never contacted an item during probing, so collect was never induced; salience cleared
+  3 collect levels (1123/956/449 actions), confirming the game is solvable.</p>
+  <p style="margin-bottom:0"><b>Verdict.</b> Phase 2 closed the <b>induction half</b> of the discover→plan loop —
+  world-transform primitives (paint, collect) are validated as firing correctly black-box. But end-to-end the loop clears
+  <b>0 levels on both games</b>, because the bottleneck moved to the <b>perception→planner coordinate contract</b>:
+  (1) logical-cell downscaling / lattice-snapped targets for ls20 (pixel-frame vs N-pixel-motion-lattice vs
+  off-lattice-target mismatch), and (2) item-target extraction + contact-probing for collect. Cross-mechanic generality
+  is NOT yet demonstrated end-to-end (no level cleared), though the induction machinery does span both mechanics. The
+  clean next step is the perception/coordinate fix, then re-run this bake-off.
+  <b>v13 = 0.33 remains the banked, firewalled result; no submission from Phase 2.</b></p>
 </div>
 
 <div class="footer">
