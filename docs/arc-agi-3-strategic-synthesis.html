@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARC-AGI-3 Campaign — Strategic Synthesis</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222c; --ink:#e8eaed; --muted:#9aa3b2;
+    --line:#2a2f3a; --accent:#5aa9ff; --good:#54d68a; --bad:#ff6b6b; --warn:#ffd166; --kill:#ff8a8a;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.4px}
+  h2{font-size:20px;margin:38px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 22px}
+  p{margin:10px 0}
+  .muted{color:var(--muted)}
+  code,.m{font-family:var(--mono);font-size:13px}
+  .bluf{background:linear-gradient(180deg,#1c2331,#171a21);border:1px solid var(--line);
+    border-left:4px solid var(--accent);border-radius:10px;padding:18px 20px;margin:8px 0 6px}
+  .bluf b{color:#fff}
+  .grid{display:grid;gap:14px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+  .phase{display:grid;grid-template-columns:64px 1fr;gap:14px;align-items:start}
+  .pnum{font-family:var(--mono);font-size:13px;color:var(--muted);text-align:right;padding-top:2px}
+  .tag{display:inline-block;font-size:11px;font-family:var(--mono);padding:2px 8px;border-radius:999px;
+    border:1px solid var(--line);vertical-align:middle;margin-left:6px}
+  .t-kill{color:var(--kill);border-color:#5a2a2a;background:#241a1d}
+  .t-part{color:var(--warn);border-color:#5a4e2a;background:#241f17}
+  .t-win{color:var(--good);border-color:#2a5a3e;background:#16241d}
+  table{width:100%;border-collapse:collapse;margin:10px 0;font-size:14px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  td.n{font-family:var(--mono);text-align:right}
+  tr.best td{background:#16241d}
+  .hl{background:#241a1d;color:#ffc9c9;border-radius:4px;padding:0 5px;font-family:var(--mono)}
+  .takeaway{border-left:3px solid var(--warn);padding:6px 0 6px 14px;margin:14px 0;color:#f0e6c8}
+  .rec{background:#16241d;border:1px solid #2a5a3e;border-radius:10px;padding:18px 20px}
+  .rec h3{color:var(--good)}
+  ul{margin:8px 0 8px 0;padding-left:20px}
+  li{margin:4px 0}
+  .foot{color:var(--muted);font-size:12px;margin-top:40px;border-top:1px solid var(--line);padding-top:14px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:720px){.two{grid-template-columns:1fr}.phase{grid-template-columns:1fr}.pnum{text-align:left}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>ARC-AGI-3 — Strategic Synthesis</h1>
+  <p class="sub">Six phases of competition R&amp;D, consolidated · 2026-06-23 · branch <span class="m">factory/experiment</span></p>
+
+  <div class="bluf">
+    <b>Bottom line.</b> Across six rigorous phases, <b>no method we built — including a faithfully-ported
+    SOTA CNN — beats the simple salience baseline on the held-out (unseen-game) proxy.</b> HOLDOUT score is
+    pinned at <span class="m">v13 = 0.33</span> (0.38 mean levels) regardless of approach. The unbeaten wall is
+    <b>first-level acquisition on novel games</b> — the AGI-complete core of the benchmark. Recommendation:
+    <b>consolidate &amp; ship</b> the banked baseline + a clean open-source repo + this map of what doesn't work and why.
+  </div>
+
+  <h2>1 · Where we stand</h2>
+  <p>Goal: place in ARC-AGI-3 (hidden games, scored by levels × squared action-efficiency).
+  Live leaderboard context: leader ≈ <span class="m">1.21</span>, a <span class="m">0.58–0.70</span> cluster,
+  us at <span class="m">0.33</span>. The decisive dev signal is a fixed <b>TUNE / HOLDOUT</b> split, where HOLDOUT
+  approximates the unseen games that actually decide the score.</p>
+
+  <div class="panel">
+    <h3>Four policies, identical harness (budget 6000, 16 games)</h3>
+    <table>
+      <thead><tr><th>Policy</th><th>TUNE levels</th><th>TUNE eff</th><th>HOLDOUT levels</th><th>HOLDOUT eff</th></tr></thead>
+      <tbody>
+        <tr><td>salience <span class="muted">(banked v13=0.33)</span></td><td class="n">1.75</td><td class="n">6.26</td><td class="n">0.38</td><td class="n">1.19</td></tr>
+        <tr class="best"><td>transfer <span class="muted">(signature, +41%)</span></td><td class="n">2.38</td><td class="n">8.72</td><td class="n">0.38</td><td class="n">1.19</td></tr>
+        <tr><td>valuecnn <span class="muted">(SOTA CNN)</span></td><td class="n">1.62</td><td class="n">6.64</td><td class="n">0.38</td><td class="n">1.19</td></tr>
+        <tr><td>transfer-valuecnn <span class="muted">(CNN + transfer)</span></td><td class="n">2.25</td><td class="n">7.67</td><td class="n">0.38</td><td class="n">1.19</td></tr>
+      </tbody>
+    </table>
+    <div class="takeaway"><b>HOLDOUT is byte-identical across all four</b> — same levels, same efficiency, same per-game
+    results. Every value-add method moves TUNE and <b>nothing moves HOLDOUT.</b> On TUNE the SOTA CNN is actually
+    <span class="hl">net-negative</span> (fewer levels, lower efficiency than the explorer it augments).</div>
+  </div>
+
+  <h2>2 · The six-phase arc</h2>
+  <div class="grid">
+    <div class="panel phase"><div class="pnum">P1<br>Exp 43</div><div>
+      <h3>Symbolic discovery bake-off <span class="tag t-kill">0 levels</span></h3>
+      <p class="muted">Induce a game's transition model from pixels, plan over it (Exp-42 proved: given the true model,
+      ls20 L1 is trivial — 13 actions / 89 states). Built a factored symbolic model-discovery engine.
+      <b>Result:</b> 0 levels — the discovery primitive (agent-attribute cycling) was the wrong class for ls20's
+      world-paint mechanic. <b>Localized:</b> need world-transform primitives.</p></div></div>
+
+    <div class="panel phase"><div class="pnum">P2<br>Exp 44</div><div>
+      <h3>World-transform primitives + A1/A2 planner <span class="tag t-kill">0 levels</span></h3>
+      <p class="muted">Added paint/collect induction + two path-opening planner backends. <b>Result:</b> induction
+      worked end-to-end (4582 paint deltas, 6 rules induced) but 0 levels — the planner's targets were unreachable.
+      <b>Localized:</b> a perception→planner coordinate-lattice mismatch.</p></div></div>
+
+    <div class="panel phase"><div class="pnum">P3<br>Exp 45</div><div>
+      <h3>Motion-lattice snapping + collect targets <span class="tag t-kill">0 levels</span></h3>
+      <p class="muted">Snapped targets to the agent's measured pixel lattice; broadened target extraction.
+      <b>Result:</b> coordinate gap closed (single-target plans now execute) but still 0 levels — two new
+      <span class="m">_build_plan</span> defects (conjunctive-slot poison; off-footprint snap). <b>Localized:</b> the
+      walls keep receding one layer at a time.</p></div></div>
+
+    <div class="panel phase"><div class="pnum">P4<br>Exp 46</div><div>
+      <h3>Hybrid: explore-to-clear + model-guide-to-deepen <span class="tag t-part">safe, inconclusive</span></h3>
+      <p class="muted">Inverted the bet: salience stays the floor that clears levels; the discovery model becomes a
+      best-effort guidance layer. <b>Result:</b> on lp85 the hybrid was byte-identical to signature-transfer with
+      <span class="m">guide_fires=0</span> — the movement-centric model never fired on a pure click game. Firewall/safe
+      degradation validated; value-add unanswered. <b>Localized:</b> the model and the proven transfer lever operate on
+      disjoint game types.</p></div></div>
+
+    <div class="panel phase"><div class="pnum">P5</div><div>
+      <h3>First-level-acquisition diagnosis <span class="tag t-part">no common lever</span></h3>
+      <p class="muted">Read the source of the five 0-level HOLDOUT games. They span <b>five unrelated paradigms</b> —
+      transform-match (ls20), paired-snake alignment (sk48), spatial alignment (re86), adversarial Sokoban (wa30),
+      and <b>visual programming</b> (tn36, click-only). No shared first-level lever exists; each needs bespoke
+      goal-perception + planning. <b>This is ARC-AGI-3's core difficulty in pure form.</b></p></div></div>
+
+    <div class="panel phase"><div class="pnum">P6</div><div>
+      <h3>Measure the ported SOTA CNN <span class="tag t-kill">net-negative / no-op</span></h3>
+      <p class="muted">The StochasticGoose/Blind-Squirrel CNN was already built here (hardened + firewalled). Measured on
+      the full split: <b>net-negative on TUNE, zero change on HOLDOUT.</b> The last "keep competing" lever with prior
+      evidence is empirically closed.</p></div></div>
+  </div>
+
+  <h2>3 · Why nothing moves HOLDOUT — the first-level wall</h2>
+  <p>Every value-add method (signature-transfer, the value CNN) <b>learns from level-ups</b>. On HOLDOUT the agent
+  rarely <i>gets</i> a level-up to learn from — 5 of 8 games clear <b>zero</b> levels — so every learned method collapses
+  to the salience floor. The binding constraint is acquiring the <b>first</b> level on a novel game, and that is
+  irreducibly per-game understanding:</p>
+
+  <div class="panel">
+    <table>
+      <thead><tr><th>Game</th><th>actions</th><th>first-level mechanic</th><th>why blind search gets 0</th></tr></thead>
+      <tbody>
+        <tr><td class="m">ls20</td><td class="m">1-4</td><td>transform-match: become shape+color+rotation = goal, on the slot</td><td class="muted">invisible state-match, no gradient</td></tr>
+        <tr><td class="m">sk48</td><td class="m">1-4,6,7</td><td>two coupled snakes' overlapped blocks must color-match</td><td class="muted">joint multi-constraint planning</td></tr>
+        <tr><td class="m">re86</td><td class="m">1-4,5</td><td>move colored pieces to cover matching-color markers</td><td class="muted">silent global goal, no partial credit</td></tr>
+        <tr><td class="m">wa30</td><td class="m">1-4,5</td><td>grab + carry 3 squares to a zone (enemies undo you)</td><td class="muted">adversaries reverse random progress</td></tr>
+        <tr><td class="m">tn36</td><td class="m">6 only</td><td>click bits to encode a transform program, click "play"</td><td class="muted">must encode exact instruction sequences</td></tr>
+      </tbody>
+    </table>
+    <div class="takeaway">No common lever. Every "minimal capability" is the same <i>shape</i> — read this game's specific
+    goal, plan to it — which is exactly the discover→plan paradigm that six phases could not make robust. First-level
+    acquisition on unseen games <b>is</b> the unsolved benchmark (frontier models score &lt;2%).</div>
+  </div>
+
+  <h2>4 · Honest ledger</h2>
+  <div class="two">
+    <div class="panel"><h3 style="color:var(--good)">What works</h3>
+      <ul>
+        <li><b>Salience explorer</b> — clears levels by efficient search; the banked <span class="m">0.33</span> floor.</li>
+        <li><b>Signature-transfer</b> — <b>+41%</b> on TUNE (lp85 L1→L5); the one genuine positive — but only on games
+        already multi-cleared, so <b>zero on HOLDOUT</b>.</li>
+        <li><b>The methodology</b> — brainstorm→spec→plan→subagent-execute with two-stage review; caught many real
+        bugs; produced a rigorous, honest evidence trail.</li>
+      </ul>
+    </div>
+    <div class="panel"><h3 style="color:var(--kill)">What doesn't</h3>
+      <ul>
+        <li><b>Discovery model</b> — can't gate (movement games: 0 levels) and doesn't fire (click games).</li>
+        <li><b>SOTA value CNN</b> — net-negative on TUNE, no-op on HOLDOUT.</li>
+        <li><b>VLM / goal-inference priors</b> — killed earlier (AUC 0.457 &lt; chance; nav paradigm 5/5 fail).</li>
+        <li><b>Anything on HOLDOUT</b> — every approach ties the salience floor on the unseen-game proxy.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>5 · Recommendation</h2>
+  <div class="rec">
+    <h3>Option A — Consolidate &amp; ship</h3>
+    <p>Six phases of evidence say the expected return of inventing further bespoke methods is near zero against the
+    immovable HOLDOUT wall, and the proven-elsewhere SOTA doesn't transfer to a win here either. The dignified,
+    honest close:</p>
+    <ul>
+      <li><b>Bank</b> <span class="m">v13 = 0.33</span> (salience) as the firewalled submission; signature-transfer
+      is the strongest dev config (helps where multi-level clears happen).</li>
+      <li><b>Ship</b> a clean, reproducible open-source repo — the open-source <i>milestone</i> rewards reproducibility,
+      not just top score.</li>
+      <li><b>Document</b> this negative-results map: <i>what</i> was tried across six phases and <i>why</i> each failed —
+      a genuine contribution, since it pinpoints first-level acquisition on novel games as the binding constraint.</li>
+    </ul>
+    <p class="muted" style="margin-bottom:0">If competing is later reprioritized, the only unexplored lever with any
+    theoretical footing is an LLM-orchestrated per-game program-synthesis loop — but that is infeasible offline on the
+    verified eval hardware (T4×2 / 12h; P100-default broken-CUDA) and on-device LLM priors already failed the easiest
+    known game. Not recommended.</p>
+  </div>
+
+  <div class="foot">
+    Sources: this repo's <span class="m">docs/experiment-overview.html</span> (Exp 42–46),
+    <span class="m">scripts/eval_efficiency.py</span> (TUNE/HOLDOUT, budget 6000),
+    <span class="m">scripts/hybrid_bakeoff.py</span> (lp85 three-arm), and the Phase-5 source diagnoses.
+    TUNE = vc33 cd82 sc25 lp85 lf52 tu93 ar25 sp80 · HOLDOUT = su15 sk48 re86 wa30 m0r0 ls20 tn36 tr87.
+    Kaggle/leaderboard figures from memory <span class="m">arcagi3-scoring-and-transfer.md</span>.
+  </div>
+
+</div>
+</body>
+</html>
