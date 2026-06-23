@@ -176,6 +176,7 @@ on games you've never seen.</i></p>
     <tr><td class="m">42</td><td><b>BFS-optimal planner (source)</b></td><td>BFS over true ls20 symbolic model; establishes A_h = 13 for L1</td><td>13-action optimal plan confirmed — planning is cheap given a correct model</td><td><span class="tag t-win">finding</span></td></tr>
     <tr><td class="m">43</td><td>Model-discovery bake-off</td><td>3-way: DiscoveryExplorer (factored DSL induction + BFS) vs salience vs spatial_value — black-box, budget 10000</td><td>discovery 0 levels — PROBE_TRANSFORMS = 0 triples (wrong primitive class: agent-attr-cycle vs world-paint); baselines L1 at 0.00 eff</td><td><span class="tag t-kill">negative — localized</span></td></tr>
     <tr><td class="m">44</td><td>World-transform bake-off (paint + collect)</td><td>Phase-2 DSL extension: <code>recolor_on_move</code> paint + <code>collect_on_contact</code>; A1 (paint-as-traversal) vs A2 (exact painted-set) path-opening planners; ls20 + bundled collect game, black-box, budget 10000</td><td>induction machinery fires (4582 paint deltas, 6 rules, 1038 paintable cells) but 0 levels cleared — wall moved to perception/coordinate contract (pixel-frame vs motion-lattice mismatch)</td><td><span class="tag t-kill">negative — localized</span></td></tr>
+    <tr><td class="m">45</td><td>Motion-lattice snap + broadened collect targets</td><td>Phase-3 coordinate fix: <code>motion_lattice</code> derives pixel pitch from agent <code>_deltas</code> and snaps scene-graph centroids onto reachable lattice; broadened fallback surfaces small non-agent objects (collect items); ls20 (A1/A2) + collect, black-box, budget 10000</td><td>coordinate gap closed (single-target <code>plan()</code> succeeds); 0 levels cleared — two new <code>_build_plan</code> defects: conjunctive-slot poison (ls20) + snap-off-footprint (collect); salience(collect) 3 levels confirms game solvable</td><td><span class="tag t-kill">negative — localized</span></td></tr>
   </tbody>
 </table>
 <p class="note">Experiments 21–35 (this session) all confirm the wall from new angles. The user-directed <b>Goal Extraction Engine</b> (§9) validated that symbolic <b>perception works</b> — a real, reusable positive — but every way of <i>converting</i> perception to score (planners, transfer-augmentation, VLM, structured discovery) fails, because the exact objective + action-mechanic is idiosyncratic per game and underdetermined by appearance.</p>
@@ -405,6 +406,52 @@ that pipeline showed, tested end-to-end.</p>
   is NOT yet demonstrated end-to-end (no level cleared), though the induction machinery does span both mechanics. The
   clean next step is the perception/coordinate fix, then re-run this bake-off.
   <b>v13 = 0.33 remains the banked, firewalled result; no submission from Phase 2.</b></p>
+</div>
+
+<div class="panel kill">
+  <h3>Experiment 45 — Motion-lattice snap + collect targets: coordinate gap closed, two new planner defects</h3>
+  <p><b>Setup.</b> Phase 3 addressed the Exp-44 perception/coordinate wall. A <code>motion_lattice</code> helper
+  derives the agent's pixel pitch from its measured <code>_deltas</code> and snaps scene-graph target centroids
+  onto the agent's reachable lattice. A broadened target-fallback surfaces small non-agent objects (collect items)
+  when the scene graph finds no framed targets. Re-ran the black-box bake-off (source used only as grader) on
+  ls20 (paint, A1/A2) and the bundled collect game, budget 10000.</p>
+  <table style="margin:10px 0 14px">
+    <thead><tr><th>engine</th><th class="m">levels</th><th class="m">per-level (lvl, actions, eff)</th><th class="m">slope</th></tr></thead>
+    <tbody>
+      <tr><td>discovery-A1 (ls20)</td><td class="m neg">0</td><td class="m dim">—</td><td class="m dim">—</td></tr>
+      <tr><td>discovery-A2 (ls20)</td><td class="m neg">0</td><td class="m dim">—</td><td class="m dim">—</td></tr>
+      <tr><td>discovery-collect (collect)</td><td class="m neg">0</td><td class="m dim">—</td><td class="m dim">—</td></tr>
+      <tr><td>salience (collect)</td><td class="m pos">3</td><td class="m">(0,1123,.001) (1,956,.003) (2,449,.008)</td><td class="m neg">−337</td></tr>
+      <tr><td>salience (ls20)</td><td class="m dim" colspan="3">not re-run (pathological &gt;60 min); prior ~7901 actions</td></tr>
+    </tbody>
+  </table>
+  <p><b>The coordinate gap IS closed.</b> With pitch (5,5) anchored at agent start (15,34), off-lattice centroids
+  now snap onto the lattice and single-target <code>plan()</code> succeeds — e.g. (30,19) → [2,2,2,3,3,3] (6 actions),
+  (60,9) → 14 actions. Perception is healthy: agent = color-12, 4582 world-delta observations, 6
+  <code>RecolorOnMove</code> rules, <code>paint_colors={11,9,3,8}</code>, 9 scene-graph candidates. But engine #1
+  clears 0 levels, because two new <code>_build_plan</code> defects surfaced downstream:</p>
+  <ul>
+    <li><b>ls20 — conjunctive-slot poison.</b> <code>_build_plan</code> asks <code>plan()</code> to satisfy
+    <i>all</i> ~9 snapped candidate slots simultaneously. Some are individually unreachable (one snaps onto a
+    true wall, one is the agent's own start cell, one has no BFS path), so the all-slots plan returns None for
+    every <code>attr_req</code> even though most slots are individually reachable. The engine stalls in INDUCE.
+    The A1-vs-A2 monotone-paint comparison is still not reached — no plan ever succeeds.
+    <b>Fix: select ANY one reachable candidate (disjunction), let the env's level-up confirm the true goal.</b></li>
+    <li><b>collect — snap-off-footprint.</b> The broadened fallback + snapping find the collect item
+    (centroid ~(57.5, 5.5)) and produce a 26-action plan that reaches EXECUTE. But uniform-pitch snap (pitch 4
+    from a misaligned start) lands the snapped target ~4 px off the item's actual cells — the agent reaches the
+    snapped cell but never steps on an item (collect never induced; no contact). Likely caused by the non-integer
+    14→64 render scaling making the pixel lattice irregular.
+    <b>Fix: snap to a cell the object actually occupies, or use logical-cell downscaling for non-integer lattices.</b></li>
+  </ul>
+  <p style="margin-bottom:0"><b>Verdict.</b> Phase 3 closed the coordinate-reachability gap — real progress;
+  single-target plans now execute end-to-end. But two distinct downstream <code>_build_plan</code> defects
+  prevent levels from clearing: conjunctive-slot poison for reach-target games, and footprint-misaligned targets
+  for non-integer-lattice collect games. Engine #1 clears <b>0 levels</b> on both games; the cross-mechanic
+  generality milestone is NOT yet reached. Both remaining walls are specific upstream code fixes (disjunctive
+  slot selection; footprint-aligned / logical-cell downscaling), not threshold changes.
+  salience(collect) clears 3 levels, confirming the collect game is solvable.
+  <b>v13 = 0.33 remains the banked, firewalled result; no submission.</b></p>
 </div>
 
 <div class="footer">
