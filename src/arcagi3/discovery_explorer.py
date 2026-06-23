@@ -30,6 +30,11 @@ from arcagi3.factored_model import FactoredState, InducedModel, plan, plan_paint
 
 # Bounded coverage so a black-box game can't trap the explorer in a phase forever.
 _MAX_TRANSFORM_STEPS = 400
+# Movement-probe is bounded too: try each directional action this many rounds, then proceed to
+# induction with WHATEVER deltas were found. Without this cap, a game where only a subset of
+# directions move the avatar (1-axis movement, blocked directions) never satisfies
+# _deltas_fully_probed and the probe re-tries the dead directions forever, never reaching PLAN.
+_MAX_PROBE_ROUNDS = 2
 _MAX_TARGET_OBJ_SIZE = 64   # objects this small (non-agent, non-bg) can be collect targets
 
 
@@ -57,6 +62,7 @@ class DiscoveryExplorer:
         self._prev_token = None
         self._agent_color = None
         self._probe_queue: list = []
+        self._probe_rounds = 0  # times the movement-probe queue has been refilled (bounded by _MAX_PROBE_ROUNDS)
         self._bg = None
         self._terminal = None
         self._transform_steps = 0
@@ -85,6 +91,7 @@ class DiscoveryExplorer:
         self._tried_goals = set()
         self._seen_hashes = set()
         self._probe_queue = []
+        self._probe_rounds = 0
         self._transform_steps = 0
         self._prev_attr = None
         self._prev_grid = None
@@ -394,8 +401,10 @@ class DiscoveryExplorer:
 
         # PROBE_MOVEMENT: try each simple action once, fitting deltas/walls from the transition.
         if self._phase == "PROBE_MOVEMENT":
-            if not self._probe_queue and not self._deltas_fully_probed(simple):
+            if (not self._probe_queue and not self._deltas_fully_probed(simple)
+                    and self._probe_rounds < _MAX_PROBE_ROUNDS):
                 self._probe_queue = list(simple)
+                self._probe_rounds += 1
             if self._probe_queue:
                 return ("S", self._probe_queue.pop(0))
             self._phase = "PROBE_TRANSFORMS"
