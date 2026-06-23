@@ -19,6 +19,7 @@ _GRADERS: dict[str, tuple[str, str, str | None, str | None]] = {
     "ls20": ("scripts/truemodel_planner.py", "load_ls20_class", None, None),
     "sk48": ("scripts/truemodel_sk48.py", "load_sk48_class", "sk48_key", "SK48_MOVES"),
     "collect": ("scripts/truemodel_collect.py", "load_collect_class", "collect_key", None),
+    "tr87": ("scripts/truemodel_tr87.py", "load_tr87_class", "tr87_key", "TR87_MOVES"),
 }
 
 # Cache: game_id -> list of per-level A_h values
