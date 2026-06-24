@@ -47,6 +47,19 @@ class RewardGoalLearner:
         hits = sum(goal.satisfied(g, ap, agent_colors) for g, ap in self._recent)
         return 1.0 - hits / len(self._recent)
 
+    def learn_from_contact(self, contact_color, agent_colors, bg):
+        """Robust path: the goal is to REACH whatever the agent moved INTO on the winning action.
+        contact_color = grid[agent_pos + winning_delta]. If it's a distinctive non-bg, non-agent
+        colour, the learned goal is ReachColor(contact_color) — transferred to the next level."""
+        if contact_color is None or int(contact_color) in agent_colors or int(contact_color) == bg:
+            return None
+        g = ReachColor(int(contact_color))
+        # accept only if it's distinctive (rare in ordinary states) — else it's a generic colour
+        if self._contrast(g, agent_colors) >= 0.5:
+            self.learned = g
+            return g
+        return None
+
     def on_levelup(self, prev_grid, win_grid, agent_colors, bg, win_pos):
         """Contrast the winning transition vs ordinary states; pick the most distinctive predicate."""
         cands = []

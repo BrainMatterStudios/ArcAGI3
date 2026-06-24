@@ -56,6 +56,7 @@ class WinningExplorer(TransferExplorer):
         self._prev_grid = None
         self._prev_action = None
         self._win_frame = None          # last frame before a level-up (for goal induction)
+        self._last_emit = None          # (grid, action) of the last model-emitted move (winning action)
         self._plan: list = []
         self._plan_goal = None
         self._tried_goals: set = set()
@@ -70,11 +71,19 @@ class WinningExplorer(TransferExplorer):
         # LEARN the goal from the level-up: contrast the last pre-win frame against ordinary states,
         # then transfer the learned predicate to clear the next level (the unexploited reward signal).
         m = self._ms.best()
-        if new_level > self._level and m is not None and self._win_frame is not None:
-            ap = m.agent_pos(self._win_frame)
-            learned = self._goal_learner.on_levelup(
-                self._prev_grid if self._prev_grid is not None else self._win_frame,
-                self._win_frame, m.agent_colors, m.bg, ap)
+        if new_level > self._level and m is not None and self._last_emit is not None:
+            wgrid, waction = self._last_emit
+            ap = m.agent_pos(wgrid)
+            learned = None
+            if ap is not None and waction in m.move.deltas:           # robust: contact-cell goal
+                dr, dc = m.move.deltas[waction]
+                er, ec = ap[0] + dr, ap[1] + dc
+                if 0 <= er < wgrid.shape[0] and 0 <= ec < wgrid.shape[1]:
+                    learned = self._goal_learner.learn_from_contact(int(wgrid[er, ec]), m.agent_colors, m.bg)
+            if learned is None and self._win_frame is not None:        # fallback: contrastive
+                learned = self._goal_learner.on_levelup(
+                    self._prev_grid if self._prev_grid is not None else self._win_frame,
+                    self._win_frame, m.agent_colors, m.bg, m.agent_pos(self._win_frame))
             if learned is not None:
                 self._ms.learned_goal = learned
         # a level-up resets the puzzle — keep the fitted model + learned goal, reset plan bookkeeping
@@ -108,7 +117,7 @@ class WinningExplorer(TransferExplorer):
         # EXECUTE: emit the next action of the current chunk
         if self._plan:
             a = self._plan.pop(0)
-            self._prev_action = a
+            self._prev_action = a; self._last_emit = (grid, a)
             return ("S", a)
 
         # PLAN: if a model is confident, (re)plan to a goal hypothesis and start a chunk
@@ -121,7 +130,7 @@ class WinningExplorer(TransferExplorer):
                 self._model_plan_starts += 1
                 if self._plan:
                     a = self._plan.pop(0)
-                    self._prev_action = a
+                    self._prev_action = a; self._last_emit = (grid, a)
                     return ("S", a)
             # a confident model but no fresh/feasible goal: blacklist the satisfied one, probe on
             if bp is not None:
@@ -132,7 +141,7 @@ class WinningExplorer(TransferExplorer):
             a = self._ms.probe_action(grid, available)
             if a is not None:
                 self._probe_used += 1
-                self._prev_action = a
+                self._prev_action = a; self._last_emit = (grid, a)
                 return ("S", a)
 
         self._gave_up = True   # spent the probe budget with no confident plan
