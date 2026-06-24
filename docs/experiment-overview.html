@@ -72,7 +72,7 @@
   <div class="card"><div class="k">Banked best</div><div class="v pos">0.33</div><div class="d">v13 TransferExplorer (public)</div></div>
   <div class="card"><div class="k">Reproducible cluster</div><div class="v">0.58–0.70</div><div class="d">target to "reach"</div></div>
   <div class="card"><div class="k">Leaderboard #1</div><div class="v">1.21</div><div class="d">Tufa Labs (lone outlier)</div></div>
-  <div class="card"><div class="k">Measured experiments</div><div class="v">52</div><div class="d">6 Kaggle submissions (transfer-dense 0.33 — ties floor)</div></div>
+  <div class="card"><div class="k">Measured experiments</div><div class="v">53</div><div class="d">6 Kaggle submissions (transfer-dense 0.33 — ties floor)</div></div>
 </div>
 <p class="lead" style="margin-top:18px">Every distinct paradigm has been built and measured on a fixed TUNE/HOLDOUT dev split. The
 public Kaggle score has held at <b>0.33</b> across every submission. This document is the full
@@ -583,6 +583,23 @@ that pipeline showed, tested end-to-end.</p>
     </tbody>
   </table>
   <p style="margin-bottom:0"><b>Finding.</b> Matching the generator's prototypes to the real HOLDOUT frames lifted accuracy 25→50%, but a <b>clean test on the un-inspected TUNE set scored 38% — barely above chance, collapsing to a NAVIGATE-default on half the games.</b> The 50→38 drop quantifies the contamination: the HOLDOUT gain was the generator being hand-fitted to those specific games, not genuine transfer. <b>Priors-from-simulation, as built, does not generalize to unseen games</b> — the sim-to-real / hidden-distribution gap the spec named as the primary risk. Per the pre-agreed one-iteration discipline, the program <b>halts at Phase 1</b> with a documented negative. The campaign's #1 lesson re-confirmed in miniature: the contaminated dev metric (50%) misled; the clean held-out test (38%) told the truth. (Caveat: several TUNE games — tu93 snake, lf52 abstract — are outside the 7-genre taxonomy, so even a perfect perceiver would miss them; but in-taxonomy transfer is still only ~40%.)</p>
+</div>
+
+<div class="panel kill">
+  <h3>Experiment 53 — Offline genre perception, comprehensively closed (CNN → distillation → 7B → 32B)</h3>
+  <p><b>Setup.</b> Exp 52 killed synthetic priors. Two further bets on an offline genre front-end: <b>#1 real-frame distillation</b> (teacher-label all 25 public games, train a student via leave-one-GAME-out CV — no synthetic gap) and <b>#2 a bigger VLM</b> (does scale help? tested on the real eval hardware via a Kaggle T4×2 kernel running Qwen2.5-VL-32B 4-bit).</p>
+  <table style="margin:10px 0 14px">
+    <thead><tr><th class="m">perceiver (offline-feasible)</th><th class="m">genre acc</th><th>read</th></tr></thead>
+    <tbody>
+      <tr><td class="m">always-guess-MATCH baseline</td><td class="m">52%</td><td>games are imbalanced (MATCH 11/25)</td></tr>
+      <tr><td class="m">CNN on synthetic (Exp 52, clean)</td><td class="m">38%</td><td>sim→real gap</td></tr>
+      <tr><td class="m">real-frame distillation, LOGO-CV (#1)</td><td class="m">44%</td><td>below baseline — 24 games too few/imbalanced</td></tr>
+      <tr><td class="m">qwen2.5-VL-7B + CoT</td><td class="m">60%</td><td>real perception, below gate</td></tr>
+      <tr><td class="m"><b>qwen2.5-VL-32B on eval T4×2</b></td><td class="m"><b>60%</b></td><td><b>fits + runs offline, but ZERO gain over 7B</b></td></tr>
+      <tr><td class="m">— gate —</td><td class="m">75%</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-bottom:0"><b>Finding.</b> No offline-feasible perceiver clears the genre gate. Real-frame distillation (44%) doesn't beat the trivial majority baseline (the 25 public games are too few and too imbalanced — SYMMETRY/PUSH have ≤1 exemplar, COLLECT zero). And the decisive scale test: a <b>32B VLM loads and runs fine on the competition's own T4×2 (~10s/image) but scores 60% — identical to the 7B.</b> Scaling the model 4.5× gives <i>zero</i> genre improvement; both plateau at 60%. So the bottleneck is not model capacity but the <b>out-of-distribution-ness of abstract 64×64 grids for VLMs</b> — they were trained on natural images. The earlier "strong-VLM 83%" was likely optimistic (judged from a context-rich montage, not single frames). <b>Offline genre perception is comprehensively closed</b>, and even were it solved, Exp 51's bespoke-terminal wall caps the payoff. Every perception lever — learned, distilled, small-VLM, large-VLM — reduces to the same offline-perception wall. <code>v13 = 0.33</code> remains the honest offline ceiling.</p>
 </div>
 
 <div class="panel kill">
