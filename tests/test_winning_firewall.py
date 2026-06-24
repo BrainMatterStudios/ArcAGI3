@@ -49,17 +49,25 @@ def _record_transfer(budget=150):
     return trace
 
 
-@pytest.mark.parametrize("enable", [True, False])
-def test_winning_byte_identical_to_transfer(enable):
-    """Replaying TransferExplorer's exact input sequence into a fresh WinningExplorer yields the
-    identical action token at every step — model-search stub defers, so no divergence is possible."""
+def test_winning_byte_identical_when_disabled():
+    """enable_model_search=False -> byte-identical to TransferExplorer at every step (the firewall)."""
     trace = _record_transfer()
-    w = WinningExplorer(seed=0, enable_model_search=enable)
+    w = WinningExplorer(seed=0, enable_model_search=False)
     w.reset_all()
     for i, (args, expected) in enumerate(trace):
         got = w.decide(**args)
-        assert got == expected, f"divergence at step {i}: WinningExplorer {got} != TransferExplorer {expected}"
-    # With model search on, the firewall must have deferred every step (stub returns None).
-    if enable:
-        assert w._model_fires == 0
-        assert w._fallback_actions == len(trace)
+        assert got == expected, f"divergence at step {i}: {got} != {expected}"
+    assert w._model_fires == 0
+    assert w._fallback_actions == len(trace)
+
+
+def test_clickonly_defers_to_transfer():
+    """On click-only games (no directional actions, e.g. lp85) the model loop never acts even with
+    model search enabled — protecting transfer's click-signature domain."""
+    trace = _record_transfer()
+    w = WinningExplorer(seed=0, enable_model_search=True)
+    w.reset_all()
+    for args, _expected in trace:
+        clickonly = dict(args, available=[6])              # force click-only availability
+        assert w._model_decide(clickonly["grid"], [6]) is None
+    assert w._model_fires == 0
