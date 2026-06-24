@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 
 from arcagi3.mechanics.model_search import ModelSearch
+from arcagi3.mechanics.reward_goal import RewardGoalLearner
 from arcagi3.planning.model_beam_planner import MIN_CONF, best_plan
 from arcagi3.transfer_explorer import TransferExplorer
 
@@ -51,19 +52,32 @@ class WinningExplorer(TransferExplorer):
 
     def _reset_model_state(self):
         self._ms = ModelSearch()
+        self._goal_learner = RewardGoalLearner()
         self._prev_grid = None
         self._prev_action = None
+        self._win_frame = None          # last frame before a level-up (for goal induction)
         self._plan: list = []
         self._plan_goal = None
         self._tried_goals: set = set()
         self._probe_used = 0
         self._gave_up = False
         self._level = 0
+        self._step = 0
 
     def on_level_change(self, new_level: int):
         if hasattr(super(), "on_level_change"):
             super().on_level_change(new_level)
-        # a level-up resets the puzzle — keep the fitted model, reset plan/goal bookkeeping
+        # LEARN the goal from the level-up: contrast the last pre-win frame against ordinary states,
+        # then transfer the learned predicate to clear the next level (the unexploited reward signal).
+        m = self._ms.best()
+        if new_level > self._level and m is not None and self._win_frame is not None:
+            ap = m.agent_pos(self._win_frame)
+            learned = self._goal_learner.on_levelup(
+                self._prev_grid if self._prev_grid is not None else self._win_frame,
+                self._win_frame, m.agent_colors, m.bg, ap)
+            if learned is not None:
+                self._ms.learned_goal = learned
+        # a level-up resets the puzzle — keep the fitted model + learned goal, reset plan bookkeeping
         self._plan = []
         self._plan_goal = None
         self._tried_goals = set()
@@ -85,6 +99,9 @@ class WinningExplorer(TransferExplorer):
         self._prev_action = None
 
         simple = [a for a in available if a in (1, 2, 3, 4)]
+        m = self._ms.best()
+        if m is not None:
+            self._goal_learner.note(grid, m.agent_pos(grid))   # ordinary-state baseline for contrast
         if not simple or self._gave_up:
             return None  # click-only / given up -> transfer's domain (firewall holds)
 
@@ -123,16 +140,17 @@ class WinningExplorer(TransferExplorer):
 
     def decide(self, grid, gstate_terminal, gstate_notplayed, levels, available):
         if levels != self._level:
+            self.on_level_change(levels)      # learns from the win using the OLD self._level
             self._level = levels
-            self.on_level_change(levels)
         if self.enable_model_search and not gstate_terminal and not gstate_notplayed:
             token = self._model_decide(grid, available)
+            self._win_frame = grid            # latest frame = pre-win frame for the next level-up
             if token is not None:
                 self._model_fires += 1
                 return token
-        self._fallback_actions += 1
-        # keep the model observing transfer's frames too (so it can still fit on deferral)
-        if self.enable_model_search and not gstate_terminal and not gstate_notplayed:
-            self._prev_grid = grid
+            self._fallback_actions += 1
+            self._prev_grid = grid            # keep observing transfer's frames on deferral
             self._prev_action = None
+            return super().decide(grid, gstate_terminal, gstate_notplayed, levels, available)
+        self._fallback_actions += 1
         return super().decide(grid, gstate_terminal, gstate_notplayed, levels, available)

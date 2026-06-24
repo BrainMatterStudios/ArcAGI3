@@ -45,6 +45,7 @@ class ModelSearch:
         self.transitions: list = []         # (prev_grid, action_id|None, grid)
         self.beam: list[WorldModel] = []
         self.reward_acc = 0.0
+        self.learned_goal = None            # goal induced from a level-up event (transferred)
 
     def observe(self, prev_grid, action_id, grid):
         if prev_grid is not None:
@@ -113,4 +114,9 @@ class ModelSearch:
         if m is None:
             return []
         objs = [int(c) for c in np.unique(grid)]
-        return enumerate_goals(grid, m.agent_colors, m.bg, objs)
+        gs = enumerate_goals(grid, m.agent_colors, m.bg, objs)
+        if self.learned_goal is not None:          # transfer: try the LEARNED goal first
+            gs = [self.learned_goal] + [g for g in gs
+                  if (g.kind, getattr(g, "color", None)) !=
+                     (self.learned_goal.kind, getattr(self.learned_goal, "color", None))]
+        return gs

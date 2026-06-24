@@ -34,6 +34,12 @@ def best_plan(search, grid, min_conf=MIN_CONF, max_len=MAX_LEN) -> BeamPlan | No
     goals = search.goals(grid)
     if not goals:
         return None
+    # a LEARNED goal (from a level-up) is transferred with priority: take its plan if feasible
+    learned = getattr(search, "learned_goal", None)
+    if learned is not None and not learned.satisfied(grid, model.agent_pos(grid), model.agent_colors):
+        lp = model.plan_to(grid, learned)
+        if lp and len(lp) <= max_len:
+            return BeamPlan(goal=learned, plan=lp, model=model, confidence=model.move_accuracy)
     best = None
     for goal in goals:
         # a goal already satisfied is not a target (no-op); skip
