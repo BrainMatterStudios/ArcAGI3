@@ -30,6 +30,12 @@ def _held_out_accuracy(model, test):
     return float(np.mean([model.score_transition(p, a, g) for p, a, g in test]))
 
 
+def _held_out_move_acc(model, test):
+    scores = [model.score_move(p, a, g) for p, a, g in test]
+    scores = [s for s in scores if s is not None]
+    return float(np.mean(scores)) if scores else 0.0
+
+
 class ModelSearch:
     """Accumulates transitions, fits + ranks a model beam, proposes info-gain probes and goals."""
 
@@ -65,6 +71,7 @@ class ModelSearch:
         scored = []
         for m in candidates:
             m.transition_accuracy = _held_out_accuracy(m, test or train)
+            m.move_accuracy = _held_out_move_acc(m, test or train)
             contradictions = sum(1 for p, a, g in train if a in m.move.deltas
                                  and m.score_transition(p, a, g) < 0.34)
             scored.append((_mdl(m, test, self.reward_acc, contradictions), m))
@@ -76,7 +83,8 @@ class ModelSearch:
         return self.beam[0] if self.beam else None
 
     def confidence(self):
-        return self.beam[0].transition_accuracy if self.beam else 0.0
+        # planning relies on the MOVEMENT model (paint prediction can be noisy yet plans still hold)
+        return self.beam[0].move_accuracy if self.beam else 0.0
 
     # ---- active probing (Phase 4) --------------------------------------------
     def probe_action(self, grid, available):

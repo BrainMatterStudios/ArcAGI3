@@ -29,7 +29,7 @@ class BeamPlan:
 def best_plan(search, grid, min_conf=MIN_CONF, max_len=MAX_LEN) -> BeamPlan | None:
     """Return the shortest accepted plan to a plausible goal over the best model, or None."""
     model = search.best()
-    if model is None or model.transition_accuracy < min_conf:
+    if model is None or model.move_accuracy < min_conf:   # planning gates on MOVEMENT fidelity
         return None
     goals = search.goals(grid)
     if not goals:
@@ -44,5 +44,5 @@ def best_plan(search, grid, min_conf=MIN_CONF, max_len=MAX_LEN) -> BeamPlan | No
         if not plan or len(plan) > max_len:
             continue
         if best is None or len(plan) < len(best.plan):
-            best = BeamPlan(goal=goal, plan=plan, model=model, confidence=model.transition_accuracy)
+            best = BeamPlan(goal=goal, plan=plan, model=model, confidence=model.move_accuracy)
     return best

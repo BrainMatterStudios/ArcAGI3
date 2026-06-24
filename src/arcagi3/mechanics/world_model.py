@@ -53,7 +53,8 @@ class WorldModel:
     push: PushObject
     width: int = 64
     height: int = 64
-    transition_accuracy: float = 0.0          # held-out, set at fit time
+    transition_accuracy: float = 0.0          # held-out (movement + world), set at fit time
+    move_accuracy: float = 0.0                # held-out MOVEMENT-only — the gate for planning
     start_pos: tuple | None = None            # motion-lattice anchor
 
     # ---- prediction / scoring -------------------------------------------------
@@ -90,6 +91,15 @@ class WorldModel:
             if (t == self.bg and f in coll) or pm.get(f) == t:
                 hit += 1
         return hit / tot if tot else (1.0 if action in self.move.deltas else 0.0)
+
+    def score_move(self, prev, action, grid):
+        """Movement-only fidelity for one transition: 1/0 on real moves, None when no move to test."""
+        ap, an = self.agent_pos(prev), self.agent_pos(grid)
+        if action in self.move.deltas and ap and an:
+            actual = (an[0] - ap[0], an[1] - ap[1])
+            if actual != (0, 0):
+                return 1.0 if actual == self.move.deltas[action] else 0.0
+        return None
 
     def applicable_actions(self, grid):
         return sorted(self.move.deltas)
@@ -154,11 +164,16 @@ def fit_world_model(transitions, width=64, height=64):
     bg = int(Counter(int(transitions[-1][2][r, c]) for r in range(0, height, 4)
                      for c in range(0, width, 4)).most_common(1)[0][0])
 
-    # agent = the color whose centroid shifts most consistently with directional actions
-    cand = [int(c) for c in np.unique(transitions[-1][2]) if int(c) != bg]
-    best_col, best_consistency, best_deltas = None, -1.0, {}
+    # agent = the color whose per-action displacement is DIRECTIONAL and DISCRIMINATIVE — a real
+    # avatar moves DIFFERENTLY per action. A paint-trail/drift color shifts the SAME way for every
+    # action (e.g. all (0,1)); that must be rejected, not selected (the ls20 agent-ID bug).
+    colors = set()
+    for _p, _a, g in transitions:
+        colors |= {int(c) for c in np.unique(g)}
+    cand = [c for c in colors if c != bg]
+    best_col, best_score, best_deltas = None, -1.0, {}
     for col in cand:
-        shifts = {}
+        shifts: dict = {}
         for prev, aid, grid in transitions:
             if aid is None:
                 continue
@@ -169,13 +184,17 @@ def fit_world_model(transitions, width=64, height=64):
                     shifts.setdefault(aid, Counter())[s] += 1
         if not shifts:
             continue
-        consistency = np.mean([cnt.most_common(1)[0][1] / sum(cnt.values()) for cnt in shifts.values()])
+        per_action = {a: cnt.most_common(1)[0][0] for a, cnt in shifts.items()}
+        distinct = len(set(per_action.values()))
+        if distinct < 2:
+            continue   # same shift for every action -> drift/trail, not an avatar
+        consistency = float(np.mean([cnt.most_common(1)[0][1] / sum(cnt.values()) for cnt in shifts.values()]))
         n_moves = sum(sum(c.values()) for c in shifts.values())
-        score = consistency * min(1.0, n_moves / 8.0)
-        if score > best_consistency:
-            best_consistency = score
-            best_col = col
-            best_deltas = {a: cnt.most_common(1)[0][0] for a, cnt in shifts.items()}
+        size = float(np.mean([np.count_nonzero(g == col) for _p, _a, g in transitions]))
+        # reward: discriminative (distinct directions) x consistent x enough evidence; prefer small
+        score = distinct * consistency * min(1.0, n_moves / 8.0) / (1.0 + size / 50.0)
+        if score > best_score:
+            best_score, best_col, best_deltas = score, col, per_action
     if best_col is None:
         return None
     agent_colors = {best_col}
