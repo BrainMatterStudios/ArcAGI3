@@ -72,7 +72,7 @@
   <div class="card"><div class="k">Banked best</div><div class="v pos">0.33</div><div class="d">v13 TransferExplorer (public)</div></div>
   <div class="card"><div class="k">Reproducible cluster</div><div class="v">0.58–0.70</div><div class="d">target to "reach"</div></div>
   <div class="card"><div class="k">Leaderboard #1</div><div class="v">1.21</div><div class="d">Tufa Labs (lone outlier)</div></div>
-  <div class="card"><div class="k">Measured experiments</div><div class="v">51</div><div class="d">6 Kaggle submissions (transfer-dense 0.33 — ties floor)</div></div>
+  <div class="card"><div class="k">Measured experiments</div><div class="v">52</div><div class="d">6 Kaggle submissions (transfer-dense 0.33 — ties floor)</div></div>
 </div>
 <p class="lead" style="margin-top:18px">Every distinct paradigm has been built and measured on a fixed TUNE/HOLDOUT dev split. The
 public Kaggle score has held at <b>0.33</b> across every submission. This document is the full
@@ -568,6 +568,21 @@ that pipeline showed, tested end-to-end.</p>
     </tbody>
   </table>
   <p style="margin-bottom:0"><b>Finding — the gap is an even three-way split, and the goal is bespoke.</b> Of 8 holdout games: <b>3 die at the FRONT-END</b> (su15/sk48/tn36 — no directional avatar to perceive), <b>2 at the ONTOLOGY</b> (m0r0/tr87 — a spurious 2-delta "avatar" but no frameable goal), and <b>3 at the TERMINAL</b> (ls20/re86/wa30 — they perceive an avatar, induce a model, and successfully plan + execute, yet clear nothing). The TERMINAL group answers the reusability question directly: each needs a <i>different</i> win-condition — ls20 a <b>moving</b> goal, re86 a color-<b>match</b> (it swept 22 candidate positions in vain because the win is relational, not positional), wa30 a sokoban <b>carry</b>-to-zone. So mechanic induction is <b>reusable up to the goal</b> (movement, paint, BFS planning all fire across games) and <b>bespoke at the goal</b> — and the goal is the layer that gates the score. <b>No single primitive unlocks more than one holdout.</b> This quantifies the family-lock: the residual is not one wall but a spread of per-game win-conditions, each needing its own derivation that does not transfer — the empirical answer to "is induction reusable or one-at-a-time?" is <b>one-at-a-time, at the terminal.</b></p>
+</div>
+
+<div class="panel kill">
+  <h3>Experiment 52 — Genre-Perceiver program: simulated priors don't generalize (Phase-1 gate failed)</h3>
+  <p><b>Setup.</b> Exp 50/51 localized the wall to <i>perception</i> (genre/goal), not search. The human faculty we lack is genre literacy from broad priors — un-hand-codeable, and small off-the-shelf VLMs are too weak. So the thesis: <b>acquire genre perception from broad <i>simulated</i> experience</b> (a synthetic multi-genre game generator) and distil it into an offline model, feeding the validated discover→plan back-half. Phase-1 gate (the make-or-break, cheapest kill switch): does a CNN trained on synthetic genres transfer to real games?</p>
+  <table style="margin:10px 0 14px">
+    <thead><tr><th>step</th><th class="m">result</th><th>read</th></tr></thead>
+    <tbody>
+      <tr><td>VLM front-end probes</td><td class="m">strong-VLM 83% · small-VLM 57% genre</td><td>a capable teacher exists; off-the-shelf student too weak → fine-tuning needed</td></tr>
+      <tr><td>Gate v1 (generic generator)</td><td class="m">synth 99% / HOLDOUT 25%</td><td>near-chance — crude prototypes don't match real appearance</td></tr>
+      <tr><td>Gate v2 (structures matched + colour-randomized)</td><td class="m">HOLDOUT 50% (4/8)</td><td>the 3 games I redesigned for all flipped to correct — mechanism works…</td></tr>
+      <tr><td><b>Clean TUNE test (un-inspected games)</b></td><td class="m"><b>38% (3/8) ≈ chance</b></td><td>…but it was <b>teaching-to-the-test</b>: on games the generator never saw, transfer collapses</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-bottom:0"><b>Finding.</b> Matching the generator's prototypes to the real HOLDOUT frames lifted accuracy 25→50%, but a <b>clean test on the un-inspected TUNE set scored 38% — barely above chance, collapsing to a NAVIGATE-default on half the games.</b> The 50→38 drop quantifies the contamination: the HOLDOUT gain was the generator being hand-fitted to those specific games, not genuine transfer. <b>Priors-from-simulation, as built, does not generalize to unseen games</b> — the sim-to-real / hidden-distribution gap the spec named as the primary risk. Per the pre-agreed one-iteration discipline, the program <b>halts at Phase 1</b> with a documented negative. The campaign's #1 lesson re-confirmed in miniature: the contaminated dev metric (50%) misled; the clean held-out test (38%) told the truth. (Caveat: several TUNE games — tu93 snake, lf52 abstract — are outside the 7-genre taxonomy, so even a perfect perceiver would miss them; but in-taxonomy transfer is still only ~40%.)</p>
 </div>
 
 <div class="panel kill">
