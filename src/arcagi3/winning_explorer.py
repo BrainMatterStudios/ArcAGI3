@@ -28,6 +28,7 @@ from arcagi3.transfer_explorer import TransferExplorer
 
 CHUNK = 12          # execute at most this many plan actions before re-observing + replanning
 MAX_PROBE = 250     # active-probe budget per game before giving up to transfer
+MAX_COVERAGE_ROUNDS = 8  # re-cover the reachable space this many times (paint/goal motion grows it)
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -64,6 +65,8 @@ class WinningExplorer(TransferExplorer):
         self._gave_up = False
         self._level = 0
         self._step = 0
+        self._visited: set = set()       # agent cells physically occupied (model-based coverage)
+        self._coverage_rounds = 0        # re-exploration rounds (paint/goal motion grows the space)
 
     def on_level_change(self, new_level: int):
         if hasattr(super(), "on_level_change"):
@@ -110,7 +113,10 @@ class WinningExplorer(TransferExplorer):
         simple = [a for a in available if a in (1, 2, 3, 4)]
         m = self._ms.best()
         if m is not None:
-            self._goal_learner.note(grid, m.agent_pos(grid))   # ordinary-state baseline for contrast
+            ap = m.agent_pos(grid)
+            self._goal_learner.note(grid, ap)                  # ordinary-state baseline for contrast
+            if ap is not None:
+                self._visited.add(ap)                          # mark the reachable cell visited
         if not simple or self._gave_up:
             return None  # click-only / given up -> transfer's domain (firewall holds)
 
@@ -132,19 +138,37 @@ class WinningExplorer(TransferExplorer):
                     a = self._plan.pop(0)
                     self._prev_action = a; self._last_emit = (grid, a)
                     return ("S", a)
-            # a confident model but no fresh/feasible goal: blacklist the satisfied one, probe on
+            # a confident model but no fresh/feasible goal: blacklist the satisfied one
             if bp is not None:
                 self._tried_goals.add(self._goal_key(bp.goal))
+            # FRONTIER: systematic model-based coverage — visit the nearest unvisited reachable cell.
+            # This covers the reachable state space (paint opens paths) to STUMBLE the first win,
+            # which the reward-goal learner then captures and transfers (the requested swing).
+            fplan, _target = m.frontier_plan(grid, self._visited)
+            if fplan:
+                self._plan = list(fplan[:CHUNK])
+                self._model_plan_starts += 1
+                a = self._plan.pop(0)
+                self._prev_action = a; self._last_emit = (grid, a)
+                return ("S", a)
+            # reachable space covered with no win: re-explore (paint/goal motion may have grown it)
+            if self._coverage_rounds < MAX_COVERAGE_ROUNDS:
+                self._coverage_rounds += 1
+                self._visited = set()
+                self._tried_goals = set()
+                return ("S", simple[self._coverage_rounds % len(simple)])  # nudge, restart coverage
 
-        # PROBE: active information-gain directional probe (bounded)
-        if self._probe_used < MAX_PROBE:
+        # PROBE: active information-gain directional probe (bounded), before a model is confident
+        if self._ms.confidence() < MIN_CONF and self._probe_used < MAX_PROBE:
             a = self._ms.probe_action(grid, available)
             if a is not None:
                 self._probe_used += 1
                 self._prev_action = a; self._last_emit = (grid, a)
                 return ("S", a)
 
-        self._gave_up = True   # spent the probe budget with no confident plan
+        # confident model + reachable space fully covered N rounds (or never confident) -> defer
+        self._gave_up = (self._ms.confidence() >= MIN_CONF and self._coverage_rounds >= MAX_COVERAGE_ROUNDS) \
+            or (self._ms.confidence() < MIN_CONF and self._probe_used >= MAX_PROBE)
         return None
 
     def decide(self, grid, gstate_terminal, gstate_notplayed, levels, available):

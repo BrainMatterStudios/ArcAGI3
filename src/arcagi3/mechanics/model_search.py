@@ -72,7 +72,9 @@ class ModelSearch:
         scored = []
         for m in candidates:
             m.transition_accuracy = _held_out_accuracy(m, test or train)
-            m.move_accuracy = _held_out_move_acc(m, test or train)
+            # movement is a STABLE property (no overfitting risk) and sparse for wall-trapped agents
+            # (ls20) — score it over ALL transitions so confidence doesn't collapse on move-less splits
+            m.move_accuracy = _held_out_move_acc(m, self.transitions)
             contradictions = sum(1 for p, a, g in train if a in m.move.deltas
                                  and m.score_transition(p, a, g) < 0.34)
             scored.append((_mdl(m, test, self.reward_acc, contradictions), m))

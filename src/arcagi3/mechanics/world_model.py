@@ -121,6 +121,32 @@ class WorldModel:
         sc = start[1] + round((target[1] - start[1]) / pc) * pc
         return (sr, sc)
 
+    def frontier_plan(self, grid, visited, max_nodes=120_000):
+        """Systematic model-based exploration: BFS over reachable agent positions (paint opens
+        paths) and return a path to the NEAREST reachable cell the agent has not physically visited.
+        Covers the reachable state space efficiently in SIMULATION; only the verified plan executes.
+        Returns (actions, target_cell) or (None, None) when the reachable space is exhausted."""
+        start = self.agent_pos(grid)
+        if start is None:
+            return None, None
+        seen = {start}
+        q = deque([(start, [])])
+        nodes = 0
+        while q and nodes < max_nodes:
+            pos, path = q.popleft()
+            nodes += 1
+            for a, d in self.move.deltas.items():
+                nr, nc = pos[0] + d[0], pos[1] + d[1]
+                if self._blocked(grid, nr, nc):
+                    continue
+                npos = (nr, nc)
+                if npos not in visited:                 # first unvisited reachable cell -> go there
+                    return path + [a], npos
+                if npos not in seen:
+                    seen.add(npos)
+                    q.append((npos, path + [a]))
+        return None, None
+
     def plan_to(self, grid, goal, max_nodes=120_000):
         """BFS over agent position to reach (any snapped target cell of) `goal`. Returns actions."""
         start = self.agent_pos(grid)
