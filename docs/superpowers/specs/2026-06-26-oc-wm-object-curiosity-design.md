@@ -108,18 +108,23 @@ priority). Cold/unknown frontiers are treated as maximally novel so the agent pr
 #### C. Value/ordering wrapper — `src/arcagi3/object_curiosity_explorer.py`
 
 `ObjectCuriosityExplorer(TransferExplorer)`, `enable_object_curiosity=False` by default. Overrides
-`_path_to_frontier` exactly as `ValueGuidedExplorer` did: among **real** frontier paths of equal
-shortest length, prefer the one leading to the rarest object interaction. If the feature is
-disabled, cold, or uncertain, fall straight back to `super()._path_to_frontier` (baseline
-ordering). It re-orders existing real paths only; it never generates a novel transition.
+`_pick_from_batch(choices, node)` — the explorer's existing hook for choosing among equal-tier
+**untried real actions**, whose docstring already sanctions subclass reordering as coverage-safe
+(every action in the batch is still tried over successive visits; only the order changes). Among
+the batch, prefer the action whose target descriptor (clicked object-type, or simple-action id)
+has the rarest object-interaction history. If the feature is disabled or cold (no interaction
+history yet), fall straight back to `super()._pick_from_batch` (uniform-random, the v6 behaviour).
+It re-orders existing real choices only; it never generates a novel transition. The current grid
+is stashed in `decide` so the batch scorer can resolve each click's target object-type.
 
 ## 6. Data flow
 
 1. Banked explorer runs and builds the observed graph as today.
 2. Each real transition `(s, a, s')` is converted to an interaction signature (component A).
 3. The novelty scorer updates `signature → count` (component B).
-4. At a branch with several equal-length real frontier paths, the wrapper prefers the path whose
-   expansion yields the rarest interaction (component C).
+4. When the explorer must choose among several equal-tier untried real actions at the current
+   node, the wrapper prefers the action whose target descriptor has the rarest interaction
+   history (component C).
 5. Execution and reachability remain entirely on real graph edges.
 
 No part of this loop generates novel transitions or plans over imagined states.
