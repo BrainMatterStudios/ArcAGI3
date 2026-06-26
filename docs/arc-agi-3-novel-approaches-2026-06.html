@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARC-AGI-3 — Novel Approaches Research (2026-06)</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --mut:#9aa7b4;
+    --line:#2a323d; --accent:#5aa9ff; --good:#3fb950; --warn:#d29922; --bad:#f85149;
+    --novel:#a371f7; --partial:#d29922; --tried:#6e7681;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.4px}
+  h2{font-size:21px;margin:38px 0 12px;padding-top:18px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:20px 0 6px}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 4px}
+  code{background:#0b0e13;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#cdd9e5}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:16px 0}
+  .panel.flag{border-color:#3d2f12;background:linear-gradient(180deg,#1d1708,#161b22)}
+  .panel.win{border-color:#16331f;background:linear-gradient(180deg,#0d1f12,#161b22)}
+  .lead{font-size:16px}
+  .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;padding:3px 9px;border-radius:999px;vertical-align:middle}
+  .t-novel{background:rgba(163,113,247,.16);color:#c6a6ff;border:1px solid #4b3a6e}
+  .t-partial{background:rgba(210,153,34,.15);color:#e3b341;border:1px solid #5c4715}
+  .t-tried{background:rgba(110,118,129,.18);color:#adb5bd;border:1px solid #3a414b}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  td.m,th.m{font-family:ui-monospace,monospace;white-space:nowrap}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .card .k{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  .card .v{font-size:24px;font-weight:700;margin:2px 0}
+  .card .d{color:var(--mut);font-size:12.5px}
+  .pill{font-family:ui-monospace,monospace;font-size:12px;padding:2px 7px;border-radius:5px;background:#0b0e13;border:1px solid var(--line)}
+  ul{margin:8px 0 8px 2px;padding-left:18px}
+  li{margin:5px 0}
+  .muted{color:var(--mut)}
+  .kbd{color:var(--good);font-weight:600}
+  .x{color:var(--bad);font-weight:600}
+  .approach{border-left:3px solid var(--line);padding-left:16px;margin:18px 0}
+  .approach.a3{border-color:var(--novel)}
+  .approach.a1{border-color:var(--partial)}
+  .approach.a2{border-color:var(--tried)}
+  .approach.ex{border-color:var(--accent)}
+  .small{font-size:13px}
+  a{color:var(--accent)}
+  .foot{color:var(--mut);font-size:12.5px;margin-top:30px;border-top:1px solid var(--line);padding-top:14px}
+  .verdict{font-size:13px;margin-top:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>ARC-AGI-3 — Novel Approaches Research</h1>
+  <p class="sub">21-agent deep-research sweep (8 expert angles · live web · screened against all 55 prior experiments) + controller verification against the private campaign log · 2026-06-27</p>
+
+  <div class="grid">
+    <div class="card"><div class="k">Research agents</div><div class="v">21</div><div class="d">8 angles → 32 raw → 10 distinct candidates</div></div>
+    <div class="card"><div class="k">Banked score</div><div class="v">0.33</div><div class="d">leader (Tufa Labs) ~1.21 · need ~3–4×</div></div>
+    <div class="card"><div class="k">Top novel bet</div><div class="v" style="color:#c6a6ff">Rank 3</div><div class="d">latent-terminal induction (attacks the verified wall)</div></div>
+  </div>
+
+  <div class="panel flag">
+    <h3 style="margin-top:0">⚑ The headline finding — verified, then corrected</h3>
+    <p class="lead" style="margin-top:6px">The sweep's #1 claim: the Kaggle score is <b>action-efficiency squared</b> — <code>S_level = min(1.15, (human_actions / agent_actions)²)</code>, weighted by level depth, averaged over hidden games — so clearing a level in 1123 actions when a human needs ~50 scores ≈ <code>0.002</code>, near zero.</p>
+    <p><span class="kbd">VERIFIED.</span> This matches the project's own scoring memory, confirmed 2026-06-21 from <code>docs.arcprize.org/methodology</code>. The metric is real; efficiency is the scored quantity, not level count.</p>
+    <p style="margin-bottom:0"><span class="x">CORRECTED.</span> The sweep concluded "55 experiments optimized the wrong objective." That is <b>wrong given the private log the agents couldn't see.</b> The campaign already pivoted to efficiency: <code>v13 transfer-dense</code> measured <b>+41% dev efficiency</b> and scored <b>0.33 (Kaggle-inert)</b>; <code>CAI-prune</code> measured <b>+47%</b> and scored <b>0.28</b>. Root cause: the scored <i>public</i> games wall at L0/L1, so there is no efficiency credit to earn (you can't be fast at a level you never complete), and <i>private</i> scores are invisible until ~Nov. So efficiency was targeted and came back flat on every observable game. This reframes — but does not delete — the efficiency ranks below.</p>
+  </div>
+
+  <h2>Re-ranked candidates (my verdict vs the private log)</h2>
+  <p class="sub">The agents ranked by raw appeal. I re-rank by <b>genuine novelty × evidence from what we've already measured</b>. Legend:
+    <span class="tag t-novel">novel</span> not built/measured before ·
+    <span class="tag t-partial">partial</span> new mechanism, but faces a documented wall ·
+    <span class="tag t-tried">tried</span> substantially already done.</p>
+
+  <table>
+    <thead><tr><th>Approach</th><th>Attacks</th><th>My verdict</th><th>Cheap first kill-test</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>Latent-terminal induction</b><br><span class="muted small">extend goal vocab to gated/relational/carry predicates + reconstruct the hidden variable, learn from WIN labels</span></td>
+        <td>bespoke<br>terminal</td>
+        <td><span class="tag t-novel">novel</span><div class="verdict">Attacks the <b>verified</b> wall; uses WIN labels (always emitted) not reward edges → dodges the Exp 54/55 starvation. Real chance of total failure.</div></td>
+        <td class="small">ls20 only: can a cyclic latent be fit from frame deltas so WIN states separate? &lt;100-action clear through the 99.6% model?</td>
+      </tr>
+      <tr>
+        <td><b>RHAE geodesic replay</b><br><span class="muted small">BFS to the known reward node + replay the shortest path; plan-through-model to the reward state</span></td>
+        <td>action<br>efficiency</td>
+        <td><span class="tag t-partial">partial</span><div class="verdict">Mechanism genuinely <b>not</b> in code (we reorder tiers / navigate to frontiers, never replay a geodesic to a known reward node). Cheap, firewall-safe. But efficiency gains have been Kaggle-inert 3× on observable games.</div></td>
+        <td class="small">Offline oracle: per dev game, explorer <code>actions_to_level</code> vs true-model optimal. Kill if already &lt;3× optimal.</td>
+      </tr>
+      <tr>
+        <td><b>Ensemble-disagreement exploration</b><br><span class="muted small">intrinsic reward = variance across a forward-model ensemble — fires where the model is <i>wrong</i></span></td>
+        <td>reward<br>starvation</td>
+        <td><span class="tag t-novel">novel</span><div class="verdict">Different signal class from every killed novelty/structural lever (model-wrong ≠ state-novel); could fire at the rotation-tile transition without reward. Caveat: must be applied as exploit/prune, not frontier-reorder (5+ reorder kills).</div></td>
+        <td class="small">Fit 3 cheap forward models on ls20 transitions; does prediction variance spike at the pre-WIN transition vs background?</td>
+      </tr>
+      <tr>
+        <td><b>Un-firewall discover→plan under RHAE gating</b><br><span class="muted small">re-gate the existing WinningExplorer on summed-RHAE with hard fallback</span></td>
+        <td>efficiency<br>(avatar family)</td>
+        <td><span class="tag t-tried">tried</span><div class="verdict">WinningExplorer was gate-tested <b>this session</b> and failed (ls20/re86 = 0); discover→plan clears bundled <code>collect</code> 14× but is family-locked 0/6 holdouts. The RHAE lens is interesting but the family-lock caps it.</div></td>
+        <td class="small">A/B summed-HOLDOUT-RHAE vs transfer-dense; kill on any leaky-fallback regression.</td>
+      </tr>
+      <tr>
+        <td><b>Object-centric active inference (AXIOM-style)</b><br><span class="muted small">expected-free-energy exploration, gradient-free, CPU</span></td>
+        <td>cross-game<br>generalization</td>
+        <td><span class="tag t-novel">novel</span><div class="verdict">Genuinely different paradigm (epistemic-value exploration, online Bayesian object models). Big build, unproven on abstract integer grids.</div></td>
+        <td class="small">Port the EFE action-selection to one dev game; does it reach L1 in fewer actions than salience?</td>
+      </tr>
+      <tr>
+        <td><b>Behavioral family router</b><br><span class="muted small">dispatch modules from first-200-action interaction stats (not pixels)</span></td>
+        <td>generalization<br>(dispatcher)</td>
+        <td><span class="tag t-tried">tried</span><div class="verdict">Probe labels already exist; value is only as a warm-start for the above. Low priority, build last.</div></td>
+        <td class="small">Leave-one-out routing accuracy on the 14 probe games vs majority baseline.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>The two bets actually worth running first</h2>
+  <p class="sub">Both are ~1–2 days, CPU-only, firewalled, and each <b>definitively kills or greenlights a whole research arm</b> — the campaign's discipline of cheap decisive kill-tests, applied to the genuinely-new ideas.</p>
+
+  <div class="approach a3">
+    <h3><span class="tag t-novel">novel</span> &nbsp;Bet A — Latent-terminal induction (the verified wall)</h3>
+    <p><b>Why it's different from everything killed.</b> Exp 54 (RVH) and Exp 55 (OC-WM) both starved because they needed a <i>pre-existing reward edge</i> to bootstrap. This uses the <code>levels_completed</code> WIN label — which the engine <i>always</i> emits — plus rollouts through the already-accurate forward model (ls20 99.6%). And it targets the one thing Exp 50/51 <b>proved</b> is the wall: the goal predicate, not search. The existing <code>goals.py</code> vocabulary (REACH / VANISH_ALL / PUSH_TO …) provably can't express ls20's rotation-gated reach, re86's relational color-match, or wa30's carry-to-zone.</p>
+    <p><b>The crux + the honest risk.</b> ls20's rotation is recorded as <i>invisible in the frame</i> (project ground-truth). If the hidden variable leaves <b>no</b> observable signature, this is unrecoverable from pixels and the hard games are terminally unsolvable offline. <span class="kbd">That is exactly what the cheap ls20 probe settles in ~2 days</span> — fit a cyclic latent counter from frame deltas and ask whether WIN states become linearly separable. A clean negative is itself a valuable, final answer.</p>
+  </div>
+
+  <div class="approach a1">
+    <h3><span class="tag t-partial">partial</span> &nbsp;Bet B — The RHAE headroom oracle (measure before building)</h3>
+    <p><b>What it answers.</b> Before any policy change: per dev game, compare the explorer's <code>actions_to_level</code> against the <b>true-model optimal</b> (the <code>environment_files/</code> sources + the existing <code>truemodel_planner</code>). This single offline table answers the campaign's oldest question — <i>how much efficiency headroom actually exists on games we already complete</i> — and whether geodesic-replay (Bet B's policy half) has real upside or the explorer is already near-optimal.</p>
+    <p><b>Tempered by evidence.</b> Dev-efficiency gains have failed to move Kaggle 3× because the scored games wall early. So this oracle's real job is to <i>falsify the efficiency thesis cheaply</i>: if headroom is small, drop the whole efficiency arm and put everything on Bet A. If headroom is 10–50× (likely, given 1123 vs ~50), geodesic-replay becomes worth a firewalled A/B — but with eyes open that it may again not translate to the hidden games until they're observable.</p>
+  </div>
+
+  <h2>Honest bottom line</h2>
+  <div class="panel win">
+    <ul style="margin:0">
+      <li><b>The sweep was worth running</b> — it independently confirmed the RHAE metric (good sanity check) and surfaced three genuinely-novel directions the campaign never built: <b>latent-terminal induction</b>, <b>ensemble-disagreement exploration</b>, and <b>active-inference/EFE</b>.</li>
+      <li><b>It also over-rated the efficiency reframe</b> by lacking the private log. Efficiency is real and was already targeted; it's been Kaggle-inert on every game we can observe. Don't re-run efficiency levers expecting public-score movement.</li>
+      <li><b>The single highest-value action</b> is the <b>ls20 latent-separability probe</b> (Bet A). It's cheap, and it resolves the question that has gated this entire campaign: <i>is the hard-game terminal recoverable from the frame at all, or is the perception wall absolute?</i> Either answer is decisive — a greenlight to the only approach attacking the verified wall, or a final, evidenced close on offline solvability.</li>
+      <li><b>Everything stays firewalled.</b> Banked <code>transfer-dense = 0.33</code> is untouched; all candidates are default-off, additive, CPU/T4-feasible, and killable.</li>
+    </ul>
+  </div>
+
+  <div class="foot">
+    <b>Sources (via agent web search):</b> ARC-AGI-3 methodology (docs.arcprize.org/methodology) · technical report arXiv 2603.24621 · Executable World Models arXiv 2605.05138 (GPT-5.5, 58% RHAE, API-only) · Symbolica Arcgentica (36% public, cloud, leaderboard-ineligible) · Blind Squirrel ResNet18 distance-value (ARC 30-day learnings) · DreamerV3-XP / InDRiVE / EAWM / AXIOM (arXiv 2505.24784) · OneLife (2510.12088) · VGDL/WorldCoder/TheoryCoder synthesis line. <br>
+    <b>Controller cross-check against private memory:</b> arcagi3-scoring-and-transfer (RHAE verified + efficiency-inert evidence), arcagi3-discovery-family-locked (WinningExplorer failed gate, family-lock), arcagi3-ls20-mechanic-ground-truth (invisible rotation). Full run: <code>wf_e19d4d60-352</code>.
+  </div>
+
+</div>
+</body>
+</html>
