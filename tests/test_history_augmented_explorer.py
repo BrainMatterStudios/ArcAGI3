@@ -1,3 +1,4 @@
+import numpy as np
 from arc_agi import Arcade, OperationMode
 from arcengine import GameAction, GameState
 
@@ -39,7 +40,6 @@ def test_augment_off_is_byte_identical():
 
 
 def test_key_unaugmented_when_no_counts():
-    import numpy as np
     pol = HistoryAugmentedExplorer(augment=True, seed=0)
     grid = np.zeros((64, 64), dtype=np.int8)
     grid[10, 10] = 5
@@ -48,74 +48,70 @@ def test_key_unaugmented_when_no_counts():
     base = SalienceExplorer(seed=0)
     base.bg = 0
     base.vt.update(grid)
-    assert pol._key(grid) == base._key(grid)   # no counts -> identical to banked key
+    assert pol._key(grid) == base._key(grid)
 
 
 def test_key_changes_with_counter():
-    import numpy as np
     pol = HistoryAugmentedExplorer(augment=True, seed=0, counter_mod=4)
     grid = np.zeros((64, 64), dtype=np.int8)
     grid[10, 10] = 5
     pol.bg = 0
     pol.vt.update(grid)
     k0 = pol._key(grid)
-    pol._counts = {(5, 10, 10, 10, 10): 1}    # a visited-object counter
+    pol._counts = {((20, 20, 7),): 1}
     k1 = pol._key(grid)
-    pol._counts = {(5, 10, 10, 10, 10): 2}
+    pol._counts = {((20, 20, 7),): 2}
     k2 = pol._key(grid)
-    pol._counts = {(5, 10, 10, 10, 10): 5}    # 5 % 4 == 1 == same residue as count 1
+    pol._counts = {((20, 20, 7),): 5}   # 5 % 4 == 1 == residue of count 1
     k5 = pol._key(grid)
-    assert k0 != k1 and k1 != k2 and k1 == k5   # mod 4: counts 1 and 5 collapse
+    assert k0 != k1 and k1 != k2 and k1 == k5
 
 
-import numpy as np
-
-
-def _g(avatar_rc, tile_rc=None):
+def _gd(tile=True, occ=None):
+    """A 2-cell static glyph at (20,20)=7,(20,21)=8; `occ` = cells an occluder (color 9) covers."""
     g = np.zeros((64, 64), dtype=np.int8)
-    if tile_rc is not None:
-        g[tile_rc] = 7                 # a static glyph, color 7
-    ar, ac = avatar_rc
-    g[ar, ac] = 9                      # avatar, color 9 (drawn last -> occludes tile if same cell)
+    if tile:
+        g[20, 20] = 7
+        g[20, 21] = 8
+    for cell in (occ or []):
+        g[cell] = 9
     return g
 
 
-def test_occlusion_aware_visit_counter():
-    pol = HistoryAugmentedExplorer(augment=True, seed=0, counter_mod=4)
-    sig = (7, 20, 20, 20, 20)          # (color, r0, c0, r1, c1) of the tile at (20,20)
-    # frame 0: avatar at (20,21), tile visible at (20,20) -> remember tile, no visit yet
-    pol._update_history(_g((20, 21), tile_rc=(20, 20)))
-    # frame 1: avatar moves onto (20,20) -> tile occluded; visit++ (edge-triggered arrival)
-    pol._update_history(_g((20, 20), tile_rc=None))
-    assert pol._counts.get(sig) == 1
-    # frame 2: avatar stays on (20,20) -> NO additional count (not a new arrival)
-    pol._update_history(_g((20, 20), tile_rc=None))
-    assert pol._counts.get(sig) == 1
-    # frame 3: avatar leaves to (20,21); tile reappears
-    pol._update_history(_g((20, 21), tile_rc=(20, 20)))
-    # frame 4: avatar steps back onto the tile -> visit++ again
-    pol._update_history(_g((20, 20), tile_rc=None))
-    assert pol._counts.get(sig) == 2
+GLYPH_SIG = ((20, 20, 7), (20, 21, 8))
 
 
-def _gm(head, body, tile, anim):
-    g = np.zeros((64, 64), dtype=np.int8)
-    if tile is not None:
-        g[tile] = 7
-    if anim is not None:
-        g[anim] = 5
-    g[head] = 12
-    g[body] = 9
-    return g
-
-
-def test_multicolor_avatar_body_occlusion_counts():
-    # head(12)+body(9) move as one; the BODY occludes the tile on arrival -> visit must still count,
-    # and the independently-moving animation color (5) must NOT be learned as avatar.
+def test_disappearance_visit_counter():
     pol = HistoryAugmentedExplorer(augment=True, seed=0, counter_mod=4)
     pol.bg = 0
-    pol._update_history(_gm((10, 10), (11, 10), (12, 10), (0, 0)))   # tile visible at (12,10)
-    pol._update_history(_gm((11, 10), (12, 10), None, (0, 1)))       # body lands on tile (occluded); anim drifts
-    assert pol._avatar_colors == {12, 9}                              # both avatar colors, anim(5) excluded
-    assert pol._counts.get((7, 12, 10, 12, 10)) == 1                  # body-occlusion visit counted
-    assert all(sig[0] not in (12, 9) for sig in pol._counts)          # no avatar-color self-counts
+    pol._update_history(_gd(True))                                  # f0: seen=1
+    pol._update_history(_gd(True))                                  # f1: seen=2 (static confirmed)
+    pol._update_history(_gd(False, occ=[(20, 20), (20, 21)]))       # f2: occluded -> disappeared -> 1
+    assert pol._counts.get(GLYPH_SIG) == 1
+    pol._update_history(_gd(True))                                  # f3: reappears (occluder seen 1, not counted)
+    pol._update_history(_gd(True))                                  # f4: seen=2 again
+    pol._update_history(_gd(False, occ=[(20, 20), (20, 21)]))       # f5: occluded again -> 2
+    assert pol._counts.get(GLYPH_SIG) == 2
+    assert list(pol._counts.keys()) == [GLYPH_SIG]                  # the 1-frame occluder is never counted
+
+
+def test_moving_object_not_counted():
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, counter_mod=4)
+    pol.bg = 0
+
+    def gmov(pos):
+        g = np.zeros((64, 64), dtype=np.int8)
+        g[pos] = 9
+        return g
+
+    pol._update_history(gmov((5, 5)))
+    pol._update_history(gmov((5, 6)))   # moved -> previous never confirmed static
+    pol._update_history(gmov((5, 7)))   # moved again
+    assert pol._counts == {}            # a thing that never stays put is never counted
+
+
+def test_decide_runs_when_augmenting():
+    cfg = dict(seed=0, trust_threshold=3, border_mask=2)
+    pol = HistoryAugmentedExplorer(augment=True, **cfg)
+    _drive(pol, "navg", 300)
+    assert isinstance(pol._counts, dict)   # ran end-to-end without error
