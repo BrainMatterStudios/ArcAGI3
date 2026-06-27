@@ -27,6 +27,16 @@ class HistoryAugmentedExplorer(SalienceExplorer):
         self._avatar_colors: set = set()
         self._prev_grid = None
         self._prev_overlaps: set = set()
+        self._hist_levels = 0   # last-seen levels, to detect a level-up (engine resets rotation)
+
+    def _reset_history(self):
+        # The engine resets the hidden rotation on life-loss / level-restart; mirror that so the
+        # counter tracks rotation WITHIN a life rather than accumulating across resets.
+        self._counts = {}
+        self._obj_locations = {}
+        self._avatar_colors = set()
+        self._prev_grid = None
+        self._prev_overlaps = set()
 
     def _key(self, grid):
         base = super()._key(grid)
@@ -35,20 +45,24 @@ class HistoryAugmentedExplorer(SalienceExplorer):
         aug = tuple(sorted((sig, c % self.counter_mod) for sig, c in self._counts.items()))
         return base + b"|H|" + repr(aug).encode()
 
-    def decide(self, grid, *args, **kwargs):
+    def decide(self, grid, gstate_terminal, gstate_notplayed, levels, available):
         if self.augment:
-            self._update_history(grid)   # updates self._counts BEFORE super().decide -> self._key
-        return super().decide(grid, *args, **kwargs)
+            if gstate_terminal or gstate_notplayed or levels != self._hist_levels:
+                self._reset_history()        # life-loss / reset / level-up -> engine resets rotation
+                self._hist_levels = levels
+            else:
+                self._update_history(grid)   # updates self._counts BEFORE super().decide -> self._key
+        return super().decide(grid, gstate_terminal, gstate_notplayed, levels, available)
 
     def _avatar_cells(self, grid):
+        # Learn avatar colors from cleanly-translating colors (grouped by shared delta to capture a
+        # multi-color avatar; excludes independent animations). NOTE: this misses a body color that is
+        # shared with static maze objects (ls20 color 9) — the unsolved segmentation issue documented
+        # in the spec's interim result; a disappearance/occlusion-event detector is the proposed redesign.
         if self.bg is None:
             self.bg = P.detect_background(grid)
         if self._prev_grid is not None and self._prev_grid.shape == grid.shape:
-            # A multi-color avatar (e.g. ls20 head+body) moves RIGIDLY AS ONE: its colors share a
-            # single translation delta. infer_translation returns only the smallest single mover, so
-            # it would miss the body; use infer_all_translations and take the delta shared by the most
-            # colors (the avatar), which also excludes independent animations (each has its own delta).
-            movers = infer_all_translations(self._prev_grid, grid, self.bg)  # {color: (dr,dc)}
+            movers = infer_all_translations(self._prev_grid, grid, self.bg)
             if movers:
                 by_delta = Counter(movers.values())
                 known = [movers[c] for c in self._avatar_colors if c in movers]
