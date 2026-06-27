@@ -143,3 +143,27 @@ edge-triggered on present→absent, grouping the multi-cell arrow as one cluster
 avatar-segmentation problem (no need for a precise avatar footprint at all) and is the most promising
 path to drive `rot_mismatch → 0` and crack ls20. Checkpointed here after honest non-converging
 iteration rather than thrashing further inline.
+
+## Redesign v2 result (2026-06-21) — disappearance detector also blocked by avatar segmentation; CHECKPOINT
+
+Implemented the disappearance/occlusion-event detector (count a confirmed-static glyph cluster that
+disappears; 6 unit tests green incl. firewall + a moving-object-excluded test). It did NOT crack ls20
+either: the counts show it counting the AVATAR (25-cell color-12-head + color-9-body clusters) when the
+avatar pauses ≥2 frames against walls, and 8-adjacency clustering merges the avatar with adjacent
+glyphs. Root reason: the avatar's *parts* are themselves small objects, so "don't track the avatar
+footprint" did not avoid the avatar — its blocks pollute as clusters. **The avatar-segmentation
+problem is therefore intrinsic to BOTH detectors.**
+
+**Honest conclusion:** the history-augmented *mechanism* is proven and firewalled (banked 0.33 never
+at risk), but **robustly perceiving "the avatar stepped on the rot tile" from ls20 pixels is a real,
+substantial perception problem** — color-sharing (body color 9 == maze color), occlusion, 5×5 blocks
+on a 5-cell pitch, blocked-move pauses, and glyph-merging all conspire. Two detector designs and 4+
+inline iterations did not converge. Checkpointing rather than thrashing.
+
+**Recommended path for a dedicated next effort:** use the repo's **dormant `tracking.py`
+`ObjectTracker`** (built for object persistence + typed events across frames, currently unused in the
+live path) to get stable object identity through occlusion, and explicitly segment the avatar (the
+single rigidly-translating multi-cell block) so it can be excluded — then either detector becomes
+reliable, validated to `rot_mismatch → 0` against the `cklxociuu` oracle. That is a focused perception
+sub-project, not a tail-of-session tweak. The mechanism, the firewall, the oracle, and the unit
+harness are all in place to support it.
