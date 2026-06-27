@@ -136,3 +136,54 @@ result is a success (it redirects to active probing before a wasted build).
   history; run adequate budget (ls20's reset-heavy 3-lives/42-steps helps).
 - **dev ≠ Kaggle.** This is a diagnostic to direct R&D, not a leaderboard change. The 0.33 floor is
   untouched (no agent behavior modified).
+
+## Results (2026-06-21) → VERDICT (iii): passive insufficient, active probe CONFIRMS
+
+Re-grounding note: the banked agent is `TransferExplorer` v13 (still 0.33), which inherits
+`SalienceExplorer._key` verbatim — so the map (driven by SalienceExplorer) reflects the banked key.
+The ls20 mechanic was re-confirmed from engine source (`environment_files/ls20/9607627b/ls20.py`):
+**rotation-gated** (`bejndxqqzf` requires `cklxociuu == ehwheiwsk[goal]`); the repo's
+`experiment-overview.html` paint/moving-goal writeup is superseded/wrong.
+
+### Active probe (`scripts/invisible_state_probe.py`) — DECISIVE
+Offline engine, state-injection: drive the known solution to goal-adjacent, inject `cklxociuu = r`
+for r in {0,1,2,3}, take the goal-entry action. Result:
+- full solution wins (validates the rotation model);
+- goal-adjacent **frame identical** across rotations AND **masked state-key identical**;
+- outcomes **WIN only at idx 0** (== GoalRotation), BLOCKED at 1/2/3.
+
+→ Direct ground-truth proof: ls20's wall is an **invisible-state representation-completeness** problem
+— identical observation, outcome gated by a hidden rotation counter — **resolvable by augmenting the
+state with that counter.**
+
+### Passive map (`scripts/invisible_state_map.py`, 16 games @30k) — sparse, as predicted
+
+| signal | result |
+|---|---|
+| INVISIBLE_STATE fired | only **lf52** (3) — a *solved* game; possibly genuine or a feature artifact |
+| **ls20 anchor** | **0** (1 violation, classified over_merge) — passive detection did NOT fire |
+| walled games (sc25/re86/wa30/tn36) | **0** INVISIBLE_STATE each |
+| dominant category everywhere | **OVER_MERGE** (tu93 56, sp80 66, m0r0 40, sk48 30, …) |
+
+The passive signal is too sparse for gated goals: the agent rarely reaches the rotation gate at ≥2
+rotations during normal exploration, so no determinism violation is observed there (ls20 had 1 total
+violation, and it was over_merge). The feature family is not the problem — it *did* fire on lf52 — so
+the absence on ls20/walled games is genuine sparsity, the predicted failure mode.
+
+### Verdict: (iii) — passive detection insufficient; active probing / history-augmentation is the path
+The map alone would have (wrongly) suggested invisible-state is near-absent; the active probe shows it
+is real, outcome-gating, and counter-resolvable on the canonical wall. So a *passive* "wait for
+determinism violations" detector is dead for gated goals — the fix must **actively** build a
+history-augmented state (track interaction counters at candidate gating objects as part of the node
+key, and deliberately revisit gates under different histories). This is the next-spec direction.
+
+**Secondary finding (separate concern):** OVER_MERGE dominates violations across nearly all games — the
+current masking (`border_mask` + `VolatilityTracker`) is over-merging visibly-different states fairly
+widely. Worth a focused look (it can cost coverage), independent of the invisible-state work.
+
+**Outcome:** a successful Phase P — the map + probe together delivered a clear, ground-truth-anchored
+verdict that redirects from passive detection to active history-augmentation, and proved ls20's wall is
+breakable by representation (not exploration/planning). No agent behavior changed; 0.33 untouched.
+`invisible_state.py` + the two scripts are kept as the foundation for the next-spec history-augmented
+agent. Synergy: Discovery (Exp 49, proven ~14× but blocked on ls20 *by this invisible gate*) becomes
+the natural consumer of a rotation-counter-augmented state.
