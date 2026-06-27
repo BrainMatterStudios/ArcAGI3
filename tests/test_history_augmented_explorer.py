@@ -96,3 +96,26 @@ def test_occlusion_aware_visit_counter():
     # frame 4: avatar steps back onto the tile -> visit++ again
     pol._update_history(_g((20, 20), tile_rc=None))
     assert pol._counts.get(sig) == 2
+
+
+def _gm(head, body, tile, anim):
+    g = np.zeros((64, 64), dtype=np.int8)
+    if tile is not None:
+        g[tile] = 7
+    if anim is not None:
+        g[anim] = 5
+    g[head] = 12
+    g[body] = 9
+    return g
+
+
+def test_multicolor_avatar_body_occlusion_counts():
+    # head(12)+body(9) move as one; the BODY occludes the tile on arrival -> visit must still count,
+    # and the independently-moving animation color (5) must NOT be learned as avatar.
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, counter_mod=4)
+    pol.bg = 0
+    pol._update_history(_gm((10, 10), (11, 10), (12, 10), (0, 0)))   # tile visible at (12,10)
+    pol._update_history(_gm((11, 10), (12, 10), None, (0, 1)))       # body lands on tile (occluded); anim drifts
+    assert pol._avatar_colors == {12, 9}                              # both avatar colors, anim(5) excluded
+    assert pol._counts.get((7, 12, 10, 12, 10)) == 1                  # body-occlusion visit counted
+    assert all(sig[0] not in (12, 9) for sig in pol._counts)          # no avatar-color self-counts

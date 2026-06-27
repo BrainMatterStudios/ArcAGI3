@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import numpy as np
 
+from collections import Counter
+
 from . import perception as P
-from .movement import infer_translation
+from .movement import infer_all_translations
 from .salience_explorer import SalienceExplorer
 
 OBJ_MAX_SIZE = 16   # only track small glyphs/tiles as visit targets (not big regions)
@@ -37,9 +39,19 @@ class HistoryAugmentedExplorer(SalienceExplorer):
         if self.bg is None:
             self.bg = P.detect_background(grid)
         if self._prev_grid is not None and self._prev_grid.shape == grid.shape:
-            tr = infer_translation(self._prev_grid, grid, self.bg)
-            if tr is not None:
-                self._avatar_colors.add(int(tr[0]))
+            # A multi-color avatar (e.g. ls20 head+body) moves RIGIDLY AS ONE: its colors share a
+            # single translation delta. infer_translation returns only the smallest single mover, so
+            # it would miss the body; use infer_all_translations and take the delta shared by the most
+            # colors (the avatar), which also excludes independent animations (each has its own delta).
+            movers = infer_all_translations(self._prev_grid, grid, self.bg)  # {color: (dr,dc)}
+            if movers:
+                by_delta = Counter(movers.values())
+                known = [movers[c] for c in self._avatar_colors if c in movers]
+                dom = (max(known, key=lambda d: by_delta[d]) if known
+                       else by_delta.most_common(1)[0][0])
+                for color, delta in movers.items():
+                    if delta == dom:
+                        self._avatar_colors.add(int(color))
         if not self._avatar_colors:
             return set()
         return {(int(r), int(c))
@@ -49,6 +61,12 @@ class HistoryAugmentedExplorer(SalienceExplorer):
         if self.bg is None:
             self.bg = P.detect_background(grid)
         avatar = self._avatar_cells(grid)
+        # purge any remembered location whose color turned out to be an avatar color (the avatar may
+        # be learned only after a first move, so its colors can be recorded as targets at step 0).
+        for sig in [s for s in self._obj_locations if s[0] in self._avatar_colors]:
+            del self._obj_locations[sig]
+            self._counts.pop(sig, None)
+            self._prev_overlaps.discard(sig)
         # refresh remembered locations of small static glyphs that are CURRENTLY visible and
         # NOT the avatar (avatar colors excluded so the avatar isn't a visit target)
         for o in P.connected_components(grid, background=self.bg):
