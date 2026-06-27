@@ -223,3 +223,52 @@ a **SELECTIVE** augmentation — fold the cyclic counter into the key only for t
 (the goal-adjacent cell), not globally — plus a way to observe life-loss to reset the per-life counter.
 That is a new design, not a tweak; it should not be attempted without an explicit go-ahead, since the
 firewall already protects the banked score and global augmentation is a proven net loss.
+
+## Selective augmentation design (v4, 2026-06-27) — exhaustion-triggered split [APPROVED, in progress]
+
+Go-ahead given to build the selective redesign. The v3 kill localized the fault precisely: global key
+augmentation splits *every* position by the hidden phase, fragmenting exploration on every game. v4
+makes the split **selective** so the gate is distinguished while the rest of the graph is byte-identical
+to banked.
+
+**Mechanism diagnosed (why banked fails the seeds it fails).** SalienceExplorer marks an action `tried`
+once it records an edge for it (`node.edges[action]`). At the goal-adjacent **gate** node (key K, with
+rotation invisible), the agent tries "enter goal", is blocked at the wrong rotation, and records the
+edge — so goal-entry is now `tried` at K and is **never retried**, even after the agent later steps on
+the rot tile and the true rotation becomes 0. The node looks identical, so the win is unreachable.
+
+**Core rule.** Append the hidden-phase tag to a node's key **iff both**: (1) the node is **exhausted**
+(no untried candidate actions remain — the agent is stuck there), and (2) a **manipulable cyclic hidden
+state exists** — some occlusion counter has cycled (value ≥ 2), proving a revisitable glyph the agent
+can use to change the hidden phase. Tag = `sum(counts) % counter_mod` (a single 0..3 value), so an
+exhausted base splits into at most `counter_mod` variants, never the whole graph.
+
+**Why it cracks ls20.** The gate exhausts after the first blocked goal-entry. On the next visit its base
+is in the exhausted set → key becomes `gate|P|phase`. After the agent steps on the rot tile (phase
+changes), the gate at phase 0 is a **fresh node with goal-entry untried** → it tries it → win. This
+repairs the "exhausted gate, never retried" failure with the minimum possible state inflation.
+
+**Why it should not regress the dev suite.**
+- Games with no occludable cyclic glyph: `counts` never cycles → condition (2) false → **no
+  augmentation ever** → behaves like banked even at `augment=True`.
+- Games with such a glyph: only *exhausted dead-ends* split (≤`counter_mod` each), never the productive
+  open graph. Re-checked by the `eval_efficiency` no-regression gate (budget 6000, on vs off).
+- `augment=False` stays **byte-identical** (firewall untouched).
+
+**Implementation (one file, `history_augmented_explorer.py`).**
+- `_key(grid)`: `base = super()._key(grid)`; return `base + b"|P|" + repr(phase).encode()` iff
+  `self.augment and base in self._exhausted_bases and self._cyclic_active()`, else `base`.
+- After each `decide`, look up the current node; if it has no untried actions at any tier
+  (`not node.has_untried_le(MAX_TIER)`), add its **base** key to `self._exhausted_bases` (lazy; the
+  re-key takes effect on the next visit — single level, since the base is what's stored).
+- `self._cyclic_active()` = `any(c >= 2 for c in self._counts.values())`.
+- `_reset_history` also clears `self._exhausted_bases`.
+
+**Tunable to validate:** the `≥2` cyclic threshold (vs `≥1`) — `≥2` excludes one-shot collectibles
+(count caps at 1) common on other games. Confirm against the no-regression eval; loosen only if ls20
+needs it and the dev suite tolerates it.
+
+**Pre-registered DoD (unchanged from §8 of the handoff):** (1) ls20 actions-to-L1 improves vs banked
+across seeds (`scripts/ls20_speed.py`); (2) **no TUNE/HOLDOUT regression** on `eval_efficiency` at budget
+6000 (and spot-check 30000) — this is the gate that killed v3; (3) firewall green / `augment=False`
+byte-identical / banked 0.33 untouched; (4) unit tests for the exhaustion-split behavior + firewall.
