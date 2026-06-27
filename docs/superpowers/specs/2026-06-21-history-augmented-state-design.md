@@ -167,3 +167,59 @@ single rigidly-translating multi-cell block) so it can be excluded — then eith
 reliable, validated to `rot_mismatch → 0` against the `cklxociuu` oracle. That is a focused perception
 sub-project, not a tail-of-session tweak. The mechanism, the firewall, the oracle, and the unit
 harness are all in place to support it.
+
+## Redesign v3 result (2026-06-27) — PERCEPTION SOLVED (mobility memory + occlusion check); but the augmentation itself is KILLED by a broad dev regression
+
+A fresh session built the engine-introspection diagnostic the v2 checkpoint asked for
+(`scripts/ls20_rot_diag.py`: drive the known solution, print engine ground truth — avatar sprite x/y,
+`cklxociuu` — beside the rendered pixels and `connected_components` near the rot tile). It revealed the
+exact mechanic with zero ambiguity: the rot glyph (colors 0/1 at grid rows 31–33) is occluded by the
+avatar **exactly on the single step where `cklxociuu` flips** (step 5 of the 13-step solution, engine
+(19,35)→(19,30)). bg auto-detects to **4** (the border) while the maze floor is **3**, so the floor is
+one 892-cell mega-object and small glyphs/avatar-parts are the only ≤16-cell components.
+
+**Two root causes of the v1/v2 failures, fixed:**
+1. *A paused avatar is indistinguishable from a static glyph by stability alone* (the avatar sits ≥2
+   frames on every blocked move). The only discriminator is HISTORY: it moved before it paused. Fix:
+   per-component identity across frames (per-color global nearest-centroid greedy) with a sticky
+   `ever_moved` flag; mobile components are excluded from glyph clusters forever. This needs no
+   color-based avatar segmentation (body color 9 is shared with the maze) because matching is
+   per-COMPONENT — the moving avatar-body component is mobile while static maze-9 components are not.
+2. *Pollution from non-avatar occlusions.* Even with mobility memory, two false sources remained: the
+   avatar's spawn block (counted once when it first leaves spawn → into floor) and **HUD digits at rows
+   59–62 changing value** (old digit cluster "disappears" → counted). Fix: an **occlusion check** — a
+   present→absent edge counts only if a vanished cell is now covered by a *mobile* (ever_moved)
+   component. "Vanished into background" (spawn→floor) and "replaced by another static thing" (HUD digit
+   change) both fail the check; only "a moving avatar stepped onto it" passes.
+
+**Perception result (decisive, validated against the `cklxociuu` oracle):** global occlusion tally over
+a 1500-step exploration went from `{HUD×32, spawn×6, rot-glyph×6}` to **rot-glyph ONLY**. The rot-glyph
+counter alone tracks `(cklxociuu − StartRotation) mod 4` on **~91%** of frames (133/1500 mismatch, vs
+the v1 55–66%); the residual is the per-life rotation reset (the engine resets `cklxociuu` to
+StartRotation on each life, but an individual life-loss raises no terminal signal the agent can see).
+9 unit tests green incl. the byte-identical `augment=False` firewall and a new
+`test_paused_then_moving_object_not_counted` that captures the real failure mode. **The stated blocker
+— "robustly perceive the avatar stepping on the rot tile" — is solved.**
+
+**But the end-to-end augmentation is KILLED by the no-regression gate (the deeper, real blocker):**
+- *ls20 crack is fragile.* actions-to-L1 over 10 seeds (`scripts/ls20_speed.py`): banked solves **5/10**
+  (mean 5381), histaug solves **2/10** (mean 3090). Augmentation *accelerates* the seeds it cracks
+  (seed 0: 4269 vs 7961; seed 4: 1912 vs 3044) but *regresses* seeds 1/3/6 (banked solves, histaug
+  does not) and rescues none. At **double budget (16000)** histaug STILL fails 1/3/6 → the regression
+  is **not** recoverable state-inflation; it is fundamental graph fragmentation.
+- *Broad dev regression* (`eval_efficiency`, budget 6000, augment on vs off): TUNE mean_levels
+  **1.75 → 1.00** (tu93 collapses L5→L0, ar25 L2→L1), HOLDOUT sum_eff **1.19 → 0.06**. Only ls20 itself
+  improves (L0→L1). Folding the rotation counter into the **GLOBAL node key** turns every position into
+  4 rotation-distinct nodes and, on any game where the avatar occludes static glyphs, fragments
+  exploration catastrophically.
+
+**Verdict (pre-registered DoD):** (1) oracle hugely improved (~9% within-life) but not ≈0 (per-life
+desync); (2) ls20 cracked on some seeds, faster, but not robustly; (3) **FAILS no-regression — decisively**;
+(4) firewall green / banked 0.33 untouched (TransferExplorer v13 never references this subclass;
+`augment=False` byte-identical). Per validate-or-kill, **the history-augmented-state approach is killed
+as a promotable agent.** The lesson is sharper than "perception is hard": *even with perfect perception,
+a GLOBAL key augmentation is the wrong shape for a frontier graph explorer.* The only viable redesign is
+a **SELECTIVE** augmentation — fold the cyclic counter into the key only for the outcome-gating node(s)
+(the goal-adjacent cell), not globally — plus a way to observe life-loss to reset the per-life counter.
+That is a new design, not a tweak; it should not be attempted without an explicit go-ahead, since the
+firewall already protects the banked score and global augmentation is a proven net loss.
