@@ -93,3 +93,26 @@ A firewalled agent that either (a) cracks ls20 L1 efficiently with zero dev regr
 crack of an invisible-state wall — or (b) returns a precise, ground-truth-anchored failure mode (visit
 detection failed / state explosion / period mismatch) that directs the next iteration. The banked 0.33
 is provably untouched throughout.
+
+## Interim result (2026-06-21) — first implementation FAILS at the oracle; fix direction identified
+
+Tasks 1–3 built + tested green (firewall byte-identical; occlusion + multi-color-avatar unit tests
+pass; a code review caught and fixed a multi-color-avatar identity bug via `infer_all_translations`).
+Task 4 ls20 crack run (`scripts/ls20_crack.py 8000`):
+- banked (augment off): ls20 **L1** @8000.
+- history-augmented: ls20 **L0** (regressed), **rot-oracle 4148/7546 (55%) mismatches**, one counted
+  object `(color 0, bbox 31,21–32,22)` with **88 visits**.
+
+**Diagnosis:** the visit-counter does NOT track the engine rotation. Likely compound cause: (a) the
+avatar is a 5×5 block moving on a 5-cell pitch while the rot tile is ~1 cell, so block-overlap fires
+across a band rather than on the engine's precise anchor-step; and/or (b) the counted color-0 object
+is a maze element near (but not) the rot tile at (32,19), so the agent is counting the wrong thing.
+The spurious 88-count explodes the augmented graph → ls20 regresses L1→L0.
+
+**This is the spec's anticipated failure mode (visit detection), surfaced precisely by the cklxociuu
+oracle.** Fix = engine-grounded calibration of visit detection: instrument which cells the avatar
+actually occupies vs the known rot-tile cell (32,19), align the visit event to the engine anchor-step,
+and drive `rot_mismatch → ~0` against the oracle before re-judging the crack. The mechanism (mod-N key
+augmentation) is sound and unit-proven; the perception of "stepped on the rot tile" is what needs
+iteration. Banked 0.33 untouched throughout (subclass, firewalled). Decision pending: iterate the
+detector now vs checkpoint.
