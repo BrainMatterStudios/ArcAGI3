@@ -46,9 +46,15 @@ def _resolves(instances, feat):
 def classify(transitions):
     """Per violating (mkey, action): {category, resolver, n_next, n_instances}."""
     violations = find_violations(transitions)
+    # Pre-index instances by pair once (avoids an O(violations x len) re-scan per pair).
+    by_pair = defaultdict(list)
+    for t in transitions:
+        key = (t.mkey, t.action)
+        if key in violations:
+            by_pair[key].append(t)
     report = {}
     for pair in violations:
-        inst = _instances(transitions, pair)
+        inst = by_pair[pair]
         ukeys = {t.ukey for t in inst}
         if len(ukeys) > 1:
             report[pair] = {"category": "OVER_MERGE", "resolver": None,
