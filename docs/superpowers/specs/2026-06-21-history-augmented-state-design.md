@@ -116,3 +116,30 @@ and drive `rot_mismatch → ~0` against the oracle before re-judging the crack. 
 augmentation) is sound and unit-proven; the perception of "stepped on the rot tile" is what needs
 iteration. Banked 0.33 untouched throughout (subclass, firewalled). Decision pending: iterate the
 detector now vs checkpoint.
+
+## Iteration update (2026-06-21) — two root causes; one fixed, one is the real blocker; redesign proposed
+
+Drove the known solution on the offline engine with engine introspection (true avatar pos + cklxociuu
++ rot-tile sprite). Findings:
+- **Rot trigger = engine (19,30) = grid (32,19); rotation flips exactly when the avatar steps onto it**
+  (the arrow glyph at grid rows 31–33/cols 20–22 IS occluded then — n_small 12→9). So the occlusion
+  model is correct and the agent was counting (part of) the real rot tile.
+- **Root cause 1 (FIXED): counter was cumulative across the whole run, but the engine resets rotation
+  on every life-loss/level-restart** (`cklxociuu = index(StartRotation)`; 42 steps/life × 3 lives).
+  Fix: `_reset_history()` on terminal/not-played/level-up. This removed the L1→L0 regression
+  (augmented now matches banked L1).
+- **Root cause 2 (NOT solved — the real blocker): avatar segmentation.** ls20's avatar body color (9)
+  is **also used by static maze objects**, so `infer_all_translations` (which needs a color's WHOLE
+  mask to translate) only ever learns the head (color 12). The avatar footprint is head-only → its
+  overlap with the offset rot glyph is unreliable → oracle stays ~66% mismatch, no crack. A
+  translation-mask segmentation (take all cells that arrived by the avatar's delta) was tried and
+  **regressed** (noisier), so it was reverted.
+
+**Status:** mechanism (mod-N key augmentation) proven by unit tests; firewall intact; ls20 no longer
+regresses but does NOT crack; banked 0.33 untouched. **Proposed redesign (next session):** drop
+avatar-overlap entirely and use **disappearance/occlusion-event detection** — count a visit when a
+tracked static glyph cluster *disappears* (it can only vanish because the avatar stepped onto/over it),
+edge-triggered on present→absent, grouping the multi-cell arrow as one cluster. This sidesteps the
+avatar-segmentation problem (no need for a precise avatar footprint at all) and is the most promising
+path to drive `rot_mismatch → 0` and crack ls20. Checkpointed here after honest non-converging
+iteration rather than thrashing further inline.
