@@ -353,3 +353,56 @@ no-regression gates):
 committed, `retry_tier=MAX_TIER` safe default) is the substrate. Resume by picking a reworked goal-like
 detector above, verifying it on the gate frame with `scripts/ls20_rot_diag.py`-style introspection, then
 TDD + speed/no-regression validation. Firewall + banked 0.33 untouched throughout.
+
+## v5 RESULT (2026-06-27) — BUILT: semantic gate-ID cracks ls20 AND passes the 6000 gate (a first); but budget-fragile, and tighter discrimination overfits
+
+Built the reworked detector (candidate 2, "medium non-floor/non-avatar interior object adjacency") as
+`gate_only=True` on the phase-gated-retry substrate: a blocked self-loop is recorded into
+`_blocked_phases` **iff** its move points at a goal-like object this frame (`_compute_gate_actions`:
+the avatar — the mobile components — is adjacent, in the move direction, to a static component that is
+medium-sized `GATE_MIN_SIZE..GATE_MAX_SIZE`, interior `>GATE_EDGE` from the grid edge, and a colour that
+is not bg / the floor colour (largest component) / an avatar colour). With walls never recorded, the
+retry can be **eager (`retry_tier=0`) for the gate alone**. `augment=False` byte-identical firewall and
+the `gate_only=False` default are both unchanged; 20 unit tests green. Detector verified on real ls20
+frames first (`scripts/ls20_gate_diag.py`): fires UP at the goal-entry and nowhere else on the solution
+path; flags ONLY the colour-5 size-38 framed goal.
+
+**Pre-registered DoD — all three PASS (the project first):**
+1. *ls20 speed* (`ls20_speed.py` 10 seeds, budget 8000): histaug **6/10** vs banked **5/10** — rescues
+   seed 2 (banked never solves it) and solves seed 0 ~28% faster (5778 vs 7961); regresses no seed
+   banked solves. The crack v4's eager tier-0 also got, but now gated to the goal.
+2. *No regression @6000* (`eval_efficiency`, same-session A/B): **TUNE sum_eff 6.26 == 6.26** (tu93 stays
+   **L5**; the game v4 tier-0 collapsed to L0), **HOLDOUT 1.19 → 1.20** (ls20 **L0 → L1** cracked), 14/16
+   games byte-identical. *This is the gate v4 could not pass — no v4 tier both cracked ls20 AND held the
+   dev suite at 6000; v5 does.*
+3. *Firewall*: `augment=False` byte-identical; `gate_only=False` / `retry_tier=MAX_TIER` default
+   unchanged; banked 0.33 (TransferExplorer v13) never references the subclass.
+
+**The honest bound (found by probing beyond spec): the win is BUDGET-FRAGILE, and closing the gap OVERFITS.**
+- *Two calibrations were needed for the 6000 pass.* `GATE_MIN_SIZE` started at 6 → flagged tu93's size-8/9
+  maze cells; tu93 has a cyclic glyph (phase flips ~hundreds of times), so the eager retry diverted it
+  L5→L2. Raising the floor to **20** (the goal is a multi-tile *structure*, not a glyph) zeroed tu93's
+  gate fires (raising the floor only REMOVES flags, so it cannot add a regression). This recovered tu93.
+- *lf52 still diverges.* `eval_efficiency` 6000 shows lf52 L1 for both but **+6 actions** (169 vs 163, both
+  eff-capped so the metric is unchanged) — the gate fires on lf52's medium colour-9/11/3 objects (sizes
+  20–63, overlapping ls20's 38). At **budget 12000 offline** this compounds: salience reaches **L2**, gate
+  stalls at **L1** (a real, budget-delayed regression the 6000 gate hides).
+- *Tighter discrimination cannot fix lf52 without overfitting.* Census of gate-flagged objects: a "framed"
+  test (`bbox` ring ≥60% one colour) does NOT separate them — lf52's colour-11/3 size-20 objects are framed
+  too; even "framed by the FLOOR colour" fires on lf52 (its floor is unstable, largest component flips
+  0↔5 frame-to-frame). The ONLY separator left is stacking **framed-by-floor AND size≥24** so that exactly
+  ls20's single goal passes and the dev set's objects don't — i.e. tuning three appearance conditions to
+  the visible TUNE/HOLDOUT split, the exact overfitting the split exists to reject.
+
+**Verdict (validate-or-kill).** v5 is the **first config that both cracks ls20 and passes the pre-registered
+6000 no-regression gate** — a genuine advance over v4, and proof the invisible-state wall is crackable from
+pixels with a *targeted* (not global) retry. But it is **promotable only behind the opt-in flag, with a
+documented higher-budget cost on dynamic games (lf52)**; it is NOT a universal clean win. The deeper lesson
+sharpens v4's: the gate's defining property is **mechanical** (its blocked-ness depends on the hidden
+phase), not **visual** — so *appearance-based* gate-ID narrows the gate-vs-wall ambiguity but cannot
+robustly escape it without per-game overfitting. The only ambiguity-free signal is the mechanical one
+(does un-blocking correlate with a phase change?), which can only be learned by retrying — the v4 cost.
+**Shipped state:** mechanism committed, `gate_only=False` default (banked-identical), firewall green,
+banked 0.33 untouched. Promotion (flip the submission config to `gate_only=True, retry_tier=0` to bank
+ls20) is **user-gated** (a Kaggle submit). Code: `src/arcagi3/history_augmented_explorer.py`
+(`_compute_gate_actions`, the `gate_only` branch in `_record`); harness: `scripts/ls20_gate_diag.py`.

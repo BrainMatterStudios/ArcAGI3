@@ -27,6 +27,23 @@ OBJ_MAX_SIZE = 16    # only track small glyphs/tiles (not big regions/walls-as-o
 MOVE_EPS = 0.5       # centroid manhattan delta above which a matched component counts as "moved"
 MATCH_GATE = 6.0     # max centroid manhattan distance to match a component to the previous frame
 
+# v5 semantic gate-identification (gate_only=True). A "gate move" is a blocked move INTO a goal-like
+# object: a static component that is medium-sized (a discrete target, not the floor/walls-as-one nor a
+# speck), interior (not HUD/chrome at the grid edge), and a colour that is neither background, the floor
+# colour, nor an avatar colour. Verified on real ls20 frames (scripts/ls20_gate_diag.py): with these
+# bounds the only such object the avatar is ever adjacent to is the framed colour-5 goal — fires UP at
+# the goal-entry and nowhere else along the solution path.
+GATE_MIN_SIZE = 20   # the goal is a multi-tile STRUCTURE, not a glyph/cell: excludes specks (ls20's
+# rotation-tile arrow is size 3) AND ordinary game cells/tiles (tu93's maze cells are size 8-9, which
+# at GATE_MIN_SIZE=6 were spuriously flagged as goal-like and — tu93 having a cyclic glyph that flips
+# the phase ~hundreds of times — got eagerly retried into an L5->L2 regression). ls20's framed goal
+# fill is size ~38, comfortably above this floor. Raising the floor only ever REMOVES gate flags, so it
+# cannot introduce a regression on a game that was byte-identical; the only risk is under-cracking ls20
+# (re-verified: still fires UP at the goal and still cracks).
+GATE_MAX_SIZE = 64   # exclude the floor mega-object and large chrome strips
+GATE_GAP = 3         # max cell gap between the avatar bbox and the goal object in the move direction
+GATE_EDGE = 3        # components whose bbox lies within this many cells of any grid edge are chrome/HUD
+
 
 class HistoryAugmentedExplorer(SalienceExplorer):
     """PHASE-GATED RETRY (v4): the hidden cyclic phase NEVER enters the node key (so navigation/pathing
@@ -45,10 +62,17 @@ class HistoryAugmentedExplorer(SalienceExplorer):
     """
 
     def __init__(self, *args, augment: bool = False, counter_mod: int = 4,
-                 retry_tier: int = MAX_TIER, **kwargs) -> None:
+                 retry_tier: int = MAX_TIER, gate_only: bool = False, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.augment = bool(augment)
         self.counter_mod = int(counter_mod)
+        # gate_only (v5): record a blocked self-loop into _blocked_phases ONLY when its move points at a
+        # goal-like object (see _compute_gate_actions). Walls are then never recorded -> never re-opened
+        # -> navigation stays banked-identical even at retry_tier=0, so the eager retry that cracks ls20
+        # no longer re-bumps walls across the dev suite (the v4 crack-vs-regression tradeoff). Off by
+        # default (records every blocked self-loop, the v4 behaviour); the crack config is
+        # gate_only=True + retry_tier=0.
+        self.gate_only = bool(gate_only)
         # Priority tier a re-opened blocked move is given. Measured tradeoff (see the spec's v4 result):
         #   0  = same priority as real moves -> cracks ls20 (+1 solve, faster) but DIVERTS productive
         #        games (tu93 L5->L0): net dev regression.
@@ -66,6 +90,7 @@ class HistoryAugmentedExplorer(SalienceExplorer):
         self._blocked_phases: dict = {}   # (key, action) -> set of phases this self-loop move was blocked at
         self._prev_phase: int = 0         # phase last step, to detect a phase change -> re-open stale blocks
         self._hist_levels = 0             # last-seen levels, to detect a level-up (engine resets state)
+        self._gate_actions: set = set()   # actions pointing at a goal-like object THIS frame (gate_only)
 
     def _reset_history(self):
         # The engine resets the hidden cyclic state on life-loss / level-restart; mirror that so the
@@ -76,16 +101,19 @@ class HistoryAugmentedExplorer(SalienceExplorer):
         self._tracks = []
         self._blocked_phases = {}
         self._prev_phase = 0
+        self._gate_actions = set()
 
     def _phase(self) -> int:
         return sum(self._counts.values()) % self.counter_mod
 
     def _free_stale_blocks_global(self):
-        """The phase changed: re-open each BLOCKED self-loop not yet confirmed blocked at the new phase,
-        across all nodes, and DEPRIORITISE it to MAX_TIER so the explorer only re-tries it once every
-        real frontier is exhausted (this is what keeps productive games undisturbed). A move blocked at
-        ALL ``counter_mod`` phases is a confirmed static wall and is never re-opened. Real navigation
-        edges (next != key) are never removed."""
+        """The phase changed: re-open each recorded BLOCKED self-loop not yet confirmed blocked at the
+        new phase, across all nodes, at priority ``retry_tier``. A move blocked at ALL ``counter_mod``
+        phases is a confirmed static wall and is never re-opened. Real navigation edges (next != key) are
+        never removed. What stays in ``_blocked_phases`` is controlled by ``_record``: with gate_only it
+        is ONLY gate moves (into a goal-like object), so an EAGER retry_tier=0 re-opens just the gate and
+        never re-bumps walls; without it, every blocked self-loop is recorded and the dev suite is kept
+        safe instead by retry_tier=MAX_TIER (re-tried only after every real frontier is exhausted)."""
         ph = self._phase()
         for (key, a), phases in self._blocked_phases.items():
             if ph in phases:
@@ -94,13 +122,17 @@ class HistoryAugmentedExplorer(SalienceExplorer):
             if node is not None:
                 e = node.edges.get(a)
                 if e is not None and e[1] == 0 and e[0] == key:
-                    del node.edges[a]              # not yet tried at this phase -> re-open ...
-                    node.tier[a] = self.retry_tier  # ... at a low priority so it never diverts a productive game
+                    del node.edges[a]                # not yet tried at this phase -> re-open ...
+                    node.tier[a] = self.retry_tier   # ... at the configured retry priority
 
     def _record(self, key, action, next_key, reward, cands, terminal):
         super()._record(key, action, next_key, reward, cands, terminal)
+        # blocked self-loop (no reward, avatar didn't move). In gate_only mode only record it if the move
+        # points at a goal-like object this frame -- so walls are never recorded and the eager retry
+        # never re-bumps them (v5). Otherwise record every blocked self-loop (v4).
         if self.augment and reward == 0 and next_key == key:
-            self._blocked_phases.setdefault((key, action), set()).add(self._phase())
+            if not self.gate_only or action in self._gate_actions:
+                self._blocked_phases.setdefault((key, action), set()).add(self._phase())
 
     def decide(self, grid, gstate_terminal, gstate_notplayed, levels, available):
         if self.augment:
@@ -183,11 +215,51 @@ class HistoryAugmentedExplorer(SalienceExplorer):
             sigs.add(tuple(sorted((r, c, small[(r, c)]) for r, c in comp)))
         return sigs
 
+    def _compute_gate_actions(self, grid, all_comps, small, flags):
+        """Actions whose direction points the avatar at a GOAL-LIKE object this frame. Goal-like = a
+        static component that is medium-sized (GATE_MIN..GATE_MAX), interior (not within GATE_EDGE of a
+        grid edge -> excludes HUD/chrome), and a colour that is neither background, the floor colour
+        (largest component), nor an avatar colour. The avatar is the mobile components (``flags``).
+        Returns simple-action tuples ("S", aid) for up/down/left/right (1/2/3/4)."""
+        avatar_cells, avatar_colors = [], set()
+        for c, moved in zip(small, flags):
+            if moved:
+                avatar_cells.extend((int(r), int(cc)) for r, cc in c.cells)
+                avatar_colors.add(int(c.color))
+        if not avatar_cells:
+            return set()
+        ar0 = min(r for r, _ in avatar_cells); ar1 = max(r for r, _ in avatar_cells)
+        ac0 = min(c for _, c in avatar_cells); ac1 = max(c for _, c in avatar_cells)
+        floor = max(all_comps, key=lambda o: o.size).color if all_comps else None
+        excl = {self.bg, int(floor) if floor is not None else None} | avatar_colors
+        h, w = grid.shape
+        out: set = set()
+        for o in all_comps:
+            if not (GATE_MIN_SIZE <= o.size <= GATE_MAX_SIZE) or int(o.color) in excl:
+                continue
+            r0, c0, r1, c1 = o.bbox
+            if r0 < GATE_EDGE or c0 < GATE_EDGE or r1 >= h - GATE_EDGE or c1 >= w - GATE_EDGE:
+                continue                                    # HUD / chrome at the grid edge
+            if not (c1 < ac0 or c0 > ac1):                  # column overlap -> a vertical move can reach it
+                if r0 < ar0 and ar0 - r1 <= GATE_GAP:
+                    out.add(("S", 1))                       # object above -> up
+                if r1 > ar1 and r0 - ar1 <= GATE_GAP:
+                    out.add(("S", 2))                       # object below -> down
+            if not (r1 < ar0 or r0 > ar1):                  # row overlap -> a horizontal move can reach it
+                if c0 < ac0 and ac0 - c1 <= GATE_GAP:
+                    out.add(("S", 3))                       # object left -> left
+                if c1 > ac1 and c0 - ac1 <= GATE_GAP:
+                    out.add(("S", 4))                       # object right -> right
+        return out
+
     def _update_history(self, grid):
         if self.bg is None:
             self.bg = P.detect_background(grid)
-        comps = [o for o in P.connected_components(grid, background=self.bg) if o.size <= OBJ_MAX_SIZE]
+        all_comps = P.connected_components(grid, background=self.bg)
+        comps = [o for o in all_comps if o.size <= OBJ_MAX_SIZE]
         flags = self._flag_mobility(comps)
+        if self.gate_only:
+            self._gate_actions = self._compute_gate_actions(grid, all_comps, comps, flags)
         present = self._cluster_static(comps, flags)
         mobile_cells = {(int(r), int(c))
                         for comp, moved in zip(comps, flags) if moved for r, c in comp.cells}

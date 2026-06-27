@@ -57,6 +57,10 @@ def make_policy(name: str):
         from arcagi3.history_augmented_explorer import HistoryAugmentedExplorer
         return HistoryAugmentedExplorer(seed=0, trust_threshold=3, border_mask=2,
                                         augment=True, counter_mod=4)
+    if name == "histaug-gate":  # Phase Q v5: semantic gate-ID + eager (tier-0) retry
+        from arcagi3.history_augmented_explorer import HistoryAugmentedExplorer
+        return HistoryAugmentedExplorer(seed=0, trust_threshold=3, border_mask=2, augment=True,
+                                        counter_mod=4, gate_only=True, retry_tier=0)
     if name == "prior":
         from arcagi3.prior_explorer import PriorExplorer
         return PriorExplorer(seed=0, trust_threshold=3, border_mask=2)

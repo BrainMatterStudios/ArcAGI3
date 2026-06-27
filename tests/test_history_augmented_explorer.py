@@ -136,6 +136,69 @@ def test_record_tracks_blocked_phase_set_only_for_self_loops():
     assert (b"k2", ("S", 1)) not in pol._blocked_phases
 
 
+# ---- v5 SEMANTIC gate-identification --------------------------------------------------------------
+# Only blocked moves INTO a goal-like object (a medium, non-floor, non-avatar, interior component the
+# avatar is adjacent to in the move direction) are recorded -> eligible for eager retry. Walls are
+# never recorded, so the eager (tier-0) retry can crack ls20 without re-bumping walls everywhere.
+
+def _avatar_goal_grid(avatar=(30, 30), goal=(24, 30), goal_color=5, goal_w=6, goal_h=5,
+                      floor_color=3, bg=0):
+    """A grid with a big floor (largest component), a 3x3 mobile avatar (color 7), and a goal block."""
+    g = np.zeros((64, 64), dtype=np.int8)
+    g[5:21, 5:41] = floor_color           # the floor mega-component (largest -> floor color)
+    ar, ac = avatar
+    g[ar:ar + 3, ac:ac + 3] = 7           # avatar
+    gr, gc = goal
+    g[gr:gr + goal_h, gc:gc + goal_w] = goal_color
+    return g
+
+
+def _comps_flags(grid, bg=0, avatar_color=7):
+    from arcagi3.history_augmented_explorer import OBJ_MAX_SIZE
+    all_comps = P.connected_components(grid, background=bg)
+    small = [o for o in all_comps if o.size <= OBJ_MAX_SIZE]
+    flags = [int(o.color) == avatar_color for o in small]   # mark the avatar component mobile
+    return all_comps, small, flags
+
+
+def test_gate_fires_toward_adjacent_medium_object():
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, gate_only=True)
+    pol.bg = 0
+    grid = _avatar_goal_grid(avatar=(30, 30), goal=(25, 30))   # goal above avatar, gap=2
+    assert pol._compute_gate_actions(grid, *_comps_flags(grid)) == {("S", 1)}
+
+
+def test_gate_excludes_tiny_object():
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, gate_only=True)
+    pol.bg = 0
+    grid = _avatar_goal_grid(avatar=(30, 30), goal=(27, 30), goal_w=2, goal_h=1)  # size-2 speck
+    assert pol._compute_gate_actions(grid, *_comps_flags(grid)) == set()
+
+
+def test_gate_excludes_edge_object():
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, gate_only=True)
+    pol.bg = 0
+    grid = _avatar_goal_grid(avatar=(6, 30), goal=(0, 30))   # goal touches the top edge (r0=0)
+    assert pol._compute_gate_actions(grid, *_comps_flags(grid)) == set()
+
+
+def test_gate_excludes_floor_colored_object():
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, gate_only=True)
+    pol.bg = 0
+    grid = _avatar_goal_grid(avatar=(30, 30), goal=(25, 30), goal_color=3)  # same color as floor
+    assert pol._compute_gate_actions(grid, *_comps_flags(grid)) == set()
+
+
+def test_gate_only_records_only_gate_moves():
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, counter_mod=4, gate_only=True)
+    pol._gate_actions = {("S", 1)}                    # only "up" points at the goal this frame
+    pol._counts = {((20, 20, 7),): 1}                 # phase 1
+    pol._record(b"k", ("S", 1), b"k", 0.0, [(("S", 1), 0)], False)   # blocked gate move -> recorded
+    assert pol._blocked_phases.get((b"k", ("S", 1))) == {1}
+    pol._record(b"k", ("S", 2), b"k", 0.0, [(("S", 2), 0)], False)   # blocked WALL move -> ignored
+    assert (b"k", ("S", 2)) not in pol._blocked_phases
+
+
 def test_augment_false_never_retries():
     """Firewall: with augment=False the retry machinery is inert (no blocked-phase tracking)."""
     pol = HistoryAugmentedExplorer(augment=False, seed=0, counter_mod=4)

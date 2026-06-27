@@ -53,8 +53,10 @@ def main():
         return SalienceExplorer(seed=seed, trust_threshold=3, border_mask=2)
 
     def histaug(seed):
+        # v5: semantic gate-identification + EAGER retry. Only blocked moves into a goal-like object
+        # are recorded, so tier-0 retry fires at the gate without re-bumping walls.
         return HistoryAugmentedExplorer(seed=seed, trust_threshold=3, border_mask=2,
-                                        augment=True, counter_mod=4)
+                                        augment=True, counter_mod=4, gate_only=True, retry_tier=0)
 
     print(f"actions-to-L{target} (budget {budget}), per seed:")
     print(f"{'seed':>4} {'banked':>10} {'histaug':>10}")
