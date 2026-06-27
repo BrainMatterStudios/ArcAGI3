@@ -21,7 +21,7 @@ See docs/superpowers/specs/2026-06-21-history-augmented-state-design.md (Redesig
 from __future__ import annotations
 
 from . import perception as P
-from .salience_explorer import SalienceExplorer
+from .salience_explorer import MAX_TIER, SalienceExplorer
 
 OBJ_MAX_SIZE = 16    # only track small glyphs/tiles (not big regions/walls-as-one)
 MOVE_EPS = 0.5       # centroid manhattan delta above which a matched component counts as "moved"
@@ -29,14 +29,42 @@ MATCH_GATE = 6.0     # max centroid manhattan distance to match a component to t
 
 
 class HistoryAugmentedExplorer(SalienceExplorer):
-    def __init__(self, *args, augment: bool = False, counter_mod: int = 4, **kwargs) -> None:
+    """PHASE-GATED RETRY (v4): the hidden cyclic phase NEVER enters the node key (so navigation/pathing
+    is byte-identical to banked -- the v2/v3 lesson: changing keys mid-exploration fragments AND breaks
+    the graph). Instead, a node's BLOCKED action -- a self-loop (next_key == key, no reward), i.e. a move
+    the avatar could not make -- is FREED (made untried again) when the hidden phase changes, so the
+    explorer re-tries it at a phase it has not yet tried there. Crucially the re-opened move is
+    deprioritised to the LOWEST tier (MAX_TIER): the explorer only chases it after exhausting every real
+    frontier, so a productive game (which always has higher-tier frontiers) is never diverted into
+    re-bumping walls, while ls20 -- whose finite maze gets fully explored -- climbs to the lowest tier
+    and retries the blocked goal-entry until the winning rotation. A move blocked at ALL counter_mod
+    phases is a confirmed static wall and is never re-opened (cap). Real navigation edges (next_key !=
+    key) are never touched, and the node key never changes, so navigation is byte-identical to banked
+    (the v2/v3 lesson). Self-gating: no occludable cyclic glyph -> phase never changes -> nothing is ever
+    freed -> behaviour is banked. ``augment=False`` is the firewall.
+    """
+
+    def __init__(self, *args, augment: bool = False, counter_mod: int = 4,
+                 retry_tier: int = MAX_TIER, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.augment = bool(augment)
         self.counter_mod = int(counter_mod)
+        # Priority tier a re-opened blocked move is given. Measured tradeoff (see the spec's v4 result):
+        #   0  = same priority as real moves -> cracks ls20 (+1 solve, faster) but DIVERTS productive
+        #        games (tu93 L5->L0): net dev regression.
+        #   1  = above simple-move frontiers -> worst of both (regresses lp85/lf52, still no crack).
+        #   MAX_TIER = last resort -> zero dev regression but the retry fires too late to crack ls20.
+        # No single tier is both cracking AND non-regressing, because the explorer cannot tell the
+        # outcome-gating GATE from an ordinary WALL (both are blocked self-loops). DEFAULT = MAX_TIER
+        # (safe / non-regressing). The crack needs SEMANTIC gate-identification (re-open only blocked
+        # moves into a salient goal-like object), a follow-up sub-project this mechanism is substrate for.
+        self.retry_tier = max(0, min(int(retry_tier), MAX_TIER))
         self._counts: dict = {}          # cluster signature -> cumulative occlusion (visit) count
         self._prev_clusters: set = set()  # cluster sigs visible last frame
         self._seen_count: dict = {}       # sig -> consecutive frames seen (>=2 => confirmed static)
         self._tracks: list = []           # per-component identity: list of (color, centroid, ever_moved)
+        self._blocked_phases: dict = {}   # (key, action) -> set of phases this self-loop move was blocked at
+        self._prev_phase: int = 0         # phase last step, to detect a phase change -> re-open stale blocks
         self._hist_levels = 0             # last-seen levels, to detect a level-up (engine resets state)
 
     def _reset_history(self):
@@ -46,13 +74,33 @@ class HistoryAugmentedExplorer(SalienceExplorer):
         self._prev_clusters = set()
         self._seen_count = {}
         self._tracks = []
+        self._blocked_phases = {}
+        self._prev_phase = 0
 
-    def _key(self, grid):
-        base = super()._key(grid)
-        if not self.augment or not self._counts:
-            return base
-        aug = tuple(sorted((sig, c % self.counter_mod) for sig, c in self._counts.items()))
-        return base + b"|H|" + repr(aug).encode()
+    def _phase(self) -> int:
+        return sum(self._counts.values()) % self.counter_mod
+
+    def _free_stale_blocks_global(self):
+        """The phase changed: re-open each BLOCKED self-loop not yet confirmed blocked at the new phase,
+        across all nodes, and DEPRIORITISE it to MAX_TIER so the explorer only re-tries it once every
+        real frontier is exhausted (this is what keeps productive games undisturbed). A move blocked at
+        ALL ``counter_mod`` phases is a confirmed static wall and is never re-opened. Real navigation
+        edges (next != key) are never removed."""
+        ph = self._phase()
+        for (key, a), phases in self._blocked_phases.items():
+            if ph in phases:
+                continue                     # already known blocked at this phase -> wall-safe, skip
+            node = self.nodes.get(key)
+            if node is not None:
+                e = node.edges.get(a)
+                if e is not None and e[1] == 0 and e[0] == key:
+                    del node.edges[a]              # not yet tried at this phase -> re-open ...
+                    node.tier[a] = self.retry_tier  # ... at a low priority so it never diverts a productive game
+
+    def _record(self, key, action, next_key, reward, cands, terminal):
+        super()._record(key, action, next_key, reward, cands, terminal)
+        if self.augment and reward == 0 and next_key == key:
+            self._blocked_phases.setdefault((key, action), set()).add(self._phase())
 
     def decide(self, grid, gstate_terminal, gstate_notplayed, levels, available):
         if self.augment:
@@ -60,7 +108,11 @@ class HistoryAugmentedExplorer(SalienceExplorer):
                 self._reset_history()        # life-loss / reset / level-up -> engine resets state
                 self._hist_levels = levels
             else:
-                self._update_history(grid)   # updates self._counts BEFORE super().decide -> self._key
+                self._update_history(grid)   # updates self._counts (the phase) BEFORE super().decide
+                ph = self._phase()
+                if ph != self._prev_phase:
+                    self._free_stale_blocks_global()   # phase changed -> re-open blocked moves (low tier)
+                    self._prev_phase = ph
         return super().decide(grid, gstate_terminal, gstate_notplayed, levels, available)
 
     def _flag_mobility(self, comps):

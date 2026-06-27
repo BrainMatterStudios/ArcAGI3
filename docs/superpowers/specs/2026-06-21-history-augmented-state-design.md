@@ -272,3 +272,48 @@ needs it and the dev suite tolerates it.
 across seeds (`scripts/ls20_speed.py`); (2) **no TUNE/HOLDOUT regression** on `eval_efficiency` at budget
 6000 (and spot-check 30000) — this is the gate that killed v3; (3) firewall green / `augment=False`
 byte-identical / banked 0.33 untouched; (4) unit tests for the exhaustion-split behavior + firewall.
+
+## v4 RESULT (2026-06-27) — exhaustion key-split FAILED; pivoted to PHASE-GATED RETRY; ls20 crackable but a fundamental crack-vs-regression tradeoff
+
+The exhaustion-triggered KEY split above failed for the same root reason as v3: *any* change to a node
+key mid-exploration breaks the explorer's navigation (its learned paths reference the old keys), and
+"exhausted" turned out to capture most of the graph, not just the gate. Measured: 1/10 ls20 seeds (worse
+than banked's 5/10). So the whole **key-augmentation family is dead** — the explorer's identity IS its
+key.
+
+**Pivot — phase-gated action RETRY (keys never change).** The blocked goal-entry at the gate is a
+self-loop edge (`next_key == key`, no reward). Mechanism: record, per `(key, action)`, the SET of hidden
+phases it was seen blocked at; when the phase changes, re-open (delete the self-loop edge so it's untried
+again) every blocked move not yet confirmed blocked at the new phase, at a configurable priority
+`retry_tier`. A move blocked at all `counter_mod` phases is a confirmed static wall and never re-opened
+(cap). Real navigation edges (`next != key`) and the node key are never touched → navigation is
+byte-identical to banked. `augment=False` is the firewall. Implemented in
+`src/arcagi3/history_augmented_explorer.py` (15 unit tests, incl. firewall).
+
+**The knob is `retry_tier` (how eagerly the retry fires). Measured spectrum** (ls20 = `ls20_speed.py`
+10 seeds; dev = `eval_efficiency` 6000, salience baseline TUNE sum_eff 6.26 / HOLDOUT 1.19):
+
+| retry_tier | ls20 | TUNE sum_eff | HOLDOUT sum_eff | verdict |
+|---|---|---|---|---|
+| 0 (eager, high prio) | **6/10, seed-0 ~28% faster, seed-2 rescue** | 4.47 (tu93 L5→L0) | 2.05 | cracks, **regresses** |
+| 1 | 5/10 (no crack) | 5.00 (lp85/lf52 down) | 2.05 | worst of both |
+| MAX_TIER (last resort) | 5/10 (no crack) | 6.26 (clean) | 1.19 | safe, **no crack** |
+| (stuck-gated variant) | 5/10 (no crack) | 6.21 (clean) | 1.19 | safe, no crack |
+
+**Conclusion — fundamental tradeoff, not a tuning miss.** Only the eager (tier-0) retry cracks ls20
+(rescues a seed banked never solves, solves another faster) — proving ls20's invisible-state wall **is**
+crackable from pixels (a project first). But that eagerness diverts productive games (tu93 collapses),
+and net across 16 games it is slightly negative. Every deprioritization that protects the dev suite also
+fires too rarely to crack ls20. Root cause: **the explorer cannot distinguish the outcome-gating GATE
+(worth retrying) from an ordinary WALL (waste)** — both are blocked self-loops, so any rule eager enough
+to retry the gate also retries walls everywhere.
+
+**Shipped state:** mechanism committed with `retry_tier = MAX_TIER` **default = safe / non-regressing**
+(`augment=True` ≈ banked); firewall green; banked 0.33 untouched. The perception detector (mobility +
+occlusion, v3 RESULT above) remains the solid win.
+
+**Next sub-project (approved): SEMANTIC gate-identification.** Re-open a blocked move only when it is a
+move *into a salient, goal-like object* (the gate), not into a wall — then the retry can be eager (tier
+0) for the gate alone, cracking ls20 without diverting on walls. This needs perception to label "the cell
+this move targets is a salient target object," and gets its own spec → plan → TDD cycle. This phase-gated
+retry mechanism is the substrate it builds on.

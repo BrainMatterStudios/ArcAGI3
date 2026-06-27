@@ -51,20 +51,97 @@ def test_key_unaugmented_when_no_counts():
     assert pol._key(grid) == base._key(grid)
 
 
-def test_key_changes_with_counter():
+def test_key_is_never_augmented():
+    """v4: phase-gated RETRY changes the explorer's behaviour via action retries, NOT the node key.
+    Keys must stay byte-identical to banked so navigation/pathing is never broken (the v3 failure)."""
     pol = HistoryAugmentedExplorer(augment=True, seed=0, counter_mod=4)
     grid = np.zeros((64, 64), dtype=np.int8)
     grid[10, 10] = 5
     pol.bg = 0
     pol.vt.update(grid)
-    k0 = pol._key(grid)
-    pol._counts = {((20, 20, 7),): 1}
-    k1 = pol._key(grid)
+    pol._counts = {((20, 20, 7),): 3}                 # any phase
+    base = SalienceExplorer._key(pol, grid)
+    assert pol._key(grid) == base
+
+
+def test_phase_change_frees_blocked_at_untried_phase():
+    """On a phase change, a blocked self-loop NOT yet confirmed blocked at the new phase is re-opened
+    ACROSS ALL nodes -- so a gate the agent left becomes a frontier again. Navigation edges untouched."""
+    from arcagi3.salience_explorer import _Node
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, counter_mod=4)
+    for k in (b"gate", b"wall"):
+        n = _Node(k, [(("S", 1), 0), (("S", 2), 0)])
+        n.edges[("S", 1)] = (b"elsewhere", 0.0)       # real navigation edge
+        n.edges[("S", 2)] = (k, 0.0)                  # blocked self-loop
+        pol.nodes[k] = n
+        pol._blocked_phases[(k, ("S", 2))] = {0}      # blocked only at phase 0 so far
+    pol._counts = {((20, 20, 7),): 1}                 # phase now 1 (untried for these moves)
+
+    pol._free_stale_blocks_global()
+    assert ("S", 2) not in pol.nodes[b"gate"].edges   # re-opened (phase 1 not yet confirmed blocked)
+    assert ("S", 2) not in pol.nodes[b"wall"].edges
+    assert ("S", 1) in pol.nodes[b"gate"].edges       # navigation edge untouched
+
+
+def test_reopened_move_is_deprioritised():
+    """A re-opened blocked move must be lower priority than real moves, so the explorer only retries it
+    after its tier-0 frontiers are exhausted -- this is what keeps productive games undisturbed."""
+    from arcagi3.salience_explorer import _Node
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, counter_mod=4, retry_tier=1)
+    n = _Node(b"k", [(("S", 2), 0)])                  # ("S",2) starts at tier 0
+    n.edges[("S", 2)] = (b"k", 0.0)
+    pol.nodes[b"k"] = n
+    pol._blocked_phases = {(b"k", ("S", 2)): {0}}
+    pol._counts = {((20, 20, 7),): 1}                 # phase 1 untried
+    pol._free_stale_blocks_global()
+    assert ("S", 2) not in n.edges                    # re-opened (untried again)
+    assert n.tier[("S", 2)] == 1                      # ... deprioritised to the configured retry tier
+
+
+def test_confirmed_wall_not_reopened():
+    """A move blocked at ALL counter_mod phases is a confirmed static wall and is never re-opened
+    again -- this caps re-tries and stops the dev-suite thrash."""
+    from arcagi3.salience_explorer import _Node
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, counter_mod=4)
+    n = _Node(b"wall", [(("S", 2), 0)])
+    n.edges[("S", 2)] = (b"wall", 0.0)
+    pol.nodes[b"wall"] = n
+    pol._blocked_phases[(b"wall", ("S", 2))] = {0, 1, 2, 3}   # blocked at every phase
+    pol._counts = {((20, 20, 7),): 1}                          # phase 1 (already in the set)
+    pol._free_stale_blocks_global()
+    assert ("S", 2) in pol.nodes[b"wall"].edges               # confirmed wall -> stays blocked
+
+
+def test_no_reopen_at_already_blocked_phase():
+    from arcagi3.salience_explorer import _Node
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, counter_mod=4)
+    n = _Node(b"k", [(("S", 2), 0)])
+    n.edges[("S", 2)] = (b"k", 0.0)
+    pol.nodes[b"k"] = n
+    pol._blocked_phases = {(b"k", ("S", 2)): {1}}     # already confirmed blocked at phase 1
+    pol._counts = {((20, 20, 7),): 1}                 # phase 1
+    pol._free_stale_blocks_global()
+    assert ("S", 2) in pol.nodes[b"k"].edges          # phase already known blocked -> not re-opened
+
+
+def test_record_tracks_blocked_phase_set_only_for_self_loops():
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, counter_mod=4)
+    pol._counts = {((20, 20, 7),): 2}                 # phase 2
+    pol._record(b"k", ("S", 3), b"k", 0.0, [(("S", 3), 0)], False)     # blocked self-loop
+    assert pol._blocked_phases.get((b"k", ("S", 3))) == {2}
+    pol._counts = {((20, 20, 7),): 3}                 # phase 3
+    pol._record(b"k", ("S", 3), b"k", 0.0, [(("S", 3), 0)], False)     # blocked again, new phase
+    assert pol._blocked_phases.get((b"k", ("S", 3))) == {2, 3}
+    pol._record(b"k2", ("S", 1), b"k3", 0.0, [(("S", 1), 0)], False)   # real move (next != key)
+    assert (b"k2", ("S", 1)) not in pol._blocked_phases
+
+
+def test_augment_false_never_retries():
+    """Firewall: with augment=False the retry machinery is inert (no blocked-phase tracking)."""
+    pol = HistoryAugmentedExplorer(augment=False, seed=0, counter_mod=4)
     pol._counts = {((20, 20, 7),): 2}
-    k2 = pol._key(grid)
-    pol._counts = {((20, 20, 7),): 5}   # 5 % 4 == 1 == residue of count 1
-    k5 = pol._key(grid)
-    assert k0 != k1 and k1 != k2 and k1 == k5
+    pol._record(b"k", ("S", 3), b"k", 0.0, [(("S", 3), 0)], False)
+    assert pol._blocked_phases == {}
 
 
 def _gd(tile=True, occ=None):
