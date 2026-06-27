@@ -32,3 +32,35 @@ class HistoryAugmentedExplorer(SalienceExplorer):
             return base
         aug = tuple(sorted((sig, c % self.counter_mod) for sig, c in self._counts.items()))
         return base + b"|H|" + repr(aug).encode()
+
+    def _avatar_cells(self, grid):
+        if self.bg is None:
+            self.bg = P.detect_background(grid)
+        if self._prev_grid is not None and self._prev_grid.shape == grid.shape:
+            tr = infer_translation(self._prev_grid, grid, self.bg)
+            if tr is not None:
+                self._avatar_colors.add(int(tr[0]))
+        if not self._avatar_colors:
+            return set()
+        return {(int(r), int(c))
+                for r, c in np.argwhere(np.isin(grid, list(self._avatar_colors)))}
+
+    def _update_history(self, grid):
+        if self.bg is None:
+            self.bg = P.detect_background(grid)
+        avatar = self._avatar_cells(grid)
+        # refresh remembered locations of small static glyphs that are CURRENTLY visible and
+        # NOT the avatar (avatar colors excluded so the avatar isn't a visit target)
+        for o in P.connected_components(grid, background=self.bg):
+            if o.size <= OBJ_MAX_SIZE and int(o.color) not in self._avatar_colors:
+                self._obj_locations[(int(o.color),) + tuple(o.bbox)] = \
+                    frozenset((int(r), int(c)) for r, c in o.cells)
+        # edge-triggered visit: avatar enters a remembered object's cells now but did not last step
+        overlaps_now = set()
+        for sig, cells in self._obj_locations.items():
+            if avatar & cells:
+                overlaps_now.add(sig)
+                if sig not in self._prev_overlaps:
+                    self._counts[sig] = self._counts.get(sig, 0) + 1
+        self._prev_overlaps = overlaps_now
+        self._prev_grid = grid

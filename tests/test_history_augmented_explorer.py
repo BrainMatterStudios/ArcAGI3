@@ -66,3 +66,33 @@ def test_key_changes_with_counter():
     pol._counts = {(5, 10, 10, 10, 10): 5}    # 5 % 4 == 1 == same residue as count 1
     k5 = pol._key(grid)
     assert k0 != k1 and k1 != k2 and k1 == k5   # mod 4: counts 1 and 5 collapse
+
+
+import numpy as np
+
+
+def _g(avatar_rc, tile_rc=None):
+    g = np.zeros((64, 64), dtype=np.int8)
+    if tile_rc is not None:
+        g[tile_rc] = 7                 # a static glyph, color 7
+    ar, ac = avatar_rc
+    g[ar, ac] = 9                      # avatar, color 9 (drawn last -> occludes tile if same cell)
+    return g
+
+
+def test_occlusion_aware_visit_counter():
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, counter_mod=4)
+    sig = (7, 20, 20, 20, 20)          # (color, r0, c0, r1, c1) of the tile at (20,20)
+    # frame 0: avatar at (20,21), tile visible at (20,20) -> remember tile, no visit yet
+    pol._update_history(_g((20, 21), tile_rc=(20, 20)))
+    # frame 1: avatar moves onto (20,20) -> tile occluded; visit++ (edge-triggered arrival)
+    pol._update_history(_g((20, 20), tile_rc=None))
+    assert pol._counts.get(sig) == 1
+    # frame 2: avatar stays on (20,20) -> NO additional count (not a new arrival)
+    pol._update_history(_g((20, 20), tile_rc=None))
+    assert pol._counts.get(sig) == 1
+    # frame 3: avatar leaves to (20,21); tile reappears
+    pol._update_history(_g((20, 21), tile_rc=(20, 20)))
+    # frame 4: avatar steps back onto the tile -> visit++ again
+    pol._update_history(_g((20, 20), tile_rc=None))
+    assert pol._counts.get(sig) == 2
