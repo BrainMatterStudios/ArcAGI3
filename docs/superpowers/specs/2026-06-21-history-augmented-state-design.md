@@ -406,3 +406,36 @@ robustly escape it without per-game overfitting. The only ambiguity-free signal 
 banked 0.33 untouched. Promotion (flip the submission config to `gate_only=True, retry_tier=0` to bank
 ls20) is **user-gated** (a Kaggle submit). Code: `src/arcagi3/history_augmented_explorer.py`
 (`_compute_gate_actions`, the `gate_only` branch in `_record`); harness: `scripts/ls20_gate_diag.py`.
+
+## v5.1 RESULT (2026-06-27) — STALL-GATING the eager retry FAILS to make it a strict superset; the crack is fundamentally coupled to an lf52 regression
+
+Goal: make the eager (`retry_tier=0`) gate retry fire ONLY once a game has WALLED, so it cracks ls20-class
+walls without diverting a still-progressing game (lf52). Built `stall_trigger` (eager retry activates only
+after no level-up for N actions; level-up resets the counter). 24 unit tests green, firewall intact,
+default off. Two stall signals tried:
+- *State-saturation* (no new node for N): FAILS — ls20's wandering transform tiles keep minting new nodes,
+  so it never saturates; the retry never activates -> ls20 byte-identical to banked (no crack).
+- *Level-stall* (no level-up for N): cracks ls20 (it is stuck at L0 forever) but **still regresses lf52 to
+  L1 at every threshold** (200/500/1000), because lf52's inter-level gaps are huge — it is still only L1 at
+  budget 6000.
+
+**Decisive budget scan (offline levels, banked vs eager gate):** lf52 banked L2@12k, L2@20k, **L3@30k**;
+eager **L1 at ALL of 12k/20k/30k** — a PERMANENT level loss, not a slowdown. ls20 banked & eager both L1 at
+all budgets (eager only wins *efficiency*: faster to L1 + rescues seeds banked never solves, never a higher
+level). So at eval scale (millions of actions/game) the eager gate is **NET-NEGATIVE**: a small ls20-L1
+efficiency gain against a catastrophic lf52 L3->L1 loss — the v15=0.28 failure shape.
+
+**Why no stall threshold works:** lf52's gaps are ~12k (L1->L2) then ~18k (L2->L3) and growing, so it looks
+"level-stalled" for tens of thousands of actions while genuinely progressing; ls20 looks identical but is
+truly walled. No fixed threshold separates "walled" from "slow-burn" (the wall that killed stall-relational
+and every reorder lever). The crack is coupled to retrying walls — the documented v4 circularity (you can
+only learn a blocked move is a phase-gate by retrying it, which is the diversion cost).
+
+**Verdict (validate-or-kill): the ls20-crack is NOT a promotable lever** — it is coupled to a real lf52
+regression with no cheap online separator. It remains a validated RESEARCH ASSET (first proof an invisible-
+state wall is crackable from pixels) but is not shippable. Submission stays **banked TransferExplorer = 0.33**
+(firewall: `augment=False` byte-identical, default config unchanged). The stall machinery stays committed
+behind the off-by-default flags as research substrate. Next move (per the human-cognition workflow + this
+finding): build the RHAE headroom oracle (cheap, decisive, never built) to settle whether within-game
+efficiency has ANY upside, and treat "distinguish a phase-gated WALL game from a SLOW-BURN game online" as
+the real open research problem the crack is blocked on.

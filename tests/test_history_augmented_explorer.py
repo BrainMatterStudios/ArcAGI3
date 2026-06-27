@@ -189,6 +189,39 @@ def test_gate_excludes_floor_colored_object():
     assert pol._compute_gate_actions(grid, *_comps_flags(grid)) == set()
 
 
+def test_stall_gated_retry_suppressed_until_stall():
+    """stall_trigger>0: the eager retry fires ONLY after the explorer saturates state-discovery (walls),
+    so it cracks ls20-class walls without diverting a still-progressing game."""
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, gate_only=True, retry_tier=0, stall_trigger=100)
+    pol._stalled = False
+    assert pol._retry_active() is False
+    pol._stalled = True
+    assert pol._retry_active() is True
+
+
+def test_no_stall_trigger_means_retry_always_active():
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, gate_only=True, retry_tier=0, stall_trigger=0)
+    assert pol._retry_active() is True
+
+
+def test_stall_counter_trips_after_threshold():
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, gate_only=True, stall_trigger=3)
+    pol._update_stall(0); pol._update_stall(0)         # stuck at L0
+    assert pol._stalled is False
+    pol._update_stall(0)                               # 3rd action with no level-up -> stalled
+    assert pol._stalled is True
+
+
+def test_levelup_resets_stall_counter():
+    """A still-progressing game never activates the eager retry: each level-up resets the stall."""
+    pol = HistoryAugmentedExplorer(augment=True, seed=0, gate_only=True, stall_trigger=3)
+    for _ in range(5):
+        pol._update_stall(0)
+    assert pol._stalled is True
+    pol._update_stall(1)                               # level-up -> counter resets
+    assert pol._stalled is False
+
+
 def test_gate_only_records_only_gate_moves():
     pol = HistoryAugmentedExplorer(augment=True, seed=0, counter_mod=4, gate_only=True)
     pol._gate_actions = {("S", 1)}                    # only "up" points at the goal this frame

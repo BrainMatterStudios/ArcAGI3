@@ -62,7 +62,8 @@ class HistoryAugmentedExplorer(SalienceExplorer):
     """
 
     def __init__(self, *args, augment: bool = False, counter_mod: int = 4,
-                 retry_tier: int = MAX_TIER, gate_only: bool = False, **kwargs) -> None:
+                 retry_tier: int = MAX_TIER, gate_only: bool = False,
+                 stall_trigger: int = 0, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.augment = bool(augment)
         self.counter_mod = int(counter_mod)
@@ -73,6 +74,19 @@ class HistoryAugmentedExplorer(SalienceExplorer):
         # default (records every blocked self-loop, the v4 behaviour); the crack config is
         # gate_only=True + retry_tier=0.
         self.gate_only = bool(gate_only)
+        # stall_trigger (v5.1): with gate_only + EAGER retry_tier=0, the gate retry cracks ls20 but, on
+        # a game with a cyclic glyph AND a still-productive frontier (lf52), the eager retry diverts it.
+        # A config-only fix fails: at retry_tier=MAX_TIER the gate retry is diluted among the tier-9 click
+        # lattice and never cracks ls20. Fix: keep retry_tier=0 (so it cracks) but ACTIVATE the retry only
+        # once the game has LEVEL-STALLED -- no level-up for stall_trigger consecutive actions. ls20 is
+        # stuck at L0 (never levels up) so it stalls and fires -> crack; lf52 levels up periodically (the
+        # counter resets each level-up) so it never stalls during its productive climb to L2 -> byte-
+        # identical -> no regression. (State-saturation was the wrong signal: ls20's wandering transform
+        # tiles keep minting new nodes so it never saturates.) 0 = disabled (retry always active = v5).
+        self.stall_trigger = max(0, int(stall_trigger))
+        self._since_levelup = 0
+        self._prev_stall_levels = 0
+        self._stalled = False
         # Priority tier a re-opened blocked move is given. Measured tradeoff (see the spec's v4 result):
         #   0  = same priority as real moves -> cracks ls20 (+1 solve, faster) but DIVERTS productive
         #        games (tu93 L5->L0): net dev regression.
@@ -105,6 +119,22 @@ class HistoryAugmentedExplorer(SalienceExplorer):
 
     def _phase(self) -> int:
         return sum(self._counts.values()) % self.counter_mod
+
+    def _retry_active(self) -> bool:
+        """Whether a phase change is allowed to re-open recorded gate moves. With stall_trigger>0 the
+        eager retry is held back until the explorer has saturated state-discovery (walled)."""
+        return self.stall_trigger <= 0 or self._stalled
+
+    def _update_stall(self, levels):
+        """Track consecutive actions with no level-up; once it reaches stall_trigger the game has
+        level-stalled (walled) and the eager gate retry becomes active. Any level-up resets the counter,
+        so a still-progressing game never activates the retry during its productive window."""
+        if levels > self._prev_stall_levels:
+            self._since_levelup = 0
+        else:
+            self._since_levelup += 1
+        self._prev_stall_levels = levels
+        self._stalled = self.stall_trigger > 0 and self._since_levelup >= self.stall_trigger
 
     def _free_stale_blocks_global(self):
         """The phase changed: re-open each recorded BLOCKED self-loop not yet confirmed blocked at the
@@ -141,9 +171,11 @@ class HistoryAugmentedExplorer(SalienceExplorer):
                 self._hist_levels = levels
             else:
                 self._update_history(grid)   # updates self._counts (the phase) BEFORE super().decide
+                self._update_stall(levels)   # track level-stall -> gates the eager retry
                 ph = self._phase()
                 if ph != self._prev_phase:
-                    self._free_stale_blocks_global()   # phase changed -> re-open blocked moves (low tier)
+                    if self._retry_active():
+                        self._free_stale_blocks_global()   # phase changed + walled -> re-open gate moves
                     self._prev_phase = ph
         return super().decide(grid, gstate_terminal, gstate_notplayed, levels, available)
 
