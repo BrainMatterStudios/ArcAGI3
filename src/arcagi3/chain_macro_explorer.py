@@ -26,10 +26,15 @@ from .transfer_explorer import TransferExplorer
 
 
 class ChainMacroExplorer(TransferExplorer):
-    def __init__(self, *args, enable_macro: bool = True, max_macro_misses: int = 0, **kwargs) -> None:
+    def __init__(self, *args, enable_macro: bool = True, macro_mode: str = "soft", **kwargs) -> None:
         self.enable_macro = bool(enable_macro)
-        # how many extra non-clickable-progress steps the macro tolerates before giving up (0 = strict).
-        self.max_macro_misses = int(max_macro_misses)
+        # "soft" (default, coverage-safe): promote the current chain step's matching click to tier 0
+        #   THROUGH the explorer's normal machinery (every other candidate still reachable) -> a wrong
+        #   chain cannot derail, the explorer just falls back to full exploration. Enforces solution ORDER
+        #   (transfer's missing ingredient) while preserving coverage.
+        # "hard" (the v1 directed override): emit the matching object's click directly, bypassing the
+        #   explorer -> faster but DERAILS later levels (vc33 L3->L2, cd82 L2->L1). Kept for comparison.
+        self.macro_mode = macro_mode
         super().__init__(*args, **kwargs)
 
     def reset_all(self):
@@ -47,8 +52,14 @@ class ChainMacroExplorer(TransferExplorer):
         if (self.enable_macro and action[0] == "C" and next_key != key and reward == 0
                 and self._prev_grid is not None):
             sig = self._cell_to_sig(self._prev_grid).get((action[2], action[1]))
-            if sig is not None and (not self._level_ops or self._level_ops[-1] != sig):
-                self._level_ops.append(sig)
+            if sig is not None:
+                if not self._level_ops or self._level_ops[-1] != sig:
+                    self._level_ops.append(sig)       # the actual working sequence this level
+                # soft replay: advance the chain pointer when its current step is achieved
+                if (self.macro_mode == "soft" and self.in_macro
+                        and self.macro_pos < len(self.macro) and sig == self.macro[self.macro_pos]):
+                    self._macro_clicked.add((action[2], action[1]))
+                    self.macro_pos += 1
 
     # --- on level-up: bank the chain and arm replay for the next level ---------------------------
     def decide(self, grid, gstate_terminal, gstate_notplayed, levels, available):
@@ -66,8 +77,31 @@ class ChainMacroExplorer(TransferExplorer):
             self._cur_grid = grid
         return super().decide(grid, gstate_terminal, gstate_notplayed, levels, available)
 
+    def _candidates(self, grid, available):
+        cands = super()._candidates(grid, available)   # TransferExplorer reward-class promotion first
+        if (self.macro_mode != "soft" or not self.enable_macro or not self.in_macro
+                or self.macro_pos >= len(self.macro)):
+            return cands
+        cell2sig = self._cell_to_sig(grid)
+        present = set(cell2sig.values())
+        while self.macro_pos < len(self.macro) and self.macro[self.macro_pos] not in present:
+            self.macro_pos += 1                          # skip chain steps with no object on this grid
+        if self.macro_pos >= len(self.macro):
+            self.in_macro = False
+            return cands
+        target = self.macro[self.macro_pos]
+        out = []                                         # ADDITIVE: promote the current step, demote nothing
+        for (act, tier) in cands:
+            if (act[0] == "C" and cell2sig.get((act[2], act[1])) == target
+                    and (act[2], act[1]) not in self._macro_clicked):
+                out.append((act, 0))
+            else:
+                out.append((act, tier))
+        return out
+
     def _choose(self, cur):
-        if self.enable_macro and self.in_macro and self.macro_pos < len(self.macro):
+        if (self.macro_mode == "hard" and self.enable_macro and self.in_macro
+                and self.macro_pos < len(self.macro)):
             a = self._macro_pick()
             if a is not None:
                 return a
