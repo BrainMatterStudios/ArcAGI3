@@ -35,6 +35,11 @@ class HistoryAugmentedExplorer(SalienceExplorer):
         aug = tuple(sorted((sig, c % self.counter_mod) for sig, c in self._counts.items()))
         return base + b"|H|" + repr(aug).encode()
 
+    def decide(self, grid, *args, **kwargs):
+        if self.augment:
+            self._update_history(grid)   # updates self._counts BEFORE super().decide -> self._key
+        return super().decide(grid, *args, **kwargs)
+
     def _avatar_cells(self, grid):
         if self.bg is None:
             self.bg = P.detect_background(grid)

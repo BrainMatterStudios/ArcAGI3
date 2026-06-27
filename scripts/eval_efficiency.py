@@ -53,6 +53,10 @@ def make_policy(name: str):
     if name == "salience-dense":  # v6 with the same dense lattice (fair baseline)
         return SalienceExplorer(seed=0, trust_threshold=3, border_mask=2,
                                 coarse_grid_step=4, max_click_targets=256)
+    if name == "histaug":  # Phase Q: history-augmented state (mod-N visit counters in the key)
+        from arcagi3.history_augmented_explorer import HistoryAugmentedExplorer
+        return HistoryAugmentedExplorer(seed=0, trust_threshold=3, border_mask=2,
+                                        augment=True, counter_mod=4)
     if name == "prior":
         from arcagi3.prior_explorer import PriorExplorer
         return PriorExplorer(seed=0, trust_threshold=3, border_mask=2)
