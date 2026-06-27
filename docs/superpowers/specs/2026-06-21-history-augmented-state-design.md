@@ -317,3 +317,39 @@ move *into a salient, goal-like object* (the gate), not into a wall — then the
 0) for the gate alone, cracking ls20 without diverting on walls. This needs perception to label "the cell
 this move targets is a salient target object," and gets its own spec → plan → TDD cycle. This phase-gated
 retry mechanism is the substrate it builds on.
+
+## v5 SEMANTIC gate-ID design + INVALIDATING FINDING (2026-06-27) — CHECKPOINT before implementation
+
+Design (approved): gate the *recording* of a blocked move, not just its priority. Add a blocked self-loop
+to `_blocked_phases` ONLY at a "gate frame" — the avatar (the mobile components from `_flag_mobility`) is
+adjacent to a salient goal-like object — and re-open recorded (gate) moves at `retry_tier=0` (eager).
+Walls (no adjacent goal object) are never recorded → never re-opened → byte-identical to banked; only the
+gate gets eager retry → cracks ls20 without the dev regression. Self-gating firewall unchanged.
+
+**Pre-implementation verification KILLED the salience heuristic (good — caught before coding).** Drove
+the known solution to the goal-adjacent cell and dumped objects near the avatar (engine (34,15) → grid
+rows 15-19 cols 34-38). ls20's goal is a **framed structure of COMMON colors**, not a rare-color object:
+`color 3 size 27 (8,32)-(16,40)` = frame/border (same color as the maze floor!); `color 5 size 38
+(9,33)-(15,39)` = goal fill; `color 9 size 5 (11,35)-(13,37)` = inner marker (GoalColor 9, shared with
+avatar body + maze). The ONLY rare-color object near the avatar is **the avatar's own head (color 12,
+size 10)**. So the approved predicate ("adjacent to a salient *rare-color* object", `salient_click_targets`
+priority ≤1) latches onto the AVATAR and misses the goal — it cannot work for ls20.
+
+**What actually distinguishes ls20's goal:** a FRAMED block — a color-5 fill bordered by color-3 — of
+medium size, distinct from the maze floor and the avatar. Candidate reworked "goal-like" detectors for
+the next session (each must be verified to flag the goal but NOT walls, then run through the speed +
+no-regression gates):
+1. **Framed-structure detection:** an object/region enclosed by a border of a different color (the
+   color-5 fill inside a color-3 frame). Most specific to "a target you enter".
+2. **Medium non-floor / non-avatar object adjacency:** avatar adjacent to a medium (size ~8-64) object
+   whose color is neither the dominant floor/wall color nor an avatar color. Looser; more false-positive
+   risk — needs measuring how often the avatar is blocked beside such objects elsewhere.
+3. **Target-cell-color approach:** distinguish the gate by what the blocked move runs INTO (goal-fill
+   color vs wall/floor), using the avatar position from the mobility tracker + the move direction. Needs
+   ls20's wall-vs-floor-vs-goal colors mapped first (open question: are walls a distinct color from the
+   color-3 floor? the avatar moved freely through color-3 in the rot-tile window).
+
+**Status:** no v5 code written (verification was read-only). The phase-gated retry mechanism (v4,
+committed, `retry_tier=MAX_TIER` safe default) is the substrate. Resume by picking a reworked goal-like
+detector above, verifying it on the gate frame with `scripts/ls20_rot_diag.py`-style introspection, then
+TDD + speed/no-regression validation. Firewall + banked 0.33 untouched throughout.
