@@ -1,0 +1,389 @@
+"""Reactive hybrid policy: one action per call, state persisted on the object.
+
+This is the submission-shaped form of the agent. The Kaggle eval drives agents via the
+official `Agent.choose_action(frames, latest_frame) -> GameAction` interface (one action
+at a time, result observed on the next call). HybridPolicy implements the same strategy
+as HybridAgent (motion model + coordinate navigation + graph-exploration fallback) but as
+an incremental state machine, so it works both through the official framework and through
+our own reactive runner / offline env.
+
+Action tokens: ("reset",) | ("S", id) | ("C", x, y) — the caller maps these to GameAction.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+from . import events as EVT
+from . import goals as GOALS
+from . import movement as MV
+from . import perception as P
+from .agent import ACT, RESET, STOP, GraphStrategy, candidates_for
+from .world_model import Action
+
+
+class HybridPolicy:
+    def __init__(self, use_clicks: bool = True, max_click_targets: int = 96,
+                 nav_step_cap: int = 200, seed: int = 0,
+                 emit_events: bool = False, enable_affordance: bool = True,
+                 infer_goals: bool = True) -> None:
+        self.use_clicks = use_clicks
+        self.max_click_targets = max_click_targets
+        self.nav_step_cap = nav_step_cap
+        self.rng = np.random.default_rng(seed)
+        # C2 causal event extraction (read-only, default-OFF). When False the entire C2
+        # block is skipped and decide() returns byte-identical action tokens. When True it
+        # ONLY writes the event log (self.events / self.last_step_events); nothing in the
+        # default decision path reads it. Consumers (C3/C5/C7) read those attributes; do not
+        # enable emit_events in the submission path until C7 gates a new policy.
+        self.emit_events = emit_events
+        # C3 affordance model (observe-only, default-ON but non-load-bearing). When True,
+        # decide() learns per-color interaction effects into self.aff after each real step;
+        # NOTHING in the decision path reads self.aff in this PR, so the action stream is
+        # byte-identical whether this is True or False (proven by the golden trace test).
+        # Setting False recovers the exact same behaviour and disables learning. Wrapped in
+        # try/except in decide() so a C3 bug degrades to "no learning", never a crash.
+        # Consumers (C4/C6) read self.aff via the query API; do not route C3 output into the
+        # decision path until C7's selector gates a new policy.
+        self.enable_affordance = enable_affordance
+        # C5 goal inference (observe-only, default-ON but non-load-bearing). When True,
+        # decide() feeds each transition to self.gi and credits a typed GoalHypothesis on
+        # every level-up; NOTHING in the decision path reads self.gi in M1, so the action
+        # stream is byte-identical whether this is True or False (proven by the golden trace
+        # test). Env ARCAGI3_GOAL_INFER=0 disables it without touching code. Consumers
+        # (C6/C7) read self.gi.current_goal()/goal_target_cells(); do not route goal output
+        # into the decision path until C7's selector gates a new policy.
+        import os
+        self.infer_goals = infer_goals and os.environ.get("ARCAGI3_GOAL_INFER", "1") != "0"
+        self.reset_all()
+
+    def reset_all(self) -> None:
+        self.vt = P.VolatilityTracker()
+        self.root_key: bytes | None = None
+        self.gs: GraphStrategy | None = None
+        self.bg: int | None = None
+        self.prev_key: bytes | None = None
+        self.prev_action: Action | None = None
+        self.prev_levels = 0
+        self.level = -1
+        self.expect_reset = False
+        # motion / phase
+        self.phase = "probe"
+        self.mm: MV.MotionModel | None = None
+        self._votes: dict[int, dict[int, tuple[int, int]]] = {}
+        self._changed_colors: set[int] = set()
+        self.distractor_colors: set[int] = set()  # animated/counter colors to mask + ignore
+        self._probe_queue: list[int] | None = None
+        self._probe_before: np.ndarray | None = None
+        self._probe_aid: int | None = None
+        # navigation
+        self.target: tuple[int, int] | None = None
+        self.tried_targets: set[tuple[int, int]] = set()
+        self.nav_steps = 0
+        self.nav_stale = 0
+        self.nav_last: tuple[float, float] | None = None
+        # C2 event extraction state (only used when self.emit_events) -- read-only output
+        self.ev = EVT.EventExtractor() if self.emit_events else None
+        self.events = EVT.EventLog()
+        self.last_step_events: EVT.StepEvents | None = None
+        self.prev_grid: np.ndarray | None = None
+        # C3 affordance state (observe-only). self.aff is always created (cheap, empty) so
+        # consumers can query it unconditionally; it is only written when enable_affordance.
+        from .affordance import AffordanceModel
+        self.aff = AffordanceModel()
+        self._prev_grid: np.ndarray | None = None  # before-grid for the next observe_step
+        self._t = 0  # affordance step counter
+        # C5 goal inference state (observe-only). Always constructed (cheap) so consumers
+        # can query unconditionally; only fed when self.infer_goals.
+        self.gi = GOALS.GoalInference()
+
+    def _cands(self, grid, available):
+        return candidates_for(grid, available, self.use_clicks, self.max_click_targets, False)
+
+    def _key(self, grid: np.ndarray) -> bytes:
+        """Object-structure state key (robust to pixel noise), ignoring animated distractors.
+
+        Object-level hashing collapses irrelevant per-pixel jitter that would otherwise
+        explode the state graph on real games; animated-distractor colors are excluded.
+        """
+        return P.object_state_key(grid, background=self.bg, ignore_colors=self.distractor_colors)
+
+    def _new_level(self, levels: int, grid: np.ndarray | None = None) -> None:
+        self.level = levels
+        self.phase = "probe"
+        self.mm = None
+        self._votes = {}
+        self._changed_colors = set()
+        self.distractor_colors = set()
+        self.bg = None
+        self._probe_queue = None
+        self._probe_before = None
+        self._probe_aid = None
+        self.target = None
+        self.tried_targets = set()
+        # C3: keep per-color affordance priors across levels (votes outweigh stale colors),
+        # clear per-object stats, and drop the before-grid so we don't pair frames across the
+        # level boundary. Observe-only; never affects the action stream.
+        self.aff.reset_level()
+        self._prev_grid = None
+        # C2: a level change is a fresh scene; clear the per-level event log (read-only).
+        if self.emit_events:
+            self.events.clear()
+            self.last_step_events = None
+            if self.ev is not None:
+                self.ev.reset()
+        # C5: snapshot the new level's per-color census and clear the per-level ring; the
+        # learned goal model persists across levels (refinement). Observe-only. bg is reset
+        # to None just above, so recompute it from the new grid for the census.
+        if self.infer_goals and grid is not None:
+            self.gi.on_level_start(grid, P.detect_background(grid), levels)
+
+    # main entry: given the latest observation, return the next action token
+    def decide(self, grid: np.ndarray, gstate_terminal: bool, gstate_notplayed: bool,
+               levels: int, available: list[int]) -> Action:
+        self.vt.update(grid)
+        if self.bg is None:
+            self.bg = P.detect_background(grid)
+        cur_key = self._key(grid)
+
+        # terminal / not-played -> RESET
+        if gstate_terminal or gstate_notplayed:
+            if gstate_terminal and self.prev_action is not None and self.prev_key is not None and self.gs:
+                self.gs.update(self.prev_key, self.prev_action, cur_key, 0.0,
+                               self._cands(grid, available), terminal=True)
+                # C3 (observe-only): the previous action ended the level -> learn HARM for
+                # whatever it contacted. Writes ONLY self.aff; try/except => never crashes.
+                if self.enable_affordance and self._prev_grid is not None:
+                    try:
+                        self.aff.observe_step(
+                            self._prev_grid, grid, self.prev_action, self.mm, self.bg,
+                            0.0, True, step=self._t,
+                            distractor_colors=frozenset(self.distractor_colors),
+                        )
+                    except Exception:
+                        pass
+            self.prev_action = None
+            self.expect_reset = True
+            if self.gs:
+                self.gs.plan = []
+            return ("reset",)
+
+        # first real frame (after initial reset) -> establish root
+        if self.root_key is None:
+            self.root_key = cur_key
+            self.gs = GraphStrategy(self.root_key)
+            self.gs.wm.observe(self.root_key, self._cands(grid, available))
+            self._new_level(levels, grid)
+            self.bg = P.detect_background(grid)
+
+        if self.expect_reset:
+            self.expect_reset = False
+            self.prev_action = None  # don't record across reset
+
+        # record outcome of the previous action
+        if self.prev_action is not None and self.prev_key is not None and self.gs is not None:
+            reward = float(levels - self.prev_levels)
+            self.gs.update(self.prev_key, self.prev_action, cur_key, reward,
+                           self._cands(grid, available), terminal=False)
+            # C3 (observe-only, OUTSIDE the probe guard so it learns in navigate/graph too):
+            # learn the affordance of whatever the previous action contacted. Writes ONLY
+            # self.aff; read by nothing in the decision path. try/except => a C3 bug degrades
+            # to "no learning", never a policy exception.
+            if self.enable_affordance and self._prev_grid is not None:
+                try:
+                    self.aff.observe_step(
+                        self._prev_grid, grid, self.prev_action, self.mm, self.bg,
+                        reward, False, step=self._t,
+                        distractor_colors=frozenset(self.distractor_colors),
+                    )
+                except Exception:
+                    pass
+            # C2 (read-only, default-OFF): extract the causal event stream for the previous
+            # action BEFORE the level-relearn block below, so reward-triggering transitions
+            # are logged even when crossing a level boundary. Writes self.events /
+            # self.last_step_events only; consulted by NOTHING in the decision path.
+            if self.emit_events and self.ev is not None and self.prev_grid is not None:
+                click_xy = (self.prev_action[1], self.prev_action[2]) \
+                    if self.prev_action[0] == "C" else None
+                self.last_step_events = self.ev.extract(
+                    self.prev_grid, grid, self.prev_action, reward, mm=self.mm,
+                    bg=self.bg, distractor_colors=self.distractor_colors, click_xy=click_xy,
+                )
+                self.events.append(self.last_step_events)
+            # C5 (observe-only): feed this transition to the goal-inference model. Reward is
+            # the level delta; on reward>0 it credits a typed GoalHypothesis from buffered
+            # PRE-swap records (never the rebuilt next-level frame). Writes ONLY self.gi;
+            # read by NOTHING in the decision path in M1. prev_action is non-None here, so we
+            # are not crossing a reset (the reset block above nulls it). try/except => a C5
+            # bug degrades to "no inference", never a policy exception.
+            if self.infer_goals and self._prev_grid is not None and not self.expect_reset:
+                try:
+                    self.gi.observe_step(
+                        prev_grid=self._prev_grid, cur_grid=grid,
+                        prev_action=self.prev_action, reward=reward,
+                        bg=self.bg, distractor_colors=self.distractor_colors,
+                        avatar=self.mm, events=None,
+                    )
+                except Exception:
+                    pass
+            if self.phase == "probe" and self._probe_before is not None and self._probe_aid is not None:
+                trans = MV.infer_all_translations(self._probe_before, grid, self.bg)
+                for color, (dr, dc) in trans.items():
+                    self._votes.setdefault(color, {})[self._probe_aid] = (dr, dc)
+                # any non-background color whose cells changed this step
+                for c in set(np.unique(self._probe_before)).union(np.unique(grid)):
+                    c = int(c)
+                    if c != self.bg and not np.array_equal(self._probe_before == c, grid == c):
+                        self._changed_colors.add(c)
+
+        # new level -> relearn
+        if levels != self.level:
+            self._new_level(levels, grid)
+
+        self.prev_levels = levels
+        action = self._choose(grid, cur_key, available)
+        self.prev_key = cur_key
+        self.prev_action = None if action[0] == "reset" else action
+        if self.emit_events:
+            # keep the C2 extractor's motion model current and remember this grid for the
+            # next step's before/after pair (read-only; never affects `action`).
+            if self.ev is not None:
+                self.ev.update_model(self.mm)
+            self.prev_grid = grid
+        if self.enable_affordance:
+            # remember this grid as the before-grid for the next step's observe_step, and
+            # advance the affordance step counter (observe-only; never affects `action`).
+            self._prev_grid = grid
+            self._t += 1
+        elif self.infer_goals:
+            # C5 needs the before-grid too; keep it current when C3 isn't doing it for us
+            # (observe-only; never affects `action`).
+            self._prev_grid = grid
+        return action
+
+    def _choose(self, grid, cur_key, available, _depth: int = 0) -> Action:
+        if _depth > 3:
+            return self._random_action(grid, available)
+        simple_avail = [a for a in (1, 2, 3, 4, 5) if a in available]
+
+        # ----- PROBE: learn motion model -----
+        if self.phase == "probe":
+            if self._probe_queue is None:
+                self._probe_queue = list(simple_avail)
+            if self._probe_queue:
+                aid = self._probe_queue.pop(0)
+                self._probe_before = grid
+                self._probe_aid = aid
+                return ("S", aid)
+            # finished probing: the avatar is the object whose motion CORRELATES with the
+            # action (most distinct delta vectors); counters/animations move constantly.
+            if self._votes:
+                def _score(c):
+                    deltas = self._votes[c]
+                    return (len(set(deltas.values())), len(deltas))
+                color = max(self._votes, key=_score)
+                # the avatar may span MULTIPLE colors that move together (action-correlated,
+                # i.e. >=2 distinct deltas); track them all for centroid + target exclusion.
+                avatar_colors = frozenset(
+                    c for c, d in self._votes.items() if len(set(d.values())) >= 2
+                ) or frozenset({color})
+                self.mm = MV.MotionModel(avatar_color=color, deltas=self._votes[color],
+                                         avatar_colors=avatar_colors)
+                # Animated distractor = a color that RIGIDLY TRANSLATES with a constant
+                # delta regardless of the action (a counter/animation), NOT merely a color
+                # whose cells changed (that also flags structural cells the avatar moves
+                # over, e.g. maze walls — which would blind us to doors opening).
+                self.distractor_colors = {
+                    c for c, d in self._votes.items()
+                    if c != color and c != self.bg
+                    and len(d) >= 2 and len(set(d.values())) == 1
+                }
+                self.phase = "navigate"
+                self.target = None
+            else:
+                self.phase = "graph"
+            return self._choose(grid, cur_key, available, _depth + 1)
+
+        # ----- NAVIGATE avatar to candidate goal objects -----
+        if self.phase == "navigate" and self.mm is not None and self.mm.ok:
+            if self.target is None:
+                t = self._next_target(grid)
+                if t is None:
+                    self.phase = "graph"
+                    return self._choose(grid, cur_key, available, _depth + 1)
+                self.target = t
+                self.tried_targets.add(t)
+                self.nav_steps = 0
+                self.nav_stale = 0
+                self.nav_last = None
+            act = self._nav_step(grid)
+            if act is None:
+                self.target = None
+                return self._choose(grid, cur_key, available, _depth + 1)
+            return act
+
+        # ----- GRAPH fallback -----
+        if self.gs is not None:
+            kind, a = self.gs.decide(cur_key)
+            if kind == RESET:
+                self.expect_reset = True
+                self.gs.plan = []
+                return ("reset",)
+            if kind == STOP:
+                return self._random_action(grid, available)
+            return a
+        return self._random_action(grid, available)
+
+    def _next_target(self, grid):
+        objs = P.connected_components(grid, background=self.bg)
+        ac = self.mm.avatar_centroid(grid)
+        if ac is None:
+            return None
+        cands = []
+        for o in objs:
+            if o.color in self.mm.avatar_colors or o.color in self.distractor_colors:
+                continue
+            r, c = int(round(o.centroid[0])), int(round(o.centroid[1]))
+            if (r, c) in self.tried_targets:
+                continue
+            cands.append((abs(r - ac[0]) + abs(c - ac[1]), (r, c)))
+        if not cands:
+            return None
+        cands.sort()
+        return cands[0][1]
+
+    def _nav_step(self, grid):
+        ac = self.mm.avatar_centroid(grid)
+        if ac is None:
+            return None
+        cr, cc = ac
+        tr, tc = self.target
+        if abs(cr - tr) < 1 and abs(cc - tc) < 1:
+            return None  # arrived
+        if self.nav_steps >= self.nav_step_cap:
+            return None
+        # detect stalled avatar (didn't move since last nav action)
+        if self.nav_last is not None and abs(self.nav_last[0] - cr) < 0.5 and abs(self.nav_last[1] - cc) < 0.5:
+            self.nav_stale += 1
+            if self.nav_stale >= 2:
+                return None
+        else:
+            self.nav_stale = 0
+        cur_d = abs(cr - tr) + abs(cc - tc)
+        best_a, best_d = None, None
+        for aid, (dr, dc) in self.mm.deltas.items():
+            nd = abs(cr + dr - tr) + abs(cc + dc - tc)
+            if best_d is None or nd < best_d:
+                best_d, best_a = nd, aid
+        if best_a is None or best_d >= cur_d:
+            return None
+        self.nav_last = (cr, cc)
+        self.nav_steps += 1
+        return ("S", best_a)
+
+    def _random_action(self, grid, available) -> Action:
+        cands = self._cands(grid, available)
+        if not cands:
+            return ("S", available[0]) if available else ("reset",)
+        i = int(self.rng.integers(0, len(cands)))
+        return cands[i]
