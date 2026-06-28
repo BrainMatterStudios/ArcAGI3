@@ -44,7 +44,27 @@ Two old questions closed negative (reset-cost, action-space). One genuinely-new 
 (max-over-plays + graph persistence) — the only fresh positive surface in the campaign — but the obvious
 exploit (geodesic replay) is blocked by state-aliasing desync.
 
-## The one remaining untested variant (decision needed, NOT a cheap probe)
+## 5. Multi-play Go-Explore PoC — DONE, negative (saves the multi-day build).
+`scripts/goexplore_multiplay_poc.py` (user-approved PoC). Stationary EXACT-frame key (no aliasing) so a
+stored action trajectory replays faithfully. Two methods: [A] from-scratch Go-Explore (replay-to-cell
+shortening) and [B] SalienceExplorer-explore + exact-key faithful record. Results:
+- **Faithfulness PROVED:** exact-key replay reproduces level-ups (defeats the masked-graph desync).
+- **Shortening is real but only where it doesn't matter:** [A] cut vc33 L0 76→17 actions — but vc33 L0 is
+  already at the 1.15 efficiency cap (<186 actions), so ZERO score gain.
+- **On the scored wall games (m0r0 L0=1940, su15 L0=359) where score headroom exists: NO gain.** [A] can't
+  even reach L0 (random-salience exploration too weak); [B] reproduces but doesn't shorten (1952≈1940,
+  369≈359 — the explorer found the trigger via one long route and never a shorter one).
+- **Structural reason (the wall, restated):** shortening requires FINDING the short path, which on hard
+  levels IS the unsolved exploration problem. Cheap L0 = already capped (no headroom); expensive L0 = real
+  headroom but unreachable. No sweet spot.
+- **Corollary — the 35× RHAE headroom was largely FICTIONAL:** it was BFS-distance over the masked-key
+  graph, whose paths don't physically execute (state-aliasing creates spurious shortcuts). Exact-key
+  (no aliasing) finds no shortening on hard games → the headroom was a measurement artifact there.
+VERDICT: the multi-play max-over-plays lever captures NO Kaggle-relevant score. Do NOT do the full build.
+Residual low-EV variant (untested): hybrid explore-to-find-trigger THEN Go-Explore-shorten on MODERATE
+games (su15-class) — but m0r0 (bigger headroom) is unreachable, so EV is low.
+
+## (superseded) The earlier "untested variant" note — now resolved by the PoC above.
 Capturing the max-over-plays lever needs a PHYSICALLY-FAITHFUL short replay, i.e. a Go-Explore-style
 explorer that stores the literal shortest ACTION TRAJECTORY (from reset) to each cell with a STATIONARY
 key, and iteratively shortens it (replay-to-cell then explore). Risks: (a) basic Go-Explore was already
