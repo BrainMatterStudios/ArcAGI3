@@ -26,15 +26,27 @@ from .transfer_explorer import TransferExplorer
 
 
 class ChainMacroExplorer(TransferExplorer):
-    def __init__(self, *args, enable_macro: bool = True, macro_mode: str = "soft", **kwargs) -> None:
+    def __init__(self, *args, enable_macro: bool = True, macro_mode: str = "gated",
+                 gate_thresh: float = 0.6, gate_probe_k: int = 4, min_chain_sigs: int = 2,
+                 **kwargs) -> None:
         self.enable_macro = bool(enable_macro)
-        # "soft" (default, coverage-safe): promote the current chain step's matching click to tier 0
-        #   THROUGH the explorer's normal machinery (every other candidate still reachable) -> a wrong
-        #   chain cannot derail, the explorer just falls back to full exploration. Enforces solution ORDER
-        #   (transfer's missing ingredient) while preserving coverage.
-        # "hard" (the v1 directed override): emit the matching object's click directly, bypassing the
-        #   explorer -> faster but DERAILS later levels (vc33 L3->L2, cd82 L2->L1). Kept for comparison.
+        # "gated" (default, STRICT-SUPERSET attempt): on a new level, DON'T replay yet -- explore normally
+        #   while gathering this level's early effective-click signatures, then deploy the HARD chain replay
+        #   ONLY if those signatures match the chain's (jaccard >= gate_thresh) i.e. the mechanic is STABLE.
+        #   Mechanic-shift games (cd82/vc33: jaccard 0.25-0.33) never deploy -> no derail; stable games
+        #   (lp85: jaccard 1.00) deploy -> capture the headroom. The probe is just normal exploration (never
+        #   wasted), so it is strict-superset by construction. gate_probe_k = effective clicks gathered
+        #   before deciding; gate_thresh = jaccard cutoff.
+        # "hard": directed object-click override -> fast (lp85 21x) but DERAILS shifting levels (cd82/vc33).
+        # "soft": coverage-safe ordered tier-0 promotion -> no derail but loses the gain (~= transfer).
         self.macro_mode = macro_mode
+        self.gate_thresh = float(gate_thresh)
+        self.gate_probe_k = int(gate_probe_k)
+        # min distinct signatures the chain must have to be deployable. A single-signature chain (e.g.
+        # vc33's all-colour-9 flood-fill buttons) is spatially-specific and does NOT transfer even when
+        # the colour set matches across levels; requiring >=2 distinct colours restricts replay to genuine
+        # multi-type "click these object-kinds" mechanics (lp85 {8,14}) that DO transfer.
+        self.min_chain_sigs = int(min_chain_sigs)
         super().__init__(*args, **kwargs)
 
     def reset_all(self):
@@ -45,6 +57,11 @@ class ChainMacroExplorer(TransferExplorer):
         self._level_ops: list = []       # effective-click signatures THIS level, in order
         self._macro_clicked: set = set()  # cells already clicked during the current macro replay
         self._cur_grid = None
+        # gated mode: pre-flight probe state
+        self._gate_pending: bool = False  # gathering this level's early sigs before deciding to deploy
+        self._macro_sigs: set = set()     # signature SET of the banked chain (for the jaccard gate)
+        self._level_sigs: set = set()     # effective-click signatures seen so far THIS level
+        self._probe_eff: int = 0          # effective clicks gathered this level (probe progress)
 
     # --- learn the chain: effective clicks (state-changing) in order -----------------------------
     def _record(self, key, action, next_key, reward, cands, terminal):
@@ -60,6 +77,12 @@ class ChainMacroExplorer(TransferExplorer):
                         and self.macro_pos < len(self.macro) and sig == self.macro[self.macro_pos]):
                     self._macro_clicked.add((action[2], action[1]))
                     self.macro_pos += 1
+                # gated pre-flight: gather this level's early effective sigs, then deploy iff stable
+                if self.macro_mode == "gated" and self._gate_pending:
+                    self._level_sigs.add(sig)
+                    self._probe_eff += 1
+                    if self._probe_eff >= self.gate_probe_k:
+                        self._evaluate_gate()
 
     # --- on level-up: bank the chain and arm replay for the next level ---------------------------
     def decide(self, grid, gstate_terminal, gstate_notplayed, levels, available):
@@ -73,9 +96,31 @@ class ChainMacroExplorer(TransferExplorer):
                 self._level_ops = []
                 self.macro_pos = 0
                 self._macro_clicked = set()
-                self.in_macro = bool(self.macro)
+                if self.macro_mode == "gated":
+                    # arm the pre-flight probe: explore normally, gather sigs, deploy only if stable
+                    self._macro_sigs = set(self.macro)
+                    self._level_sigs = set()
+                    self._probe_eff = 0
+                    self._gate_pending = bool(self.macro)
+                    self.in_macro = False
+                else:
+                    self.in_macro = bool(self.macro)
             self._cur_grid = grid
         return super().decide(grid, gstate_terminal, gstate_notplayed, levels, available)
+
+    def _evaluate_gate(self):
+        """Deploy the hard chain replay iff this level's early effective signatures match the chain's
+        (mechanic stable). Otherwise stay banked (no replay) -> no derail. Strict-superset by construction:
+        the probe was just normal exploration."""
+        self._gate_pending = False
+        if len(self._macro_sigs) < self.min_chain_sigs:
+            return                          # single-signature chain = spatially-specific, won't transfer
+        union = self._level_sigs | self._macro_sigs
+        jac = (len(self._level_sigs & self._macro_sigs) / len(union)) if union else 0.0
+        if jac >= self.gate_thresh:
+            self.in_macro = True            # stable multi-type mechanic -> deploy the hard chain replay
+            self.macro_pos = 0
+            self._macro_clicked = set()
 
     def _candidates(self, grid, available):
         cands = super()._candidates(grid, available)   # TransferExplorer reward-class promotion first
@@ -100,7 +145,9 @@ class ChainMacroExplorer(TransferExplorer):
         return out
 
     def _choose(self, cur):
-        if (self.macro_mode == "hard" and self.enable_macro and self.in_macro
+        # gated mode deploys the SAME hard directed replay as "hard", but only after the pre-flight gate
+        # opened (mechanic confirmed stable on this level), so it never derails a shifting level.
+        if (self.macro_mode in ("hard", "gated") and self.enable_macro and self.in_macro
                 and self.macro_pos < len(self.macro)):
             a = self._macro_pick()
             if a is not None:
