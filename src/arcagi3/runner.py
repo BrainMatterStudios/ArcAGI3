@@ -58,6 +58,14 @@ def run_game(game_id: str, games_dir: str, budget: int, seed: int = 0,
         from .stochastic_goose_explorer import StochasticGooseExplorer as _SG
         return run_reactive(env, game_id, budget, seed,
                             policy_cls=lambda seed=0: _SG(seed=seed, allow_cpu=_ac))
+    if agent_name == "rewardrl":
+        from .learned_explorer import LearnedExplorer as _LE
+        from .reward_rl_learner import RewardRLLearner as _RL
+        _DENSE = dict(trust_threshold=3, border_mask=2, coarse_grid_step=4, max_click_targets=256)
+        return run_reactive(env, game_id, budget, seed,
+                            policy_cls=lambda seed=0: _LE(seed=seed, enable_learn=True,
+                                                          learner=_RL(), require_gpu=not _ac,
+                                                          learn_mode="propose", **_DENSE))
     if agent_name == "online":
         from .online_explorer import OnlineLearningExplorer as _OLE
         return run_reactive(env, game_id, budget, seed,
@@ -138,7 +146,7 @@ def main() -> None:
     ap.add_argument("--budget", type=int, default=4000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--agent", default="reactive",
-                    choices=list(AGENTS) + ["reactive", "wm", "salience", "transfer", "online", "primary", "value", "curiosity", "goose"])
+                    choices=list(AGENTS) + ["reactive", "wm", "salience", "transfer", "online", "primary", "value", "curiosity", "goose", "rewardrl"])
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
