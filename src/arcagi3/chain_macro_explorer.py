@@ -28,7 +28,7 @@ from .transfer_explorer import TransferExplorer
 
 class ChainMacroExplorer(TransferExplorer):
     def __init__(self, *args, enable_macro: bool = True, macro_mode: str = "gated",
-                 gate_thresh: float = 0.6, gate_probe_k: int = 4, min_chain_sigs: int = 2,
+                 gate_thresh: float = 0.9, gate_probe_k: int = 4, min_chain_sigs: int = 2,
                  **kwargs) -> None:
         self.enable_macro = bool(enable_macro)
         # "gated" (default, STRICT-SUPERSET attempt): on a new level, DON'T replay yet -- explore normally
@@ -60,8 +60,9 @@ class ChainMacroExplorer(TransferExplorer):
         self._cur_grid = None
         # gated mode: pre-flight probe state
         self._gate_pending: bool = False  # gathering this level's early sigs before deciding to deploy
-        self._macro_sigs: set = set()     # signature SET of the banked chain (for the jaccard gate)
-        self._level_sigs: set = set()     # effective-click signatures seen so far THIS level
+        self._macro_sigs: set = set()     # COMPLETE effective-sig set of the PREVIOUS level (gate ref)
+        self._level_sigs: set = set()     # current level's early effective sigs (probe, for the jaccard)
+        self._level_sigset: set = set()   # current level's COMPLETE effective-sig set (banked at level-up)
         self._probe_eff: int = 0          # effective clicks gathered this level (probe progress)
         # typed_tripwire mode: per-step typed-effect verification
         self._ext = EventExtractor()
@@ -95,6 +96,7 @@ class ChainMacroExplorer(TransferExplorer):
         sig = self._cell_to_sig(self._prev_grid).get((action[2], action[1]))
         if sig is None:
             return
+        self._level_sigset.add(sig)                  # COMPLETE effective-sig set (gate reference, clean)
         if not self._level_ops or self._level_ops[-1] != sig:
             self._level_ops.append(sig)              # the actual working sequence this level
             if self.macro_mode == "typed_tripwire":
@@ -117,6 +119,7 @@ class ChainMacroExplorer(TransferExplorer):
             if gstate_terminal or gstate_notplayed:
                 self.in_macro = False
                 self._level_ops = []
+                self._level_sigset = set()
             elif levels > self.prev_levels:
                 if self._level_ops:
                     self.macro = list(self._level_ops)   # this level's solution sequence
@@ -127,14 +130,17 @@ class ChainMacroExplorer(TransferExplorer):
                 self._verify_pos = 0
                 self._macro_clicked = set()
                 if self.macro_mode == "gated":
-                    # arm the pre-flight probe: explore normally, gather sigs, deploy only if stable
-                    self._macro_sigs = set(self.macro)
+                    # arm the pre-flight probe: explore normally, gather sigs, deploy only if stable.
+                    # gate reference = the COMPLETE effective-sig set of the level just solved (matches the
+                    # clean offline probe; the deduped ordered `macro` undercounts under transfer-bias).
+                    self._macro_sigs = set(self._level_sigset)
                     self._level_sigs = set()
                     self._probe_eff = 0
                     self._gate_pending = bool(self.macro)
                     self.in_macro = False
                 else:
                     self.in_macro = bool(self.macro)
+                self._level_sigset = set()
             self._cur_grid = grid
         return super().decide(grid, gstate_terminal, gstate_notplayed, levels, available)
 
