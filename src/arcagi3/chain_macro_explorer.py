@@ -23,13 +23,14 @@ from __future__ import annotations
 
 from . import perception as P
 from .events import EventExtractor
+from .salience_explorer import SalienceExplorer
 from .transfer_explorer import TransferExplorer
 
 
 class ChainMacroExplorer(TransferExplorer):
     def __init__(self, *args, enable_macro: bool = True, macro_mode: str = "gated",
                  gate_thresh: float = 0.9, gate_probe_k: int = 4, min_chain_sigs: int = 2,
-                 **kwargs) -> None:
+                 unbiased_probe_k: int = 0, **kwargs) -> None:
         self.enable_macro = bool(enable_macro)
         # "gated" (default, STRICT-SUPERSET attempt): on a new level, DON'T replay yet -- explore normally
         #   while gathering this level's early effective-click signatures, then deploy the HARD chain replay
@@ -48,6 +49,10 @@ class ChainMacroExplorer(TransferExplorer):
         # the colour set matches across levels; requiring >=2 distinct colours restricts replay to genuine
         # multi-type "click these object-kinds" mechanics (lp85 {8,14}) that DO transfer.
         self.min_chain_sigs = int(min_chain_sigs)
+        # unbiased pre-flight: the first this-many effective clicks of each level explore UNBIASED (uniform
+        # SalienceExplorer candidates, bypassing transfer promotion) so the level's COMPLETE effective-sig
+        # set is captured the way the clean offline probe sees it (lp85 {8,14}, not transfer-biased {8}).
+        self.unbiased_probe_k = int(unbiased_probe_k)
         super().__init__(*args, **kwargs)
 
     def reset_all(self):
@@ -64,6 +69,7 @@ class ChainMacroExplorer(TransferExplorer):
         self._level_sigs: set = set()     # current level's early effective sigs (probe, for the jaccard)
         self._level_sigset: set = set()   # current level's COMPLETE effective-sig set (banked at level-up)
         self._probe_eff: int = 0          # effective clicks gathered this level (probe progress)
+        self._unbiased_left: int = self.unbiased_probe_k  # effective clicks left in the unbiased probe
         # typed_tripwire mode: per-step typed-effect verification
         self._ext = EventExtractor()
         self._level_typed: list = []      # typed effect-sig of each effective click THIS level (parallel _level_ops)
@@ -97,6 +103,8 @@ class ChainMacroExplorer(TransferExplorer):
         if sig is None:
             return
         self._level_sigset.add(sig)                  # COMPLETE effective-sig set (gate reference, clean)
+        if self._unbiased_left > 0:
+            self._unbiased_left -= 1
         if not self._level_ops or self._level_ops[-1] != sig:
             self._level_ops.append(sig)              # the actual working sequence this level
             if self.macro_mode == "typed_tripwire":
@@ -129,6 +137,7 @@ class ChainMacroExplorer(TransferExplorer):
                 self.macro_pos = 0
                 self._verify_pos = 0
                 self._macro_clicked = set()
+                self._unbiased_left = self.unbiased_probe_k   # re-arm the unbiased probe for the new level
                 if self.macro_mode == "gated":
                     # arm the pre-flight probe: explore normally, gather sigs, deploy only if stable.
                     # gate reference = the COMPLETE effective-sig set of the level just solved (matches the
@@ -159,6 +168,10 @@ class ChainMacroExplorer(TransferExplorer):
             self._macro_clicked = set()
 
     def _candidates(self, grid, available):
+        # during the unbiased pre-flight probe, bypass transfer promotion so diverse colours get clicked
+        # and the level's COMPLETE effective-sig set is captured (the load-bearing gate reference).
+        if self.macro_mode == "gated" and self.enable_macro and self._unbiased_left > 0:
+            return SalienceExplorer._candidates(self, grid, available)
         cands = super()._candidates(grid, available)   # TransferExplorer reward-class promotion first
         if (self.macro_mode != "soft" or not self.enable_macro or not self.in_macro
                 or self.macro_pos >= len(self.macro)):
