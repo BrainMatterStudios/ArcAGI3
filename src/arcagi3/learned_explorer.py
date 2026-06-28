@@ -17,20 +17,27 @@ June-30 open-sourced winner inside our no-regression firewall.
 """
 from __future__ import annotations
 
+from .salience_explorer import MAX_TIER
 from .transfer_explorer import TransferExplorer
 
 
 class Learner:
-    """Interface a learned component implements. Default = inert (always abstains) -> the scaffold stays
-    byte-identical to TransferExplorer. A real learner (TTT/RL net, or the adopted winner) overrides."""
+    """Interface a learned component implements. Default = inert (abstains / prunes nothing) -> the scaffold
+    stays byte-identical to TransferExplorer. A real learner (TTT/RL net, or the adopted winner) overrides."""
 
     def reset_game(self) -> None: ...
     def reset_level(self) -> None: ...
     def observe(self, key, action, next_key, reward) -> None: ...
+    def see(self, grid) -> None: ...   # called once per step so observe()/act()/noop_set() share the grid
 
     def act(self, grid, node, key):
-        """Return a chosen action token, or None to defer to the base explorer (abstain)."""
+        """PROPOSE mode: return a chosen action token, or None to defer to the base explorer (abstain)."""
         return None
+
+    def noop_set(self, grid, click_cands):
+        """PRUNE mode (safe class): return the subset of click candidates predicted to be NO-OPS with high
+        confidence, to be demoted to last-resort tier. Empty = no pruning (coverage unchanged)."""
+        return set()
 
 
 class EffectLearner(Learner):
@@ -89,10 +96,13 @@ class EffectLearner(Learner):
 
 class LearnedExplorer(TransferExplorer):
     def __init__(self, *args, enable_learn: bool = False, learner: Learner | None = None,
-                 require_gpu: bool = True, **kwargs) -> None:
+                 require_gpu: bool = True, learn_mode: str = "propose", **kwargs) -> None:
         self.enable_learn = bool(enable_learn)
         self.learner = learner
         self.require_gpu = bool(require_gpu)
+        # "propose": learner.act() proposes an action (abstain-fallback). "prune" (safe class): learner
+        # demotes confident-no-op clicks to last-resort tier (coverage-preserving, never proposes).
+        self.learn_mode = learn_mode
         self._gpu_checked = False
         self._gpu_usable = False
         super().__init__(*args, **kwargs)
@@ -133,14 +143,25 @@ class LearnedExplorer(TransferExplorer):
                 self.learner.reset_level()
             self._learn_levels = levels
             self._cur_grid_learn = grid
+            self.learner.see(grid)            # cache the grid for observe()/act()/noop_set()
         return super().decide(grid, gstate_terminal, gstate_notplayed, levels, available)
 
     def _choose(self, cur):
-        if self._active():
+        if self._active() and self.learn_mode == "propose":
             a = self.learner.act(self._cur_grid_learn, self.nodes.get(cur), cur)
             if a is not None:
                 return a
         return super()._choose(cur)
+
+    def _candidates(self, grid, available):
+        cands = super()._candidates(grid, available)
+        if not (self._active() and self.learn_mode == "prune"):
+            return cands
+        clicks = [a for (a, _t) in cands if a[0] == "C"]
+        noops = self.learner.noop_set(grid, clicks)
+        if not noops:
+            return cands
+        return [(a, MAX_TIER if a in noops else t) for (a, t) in cands]   # demote confident no-ops
 
     def _record(self, key, action, next_key, reward, cands, terminal):
         super()._record(key, action, next_key, reward, cands, terminal)

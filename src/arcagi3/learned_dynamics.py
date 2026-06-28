@@ -42,9 +42,10 @@ def _build_net(torch):
 
 class DynamicsLearner(Learner):
     def __init__(self, train_every: int = 8, batch: int = 16, min_train: int = 64,
-                 confidence: float = 0.6, lr: float = 1e-3, buffer: int = 4000) -> None:
+                 confidence: float = 0.6, noop_thresh: float = 0.05, lr: float = 1e-3,
+                 buffer: int = 4000) -> None:
         self.cfg = dict(train_every=train_every, batch=batch, min_train=min_train,
-                        confidence=confidence, lr=lr, buffer=buffer)
+                        confidence=confidence, noop_thresh=noop_thresh, lr=lr, buffer=buffer)
         self._torch = None
         self.reset_game()
 
@@ -78,9 +79,20 @@ class DynamicsLearner(Learner):
         oh = P.encode_onehot(grid, 16)                 # (16,64,64) float32
         return torch.from_numpy(oh).unsqueeze(0)       # (1,16,64,64)
 
+    def see(self, grid):
+        self._last_oh = self._encode(grid)             # cache once per step for observe/act/noop_set
+
+    def _click_probs(self):
+        torch = self._torch
+        net = self._net_ready()
+        with torch.no_grad():
+            click, _ = net(self._last_oh)
+            return torch.sigmoid(click)[0]             # (64,64)
+
     # -- predict (act) ----------------------------------------------------------------------------
     def act(self, grid, node, key):
-        self._last_oh = self._encode(grid)
+        if self._last_oh is None:
+            self._last_oh = self._encode(grid)
         if node is None or self._n_seen < self.cfg["min_train"]:
             return None
         torch = self._torch
@@ -102,6 +114,15 @@ class DynamicsLearner(Learner):
             if p > best_p:
                 best, best_p = a, p
         return best if best_p >= self.cfg["confidence"] else None   # abstain unless confident
+
+    # -- prune (safe class): confident no-op clicks to demote ------------------------------------
+    def noop_set(self, grid, click_cands):
+        if self._last_oh is None or self._n_seen < self.cfg["min_train"] or not click_cands:
+            return set()
+        probs = self._click_probs()
+        thr = self.cfg["noop_thresh"]
+        return {a for a in click_cands
+                if a[0] == "C" and float(probs[int(a[2]), int(a[1])]) < thr}
 
     # -- learn (observe) --------------------------------------------------------------------------
     def observe(self, key, action, next_key, reward):
