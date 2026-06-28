@@ -37,14 +37,15 @@ class InContextNet(nn.Module):
     controllable/dynamic cells under role randomization — colour identity carries none. A conv preserves
     the avatar<->goal spatial relation the direction affordance needs. use_context=False zeroes the
     history channels (query-only baseline) -> should sit at chance, since one frame is role-ambiguous."""
-    def __init__(self, use_context=True):
+    def __init__(self, use_context=True, width=32, head=64):
         super().__init__()
         self.use_context = use_context
         self.emb = nn.Embedding(PAL, 6)
         in_ch = 6 + 6 + 1   # query emb + last-frame emb + motion map
-        self.c1 = nn.Conv2d(in_ch, 32, 3, padding=1)
-        self.c2 = nn.Conv2d(32, 16, 3, padding=1)
-        self.head = nn.Sequential(nn.Linear(16 * HW * HW, 64), nn.ReLU(), nn.Linear(64, 5))
+        self.c1 = nn.Conv2d(in_ch, width, 3, padding=1)
+        self.c2 = nn.Conv2d(width, width // 2, 3, padding=1)
+        self.head = nn.Sequential(nn.Linear((width // 2) * HW * HW, head), nn.ReLU(),
+                                  nn.Linear(head, 5))
 
     def forward(self, cf, cn, ca, q):
         B, T = cf.shape[:2]
@@ -70,9 +71,9 @@ def to_tensors(ds):
     return cf, cn, ca, q, y
 
 
-def fit(train_ds, epochs, use_context, seed=0, bs=128, lr=2e-3):
+def fit(train_ds, epochs, use_context, seed=0, bs=128, lr=2e-3, width=32, head=64):
     torch.manual_seed(seed)
-    net = InContextNet(use_context=use_context)
+    net = InContextNet(use_context=use_context, width=width, head=head)
     opt = torch.optim.Adam(net.parameters(), lr=lr)
     lossf = nn.CrossEntropyLoss()
     cf, cn, ca, q, y = to_tensors(train_ds)
