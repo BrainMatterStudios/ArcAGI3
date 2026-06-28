@@ -22,6 +22,7 @@ memory arcagi3-rhae-headroom.
 from __future__ import annotations
 
 from . import perception as P
+from .events import EventExtractor
 from .transfer_explorer import TransferExplorer
 
 
@@ -62,27 +63,53 @@ class ChainMacroExplorer(TransferExplorer):
         self._macro_sigs: set = set()     # signature SET of the banked chain (for the jaccard gate)
         self._level_sigs: set = set()     # effective-click signatures seen so far THIS level
         self._probe_eff: int = 0          # effective clicks gathered this level (probe progress)
+        # typed_tripwire mode: per-step typed-effect verification
+        self._ext = EventExtractor()
+        self._level_typed: list = []      # typed effect-sig of each effective click THIS level (parallel _level_ops)
+        self.macro_typed: list = []       # banked typed-effect sigs of the chain
+        self._verify_pos: int = 0         # which banked typed-sig to verify next during replay
+
+    def _typed_sig(self, action):
+        """Position-free typed effect of a click: frozenset of (EventType, colour) over its salient events.
+        Coarse enough to be stable when the same mechanic recurs (lp85), fine enough to flip when the
+        mechanic shifts (vc33's colour-9 click does something different on a later level)."""
+        if self._prev_grid is None or self._cur_grid is None:
+            return frozenset()
+        se = self._ext.extract(self._prev_grid, self._cur_grid, action, 0.0, bg=self.bg)
+        return frozenset((e.type.name, int(e.color) if e.color is not None else -1) for e in se.salient)
 
     # --- learn the chain: effective clicks (state-changing) in order -----------------------------
     def _record(self, key, action, next_key, reward, cands, terminal):
         super()._record(key, action, next_key, reward, cands, terminal)
-        if (self.enable_macro and action[0] == "C" and next_key != key and reward == 0
-                and self._prev_grid is not None):
-            sig = self._cell_to_sig(self._prev_grid).get((action[2], action[1]))
-            if sig is not None:
-                if not self._level_ops or self._level_ops[-1] != sig:
-                    self._level_ops.append(sig)       # the actual working sequence this level
-                # soft replay: advance the chain pointer when its current step is achieved
-                if (self.macro_mode == "soft" and self.in_macro
-                        and self.macro_pos < len(self.macro) and sig == self.macro[self.macro_pos]):
-                    self._macro_clicked.add((action[2], action[1]))
-                    self.macro_pos += 1
-                # gated pre-flight: gather this level's early effective sigs, then deploy iff stable
-                if self.macro_mode == "gated" and self._gate_pending:
-                    self._level_sigs.add(sig)
-                    self._probe_eff += 1
-                    if self._probe_eff >= self.gate_probe_k:
-                        self._evaluate_gate()
+        if not (self.enable_macro and action[0] == "C" and self._prev_grid is not None):
+            return
+        # typed_tripwire: verify EVERY replayed click (incl. no-ops) -- abort on the first realized typed
+        # effect that diverges from what the banked chain step produced (the mechanic shifted on this level).
+        if self.macro_mode == "typed_tripwire" and self.in_macro:
+            if (self._verify_pos >= len(self.macro_typed)
+                    or self._typed_sig(action) != self.macro_typed[self._verify_pos]):
+                self.in_macro = False
+            self._verify_pos += 1
+        if next_key == key or reward != 0:
+            return
+        sig = self._cell_to_sig(self._prev_grid).get((action[2], action[1]))
+        if sig is None:
+            return
+        if not self._level_ops or self._level_ops[-1] != sig:
+            self._level_ops.append(sig)              # the actual working sequence this level
+            if self.macro_mode == "typed_tripwire":
+                self._level_typed.append(self._typed_sig(action))   # parallel typed effect
+        # soft replay: advance the chain pointer when its current step is achieved
+        if (self.macro_mode == "soft" and self.in_macro
+                and self.macro_pos < len(self.macro) and sig == self.macro[self.macro_pos]):
+            self._macro_clicked.add((action[2], action[1]))
+            self.macro_pos += 1
+        # gated pre-flight: gather this level's early effective sigs, then deploy iff stable
+        if self.macro_mode == "gated" and self._gate_pending:
+            self._level_sigs.add(sig)
+            self._probe_eff += 1
+            if self._probe_eff >= self.gate_probe_k:
+                self._evaluate_gate()
 
     # --- on level-up: bank the chain and arm replay for the next level ---------------------------
     def decide(self, grid, gstate_terminal, gstate_notplayed, levels, available):
@@ -93,8 +120,11 @@ class ChainMacroExplorer(TransferExplorer):
             elif levels > self.prev_levels:
                 if self._level_ops:
                     self.macro = list(self._level_ops)   # this level's solution sequence
+                    self.macro_typed = list(self._level_typed)
                 self._level_ops = []
+                self._level_typed = []
                 self.macro_pos = 0
+                self._verify_pos = 0
                 self._macro_clicked = set()
                 if self.macro_mode == "gated":
                     # arm the pre-flight probe: explore normally, gather sigs, deploy only if stable
@@ -147,7 +177,7 @@ class ChainMacroExplorer(TransferExplorer):
     def _choose(self, cur):
         # gated mode deploys the SAME hard directed replay as "hard", but only after the pre-flight gate
         # opened (mechanic confirmed stable on this level), so it never derails a shifting level.
-        if (self.macro_mode in ("hard", "gated") and self.enable_macro and self.in_macro
+        if (self.macro_mode in ("hard", "gated", "typed_tripwire") and self.enable_macro and self.in_macro
                 and self.macro_pos < len(self.macro)):
             a = self._macro_pick()
             if a is not None:
