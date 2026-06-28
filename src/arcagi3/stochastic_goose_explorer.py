@@ -127,7 +127,8 @@ class GooseEffectModel:
 class StochasticGooseExplorer:
     def __init__(self, seed: int = 0, model=None, temperature: float = 0.5,
                  max_click_targets: int = 96, coarse_grid_step: int = 8, border_mask: int = 2,
-                 min_train: int = 64, allow_cpu: bool = False) -> None:
+                 min_train: int = 64, allow_cpu: bool = False, stuck_mode: str = "random",
+                 max_stuck_resets: int = 200) -> None:
         self.rng = np.random.default_rng(seed)
         self.temperature = float(temperature)
         self.max_click_targets = int(max_click_targets)
@@ -136,6 +137,10 @@ class StochasticGooseExplorer:
         self._model = model
         self._min_train = int(min_train)
         self._allow_cpu = bool(allow_cpu)
+        # stuck_mode: "random" = take a random available action on local-exhaustion (v1);
+        # "reset" = Go-Explore-style bounce to root + re-explore a new branch via dedup.
+        self.stuck_mode = stuck_mode
+        self.max_stuck_resets = int(max_stuck_resets)
         self.reset_all()
 
     # duck-typing for the runner's states_seen (len(pol.gs.wm))
@@ -165,6 +170,7 @@ class StochasticGooseExplorer:
         self.prev_levels = 0
         self._last_oh = None
         self.expect_reset = False
+        self.stuck_resets = 0
 
     # -- keying (reuses the proven SalienceExplorer masking) --------------------------------------
     def _key(self, grid):
@@ -234,8 +240,14 @@ class StochasticGooseExplorer:
         tried = self.tried.setdefault(cur, set())
         untried = [(a, p) for (a, p) in cands if a not in tried]
         if not untried:
-            # stuck: all local actions tried -> take a random available action (accept a revisit).
-            # NEVER ("reset",) off-terminal: env.reset() returns to L0 (verified), catastrophic on deep levels.
+            # stuck: all local actions tried here.
+            if self.stuck_mode == "reset" and self.stuck_resets < self.max_stuck_resets:
+                # Go-Explore: bounce to root; dedup makes the re-exploration cover a new branch.
+                self.stuck_resets += 1
+                self.expect_reset = True
+                return ("reset",)
+            # default "random": take a random available action (accept a revisit). NEVER ("reset",)
+            # off-terminal in this mode: env.reset() returns to L0 (verified), costly on deep levels.
             if not cands:
                 return ("S", 1)
             return cands[int(self.rng.integers(0, len(cands)))][0]
