@@ -54,6 +54,10 @@ def run_game(game_id: str, games_dir: str, budget: int, seed: int = 0,
         from .transfer_explorer import TransferExplorer as _TE
         return run_reactive(env, game_id, budget, seed, policy_cls=_TE)
     _ac = os.getenv("ARCAGI3_ALLOW_CPU") == "1"  # local dev: let the learned model run on CPU
+    if agent_name == "goose":
+        from .stochastic_goose_explorer import StochasticGooseExplorer as _SG
+        return run_reactive(env, game_id, budget, seed,
+                            policy_cls=lambda seed=0: _SG(seed=seed, allow_cpu=_ac))
     if agent_name == "online":
         from .online_explorer import OnlineLearningExplorer as _OLE
         return run_reactive(env, game_id, budget, seed,
@@ -134,7 +138,7 @@ def main() -> None:
     ap.add_argument("--budget", type=int, default=4000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--agent", default="reactive",
-                    choices=list(AGENTS) + ["reactive", "wm", "salience", "transfer", "online", "primary", "value", "curiosity"])
+                    choices=list(AGENTS) + ["reactive", "wm", "salience", "transfer", "online", "primary", "value", "curiosity", "goose"])
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
