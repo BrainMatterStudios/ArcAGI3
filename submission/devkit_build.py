@@ -41,12 +41,18 @@ INSTALL = (
 )
 
 AB = r'''
-import os, sys, time, logging
+import os, sys, time, glob, logging
 os.environ["ARC_API_KEY"] = "local-dev"
 logging.basicConfig(level=logging.ERROR)
-DS = "/kaggle/input/arcagi3-devkit"
-sys.path.insert(0, DS)            # import arcagi3 from the dataset
-GAMES_DIR = os.path.join(DS, "environment_files")
+# Discover where the dataset placed the package + games (zip-mode strip is path-dependent).
+# Kaggle mounts datasets under /kaggle/input/datasets/<owner>/<slug>/ (newer layout) — discover it.
+_inits = glob.glob("/kaggle/input/**/arcagi3/__init__.py", recursive=True)
+_inits = [p for p in _inits if "environment_files" not in p]
+_root = os.path.dirname(os.path.dirname(_inits[0]))   # dir containing arcagi3/ + environment_files/
+sys.path.insert(0, _root)
+GAMES_DIR = os.path.join(_root, "environment_files")
+assert os.path.isdir(GAMES_DIR), (_root, os.listdir(_root))
+print("PKG_ROOT", _root, "GAMES_DIR", GAMES_DIR, "n_games", len(os.listdir(GAMES_DIR)), flush=True)
 
 print("=== GPU CHECK ===", flush=True)
 GPU = False
