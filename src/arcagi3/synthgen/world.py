@@ -17,7 +17,7 @@ from . import canvas as cv
 
 SIZE = 64
 BSIZE = 16  # compact grid for the probe (tractable solvers + small model input)
-FAMILIES = ["REACH", "COLLECT", "GATE", "PUSH"]
+FAMILIES = ["REACH", "COLLECT", "GATE", "PUSH", "AVOID", "TOGGLE", "CHASE", "KEYDOOR"]
 
 # action representation: movement ("M",dr,dc), click ("C",x,y), noop ("N",)
 UP = ("M", -1, 0)
@@ -36,7 +36,10 @@ class World:
     def __init__(self, family, *, bg, wall, avatar=None, avatar_color=0,
                  target=None, target_color=0, walls=None, size=SIZE,
                  items=None, item_color=0, switch=None, switch_color=0,
-                 block=None, block_color=0, marker=None, marker_color=0):
+                 block=None, block_color=0, marker=None, marker_color=0,
+                 hazard=None, hazard_color=0, flee_dist=8, switches=None,
+                 chase_drift=(0, 1), chase_slow=2, key=None, key_color=0,
+                 door=None, door_color=0):
         self.family = family
         self.size = size
         self.bg = int(bg)
@@ -55,6 +58,18 @@ class World:
         self.block_color = int(block_color)
         self.marker = tuple(marker) if marker is not None else None
         self.marker_color = int(marker_color)
+        self.hazard = tuple(hazard) if hazard is not None else None
+        self.hazard_color = int(hazard_color)
+        self.flee_dist = int(flee_dist)
+        self.switches = set(switches) if switches else set()
+        self.chase_drift = tuple(chase_drift)
+        self.chase_slow = int(chase_slow)
+        self.key = tuple(key) if key is not None else None
+        self.key_color = int(key_color)
+        self.door = tuple(door) if door is not None else None
+        self.door_color = int(door_color)
+        self.has_key = False
+        self._stepc = 0
         self.solved = False
 
     # --- geometry ---
@@ -83,15 +98,24 @@ class World:
     def step(self, action):
         if self.solved:
             return 0.0, True
+        self._stepc += 1
         kind = action[0]
         if kind == "M":
             self._move(action[1], action[2])
             if self.family == "COLLECT":
                 self.items.discard(self.avatar)  # pick up item on contact
+            elif self.family == "KEYDOOR" and self.avatar == self.key:
+                self.has_key = True              # pick up the key on contact
         elif kind == "C":
             x, y = action[1], action[2]      # x=col, y=row
             if self.family == "GATE" and self.switch is not None and (y, x) == self.switch:
                 self.gate_open = True        # click the switch -> open the gate
+            elif self.family == "TOGGLE":
+                self.switches.discard((y, x))  # click a switch -> it toggles off
+        if self.family == "CHASE" and self.target is not None and self._stepc % self.chase_slow == 0:
+            dr, dc = self.chase_drift             # the target drifts (clamped to interior)
+            self.target = (min(max(self.target[0] + dr, 1), self.size - 2),
+                           min(max(self.target[1] + dc, 1), self.size - 2))
         reward = self._check_win()
         return reward, self.solved
 
@@ -112,6 +136,22 @@ class World:
             if self.block is not None and self.block == self.marker:
                 self.solved = True
                 return 1.0
+        elif self.family == "AVOID":
+            if self.avatar is not None and _manhattan(self.avatar, self.hazard) >= self.flee_dist:
+                self.solved = True
+                return 1.0
+        elif self.family == "TOGGLE":
+            if not self.switches:
+                self.solved = True
+                return 1.0
+        elif self.family == "CHASE":
+            if self.avatar is not None and self.avatar == self.target:
+                self.solved = True
+                return 1.0
+        elif self.family == "KEYDOOR":
+            if self.has_key and self.avatar is not None and self.avatar == self.door:
+                self.solved = True
+                return 1.0
         return 0.0
 
     # --- rendering ---
@@ -123,6 +163,14 @@ class World:
             g[r, c] = self.item_color
         if self.switch is not None and not self.gate_open:
             g[self.switch] = self.switch_color  # switch disappears when clicked -> gate state VISIBLE
+        for (r, c) in self.switches:
+            g[r, c] = self.switch_color
+        if self.hazard is not None:
+            g[self.hazard] = self.hazard_color
+        if self.key is not None and not self.has_key:
+            g[self.key] = self.key_color        # key disappears when picked up -> state VISIBLE
+        if self.door is not None:
+            g[self.door] = self.door_color
         if self.marker is not None:
             g[self.marker] = self.marker_color
         if self.block is not None:
@@ -135,6 +183,22 @@ class World:
 
 
 # ---------------- on-path affordance label + candidates (env-truth, not a demonstrated policy) ----
+def _manhattan(a, b):
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+
+def _away(src, hazard, size):
+    """The move that most increases Manhattan distance from `hazard` (staying in bounds)."""
+    best, bd = None, -1
+    for mv in MOVES:
+        nr, nc = src[0] + mv[1], src[1] + mv[2]
+        if 0 <= nr < size and 0 <= nc < size:
+            d = abs(nr - hazard[0]) + abs(nc - hazard[1])
+            if d > bd:
+                best, bd = mv, d
+    return best or UP
+
+
 def _toward(src, dst):
     dr, dc = dst[0] - src[0], dst[1] - src[1]
     if abs(dr) >= abs(dc):
@@ -158,6 +222,15 @@ def rewarding_action(w: "World"):
         return _toward(w.avatar, w.target)
     if w.family == "PUSH":
         return _sokoban_first_move(w)         # general solver; None if the state is a deadlock
+    if w.family == "AVOID":
+        return _away(w.avatar, w.hazard, w.size)
+    if w.family == "TOGGLE":
+        sw = min(w.switches, key=lambda s: _manhattan(s, w.avatar))
+        return click(sw[1], sw[0])
+    if w.family == "CHASE":
+        return _toward(w.avatar, w.target)
+    if w.family == "KEYDOOR":
+        return _toward(w.avatar, w.key if not w.has_key else w.door)
     raise ValueError(w.family)
 
 
@@ -207,7 +280,8 @@ def _sokoban_first_move(w, max_expand=40000):
 def candidate_actions(w: "World"):
     """The action set scored by the probe: the 4 moves + a click on every distinct entity cell."""
     cands = list(MOVES)
-    for cell in [w.target, w.switch, w.block, w.marker, *sorted(w.items)]:
+    for cell in [w.target, w.switch, w.block, w.marker, w.hazard, w.key, w.door,
+                 *sorted(w.items), *sorted(w.switches)]:
         if cell is not None:
             cands.append(click(cell[1], cell[0]))
     return cands
@@ -265,4 +339,28 @@ def build(family, rng, size=BSIZE):
                          avatar_color=cols[2], block=(br, bc), block_color=cols[3],
                          marker=(mr, mc), marker_color=cols[4])
         raise RuntimeError("could not place a PUSH instance")
+    if family == "AVOID":
+        hz = _rand_cell(rng, size, taken)
+        # avatar near the hazard so fleeing is non-trivial but solvable on the open grid
+        av = _rand_cell(rng, size, taken)
+        return World("AVOID", bg=bg, wall=wall, walls=border, size=size, avatar=av,
+                     avatar_color=cols[2], hazard=hz, hazard_color=cols[3], flee_dist=int(rng.integers(7, 11)))
+    if family == "TOGGLE":
+        av = _rand_cell(rng, size, taken)
+        sws = {_rand_cell(rng, size, taken) for _ in range(int(rng.integers(2, 5)))}
+        return World("TOGGLE", bg=bg, wall=wall, walls=border, size=size, avatar=av,
+                     avatar_color=cols[2], switches=sws, switch_color=cols[3])
+    if family == "CHASE":
+        av = _rand_cell(rng, size, taken)
+        tg = _rand_cell(rng, size, taken)
+        drift = MOVES[int(rng.integers(4))][1:]
+        return World("CHASE", bg=bg, wall=wall, walls=border, size=size, avatar=av,
+                     avatar_color=cols[2], target=tg, target_color=cols[3],
+                     chase_drift=drift, chase_slow=int(rng.integers(2, 4)))
+    if family == "KEYDOOR":
+        av = _rand_cell(rng, size, taken)
+        ky = _rand_cell(rng, size, taken)
+        dr = _rand_cell(rng, size, taken)
+        return World("KEYDOOR", bg=bg, wall=wall, walls=border, size=size, avatar=av,
+                     avatar_color=cols[2], key=ky, key_color=cols[3], door=dr, door_color=cols[4])
     raise ValueError(family)
