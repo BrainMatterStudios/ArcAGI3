@@ -4,15 +4,31 @@ Fresh-session instructions to resume the ARC-AGI-3 campaign. Branch `winning/mec
 all committed (NOT pushed). Interpreter `.venv/bin/python`; always prefix `ARCAGI3_ALLOW_CPU=1 PYTHONPATH=src`.
 Never run a bare full `pytest` (one test hangs). Banked submission = **TransferExplorer = 0.33** (untouched).
 
-## 0. FIRST THING: read the research workflow result
-A `next-paradigm-research` workflow was launched at end of session (run `wf_eab5ed08-c8d`). Its result is the
-**Day-1 build plan** for this session — read it first:
-- Look in the task notifications / `/workflows`, or the transcript dir
-  `…/subagents/workflows/wf_eab5ed08-c8d`. The synthesis = TOP-3 ranked buildable bets + the cheapest decisive
-  first experiment + an honest verdict on whether any genuinely escapes the walls.
-- The workflow was briefed with the full state below, so its survivors are pre-filtered against the walls.
-- ALSO: 2026-06-30 (~2 days out) Milestone-1 pays #1 to OPEN-SOURCE the ~1.21 winner. The `june30-adopt`
-  lens produced a pre-build plan to ingest+harden it in our harness — high-EV, evidence-vindicated path.
+## 0. FIRST THING: the build plan is READY
+The `next-paradigm-research` workflow (run `wf_eab5ed08-c8d`) COMPLETED. Full plan:
+**`docs/superpowers/specs/2026-06-28-next-session-build-plan.md`**. 18 candidates → 2 survivors; honest
+verdict: **no survivor escapes the SPIRIT of W1-W4**; both research arms are odds-on to join the graveyard,
+so run them as CHEAP KILL-TESTS only. Sequence:
+- **Day-1 AM — BET 2 (cheapest, decisive, NO training):** oracle-reorder ceiling probe for the click-affordance
+  lever. Pure replay over existing dev traces: per COMPLETED level on L0/L1-walling games, count pre-levelup
+  no-op clicks a perfect change-affordance oracle would reorder after the level-up; convert to weighted-RHAE
+  (quadratic). KILL if gain < ~0.05 (the upper bound of the whole arm; likely thin = the "dev-efficiency
+  Kaggle-inert" reduction that killed CAIPrune 0.28). Only if > ~0.15 build the within-level Conv2d head. Files:
+  `agent.py` L49-60 (salient_click_targets), `cai_prune_explorer.py` (51% no-op audit), `spatial_value_explorer.py`
+  L45-60 (the click-VALUE head that DIVERTS — stay an action-space prior, never a value signal).
+- **Day-1 PM → Day-2 — BET 3 (settles W1 weak-vs-strong):** held-out-family synthetic feasibility probe.
+  USE THE EXISTING `src/arcagi3/synthgen/{canvas,genres}.py` generator: 3-4 mechanic families (gate/switch/
+  collect/reach), role-randomized so colour/shape carry zero surface signal; train an in-context GRU /
+  small decision-transformer over (frame,action,frame-change) history, LEAVE-ONE-MECHANIC-FAMILY-OUT; measure
+  held-out-family level-up rate vs random (synthetic→synthetic, zero sim-to-real gap). KILL if ≈ random
+  (confirms W1-STRONG: in-context inference can't generalize across families even synthetically → meta-RL
+  hypothesis class closed). Only on a clear margin proceed to leave-one-REAL-game-out.
+- **On 2026-06-30 drop — BET 1 (rank-1 ceiling, gated on the external event):** ADOPT + HARDEN the open-source
+  #1 winner into the hardened harness. Classify their core into a Learner slot (policy → `Learner.act`;
+  exploration heuristic → abstain-default add-only; online model → T4 fail-safe path). Reproduce their number
+  on shared dev games FIRST, then graft with banked-0.33 as the fallback branch. Day-1 kill-test: does it clear
+  L0/L1 on games TransferExplorer cannot? If yes → harden against their preview overfit-collapse (12.58→0.25);
+  if it walls identically → adopt-inert, ship banked 0.33. **Hold dual-T4 capacity in reserve for fast integration.**
 
 ## 1. State of play (read the memories)
 - `arcagi3-rhae-headroom.md` — the efficiency line + the 7-discriminator battery + the help-vs-derail wall.
