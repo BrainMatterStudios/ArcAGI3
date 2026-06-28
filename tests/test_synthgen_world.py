@@ -101,6 +101,15 @@ def test_gate_click_elsewhere_does_not_open():
     assert w.gate_open is False
 
 
+def test_gate_open_is_visible_switch_disappears():
+    # gate state must be observable (else GATE tests perception W, not inference W1).
+    w = World("GATE", bg=0, wall=1, avatar=(10, 10), avatar_color=2,
+              target=(10, 20), target_color=3, switch=(2, 2), switch_color=5)
+    assert w.frame()[2, 2] == 5
+    w.step(click(2, 2))
+    assert w.frame()[2, 2] != 5   # visible change confirms the click worked
+
+
 # ---------------- PUSH (sokoban: push block onto marker) ----------------
 def test_push_block_shifts_when_avatar_moves_into_it():
     w = World("PUSH", bg=0, wall=1, avatar=(5, 5), avatar_color=2,
