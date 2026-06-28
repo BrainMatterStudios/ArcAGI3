@@ -4,7 +4,7 @@ from arcengine import GameAction, GameState
 
 from arcagi3 import perception as P
 from arcagi3.transfer_explorer import TransferExplorer
-from arcagi3.learned_explorer import LearnedExplorer, Learner
+from arcagi3.learned_explorer import LearnedExplorer, Learner, EffectLearner
 
 GAMES_DIR = "src/arcagi3/games"
 CFG = dict(seed=0, trust_threshold=3, border_mask=2)
@@ -71,3 +71,18 @@ def test_active_learner_action_is_used():
     pol = LearnedExplorer(enable_learn=True, learner=_Forcer(), require_gpu=False, **CFG)
     toks = _drive(pol, "navg", 60)
     assert ("S", 1) in toks              # the learner's forced action appears in the trace
+
+
+def test_effect_learner_exercises_harness_end_to_end():
+    """The prototype runs end-to-end through the scaffold: observe accumulates effect stats, act fires."""
+    lr = EffectLearner(min_obs=2)
+    pol = LearnedExplorer(enable_learn=True, learner=lr, require_gpu=False, **CFG)
+    toks = _drive(pol, "navg", 300)
+    assert len(toks) > 50
+    assert lr.eff and any(tot >= 2 for _e, tot in lr.eff.values())   # online learning happened
+
+
+def test_effect_learner_off_byte_identical():
+    base = _drive(TransferExplorer(**CFG), "push", 400)
+    off = _drive(LearnedExplorer(enable_learn=False, learner=EffectLearner(), **CFG), "push", 400)
+    assert off == base
