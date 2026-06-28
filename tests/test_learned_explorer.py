@@ -86,3 +86,19 @@ def test_effect_learner_off_byte_identical():
     base = _drive(TransferExplorer(**CFG), "push", 400)
     off = _drive(LearnedExplorer(enable_learn=False, learner=EffectLearner(), **CFG), "push", 400)
     assert off == base
+
+
+def test_dynamics_learner_off_byte_identical():
+    from arcagi3.learned_dynamics import DynamicsLearner
+    base = _drive(TransferExplorer(**CFG), "push", 400)
+    off = _drive(LearnedExplorer(enable_learn=False, learner=DynamicsLearner(), **CFG), "push", 400)
+    assert off == base
+
+
+def test_dynamics_learner_trains_online():
+    """The real neural TTT learner trains end-to-end through the fail-safe harness (CPU, require_gpu=False).
+    Uses push (no fast level-ups, so the per-level reset doesn't clear the buffer before training)."""
+    from arcagi3.learned_dynamics import DynamicsLearner
+    lr = DynamicsLearner(min_train=8, train_every=4)
+    _drive(LearnedExplorer(enable_learn=True, learner=lr, require_gpu=False, **CFG), "push", 200)
+    assert lr._n_seen > 8 and lr._net is not None     # online training actually ran
