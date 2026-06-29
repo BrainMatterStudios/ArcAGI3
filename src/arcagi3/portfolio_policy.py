@@ -41,6 +41,12 @@ class PortfolioPolicy:
         self._since_level = 0
         self._best_levels = 0
         self._pending_resets = 0   # resets to inject for a play transition (2 = double-reset -> new play)
+        # SAFETY: the harness sets this each step to obs.full_reset. We verify the FIRST transition's
+        # double-reset actually created a new play; if the engine never flags full_reset, the multi-play
+        # mechanism is broken -> we revert to strategy 0 and stop transitioning (hard no-regression floor).
+        self._last_full_reset = False
+        self._saw_full_reset = False
+        self._multiplay_broken = False
 
     @property
     def gs(self):
@@ -49,7 +55,15 @@ class PortfolioPolicy:
     def decide(self, grid, gstate_terminal, gstate_notplayed, levels, available):
         # inject the double-reset that starts a NEW PLAY before the next strategy runs
         if self._pending_resets > 0:
+            if self._last_full_reset:
+                self._saw_full_reset = True
             self._pending_resets -= 1
+            if self._pending_resets == 0 and not self._saw_full_reset:
+                # the engine did NOT create a new play -> multi-play unsupported here. Abort to the
+                # banked best strategy and never transition again (cannot regress below it).
+                self._multiplay_broken = True
+                self.idx = 0
+                self._since_level = 0
             return ("reset",)
 
         # progress tracking: a NEW level resets the stall counter
@@ -64,10 +78,12 @@ class PortfolioPolicy:
             self._since_level += 1
 
         # plateaued on levels -> rotate to the next strategy (if any) via a new play
-        if self._since_level >= self.level_stall_limit and self.idx < len(self.pols) - 1:
+        if (not self._multiplay_broken and self._since_level >= self.level_stall_limit
+                and self.idx < len(self.pols) - 1):
             self.idx += 1
             self._since_level = 0
             self._pending_resets = 2          # double-reset -> full_reset -> new play slot
+            self._saw_full_reset = False      # verify THIS transition creates a new play
             return ("reset",)
 
         return cur.decide(grid, gstate_terminal, gstate_notplayed, levels, available)

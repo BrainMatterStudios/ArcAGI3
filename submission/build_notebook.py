@@ -20,7 +20,10 @@ CORE = ["__init__.py", "perception.py", "world_model.py", "movement.py", "agent.
         "policy.py", "spatial.py", "salience_explorer.py",
         "transfer_explorer.py",  # fallback (v13): SalienceExplorer + within-game reward transfer
         "cai_prune_explorer.py",       # no-op-click pruning lever
-        "transfer_cai_explorer.py",    # PRIMARY: transfer + CAI-prune combo
+        "transfer_cai_explorer.py",    # transfer + CAI-prune combo
+        "relational_explorer.py",          # portfolio strategy: relational coverage
+        "transfer_relational_explorer.py", # portfolio strategy: transfer + relational
+        "portfolio_policy.py",         # PRIMARY: multi-strategy portfolio (max-over-plays, strict-superset)
         "online_model.py", "online_explorer.py"]  # Phase A (opt-in via ARCAGI3_ONLINE=1)
 PKG = {name: base64.b64encode((SRC / name).read_bytes()).decode() for name in CORE}
 

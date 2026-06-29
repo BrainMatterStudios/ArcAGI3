@@ -58,6 +58,10 @@ def run_game(game_id: str, games_dir: str, budget: int, seed: int = 0,
         from .stochastic_goose_explorer import StochasticGooseExplorer as _SG
         return run_reactive(env, game_id, budget, seed,
                             policy_cls=lambda seed=0: _SG(seed=seed, allow_cpu=_ac))
+    if agent_name == "portfolio":
+        from .portfolio_policy import PortfolioPolicy as _PP
+        return run_reactive(env, game_id, budget, seed,
+                            policy_cls=lambda seed=0: _PP(seed=seed))
     if agent_name == "rewardrl":
         from .learned_explorer import LearnedExplorer as _LE
         from .reward_rl_learner import RewardRLLearner as _RL
@@ -114,6 +118,8 @@ def run_reactive(env, game_id: str, budget: int, seed: int = 0,
             reason = "win"
             break
         grid = P_to_grid(obs.frame)
+        if hasattr(pol, "_last_full_reset"):  # side-channel for PortfolioPolicy's new-play safety check
+            pol._last_full_reset = bool(getattr(obs, "full_reset", False))
         token = pol.decide(
             grid,
             gstate_terminal=(obs.state == GameState.GAME_OVER),
@@ -146,7 +152,7 @@ def main() -> None:
     ap.add_argument("--budget", type=int, default=4000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--agent", default="reactive",
-                    choices=list(AGENTS) + ["reactive", "wm", "salience", "transfer", "online", "primary", "value", "curiosity", "goose", "rewardrl"])
+                    choices=list(AGENTS) + ["reactive", "wm", "salience", "transfer", "online", "primary", "value", "curiosity", "goose", "rewardrl", "portfolio"])
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
