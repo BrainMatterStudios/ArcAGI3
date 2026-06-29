@@ -17,14 +17,21 @@ DENSE = dict(trust_threshold=3, border_mask=2, coarse_grid_step=4, max_click_tar
 
 
 def _default_strategies():
-    # (name, factory(seed)) — diverse coverage explorers; strategy 0 = banked best (strict-superset anchor).
+    # (name, factory(seed)) — strategy 0 = banked best (strict-superset anchor). Mix of COVERAGE explorers
+    # (complete more levels) and an EFFICIENCY play (chain_macro: replays the level-k solution chain on
+    # level k+1 -> reaches deep levels in far fewer actions, e.g. lp85 L5 3.7x). Since the eval scores
+    # per-level = min(cap, baseline/agent_actions), efficiency is the DOMINANT lever; max-over-plays takes
+    # the efficient play where chain_macro helps and the explorer play where it derails (vc33/cd82) -> the
+    # W4 deploy-discrimination wall is removed by the additive framing. All strictly additive (no regression).
     from .transfer_explorer import TransferExplorer
     from .transfer_relational_explorer import TransferRelationalExplorer
     from .relational_explorer import RelationalExplorer
     from .transfer_cai_explorer import TransferCAIExplorer
+    from .chain_macro_explorer import ChainMacroExplorer
     return [
         ("transfer_s0", lambda s: TransferExplorer(seed=s, **DENSE)),
         ("transfer_rel", lambda s: TransferRelationalExplorer(seed=s, **DENSE)),
+        ("chain_macro", lambda s: ChainMacroExplorer(seed=s, enable_macro=True, macro_mode="hard", **DENSE)),
         ("transfer_s1", lambda s: TransferExplorer(seed=s + 101, **DENSE)),
         ("relational", lambda s: RelationalExplorer(seed=s, **DENSE)),
         ("transfer_cai", lambda s: TransferCAIExplorer(seed=s, **DENSE)),

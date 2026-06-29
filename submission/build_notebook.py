@@ -23,6 +23,8 @@ CORE = ["__init__.py", "perception.py", "world_model.py", "movement.py", "agent.
         "transfer_cai_explorer.py",    # transfer + CAI-prune combo
         "relational_explorer.py",          # portfolio strategy: relational coverage
         "transfer_relational_explorer.py", # portfolio strategy: transfer + relational
+        "events.py",                       # dep of chain_macro
+        "chain_macro_explorer.py",         # portfolio EFFICIENCY play (replay solution chain, lp85 3.7x)
         "portfolio_policy.py",         # PRIMARY: multi-strategy portfolio (max-over-plays, strict-superset)
         "online_model.py", "online_explorer.py"]  # Phase A (opt-in via ARCAGI3_ONLINE=1)
 PKG = {name: base64.b64encode((SRC / name).read_bytes()).decode() for name in CORE}
