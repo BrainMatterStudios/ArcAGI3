@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Geodesic Double-Reset Fix — Eval-Faithful Validation</title>
+<style>
+  :root{--bg:#0f1117;--card:#181b24;--ink:#e7e9ee;--mut:#9aa3b2;--good:#34d399;--warn:#fbbf24;--bad:#f87171;--line:#262a36;--accent:#60a5fa}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:32px 22px 80px}
+  h1{font-size:26px;margin:0 0 4px;letter-spacing:-.3px}
+  h2{font-size:18px;margin:34px 0 12px;border-left:3px solid var(--accent);padding-left:10px}
+  .sub{color:var(--mut);margin:0 0 8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:680px){.grid{grid-template-columns:1fr}}
+  code{background:#11141c;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:13px;color:#cbd5e1}
+  table{width:100%;border-collapse:collapse;margin-top:6px;font-size:13.5px}
+  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line)}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  td.num{font-variant-numeric:tabular-nums;text-align:right}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .pg{background:rgba(52,211,153,.15);color:var(--good)}
+  .pw{background:rgba(251,191,36,.15);color:var(--warn)}
+  .pb{background:rgba(248,113,113,.15);color:var(--bad)}
+  .big{font-size:30px;font-weight:700;letter-spacing:-.5px}
+  .good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}.mut{color:var(--mut)}
+  .bar{height:8px;border-radius:4px;overflow:hidden;background:#1f2430}
+  .bar>span{display:block;height:100%;background:linear-gradient(90deg,#60a5fa,#34d399)}
+  ul{margin:8px 0;padding-left:20px}li{margin:4px 0}
+  .foot{color:var(--mut);font-size:12.5px;margin-top:30px;border-top:1px solid var(--line);padding-top:14px}
+  .tag{font-size:11px;color:var(--mut);background:#11141c;border:1px solid var(--line);border-radius:4px;padding:1px 6px;margin-left:6px}
+</style>
+</head>
+<body><div class="wrap">
+
+<h1>Geodesic Double-Reset Fix <span class="tag">commit df9b96b</span></h1>
+<p class="sub">Eval-faithful validation across all 25 dev games &middot; 2026-06-29 &middot; ARC-AGI-3 offline</p>
+
+<div class="card" style="border-color:#2a3550">
+  <strong>One-line story.</strong> The geodesic efficiency play was a <span class="bad">no-op</span> &mdash; it
+  issued a <em>single</em> reset before replaying, which the engine treats as a level-reset <em>within the same
+  play</em>, so the efficient replay was never scored as a separate play. Measured <strong>1.0&times;</strong>
+  (zero gain). After emitting a <em>double</em> reset (&rarr; <code>full_reset</code> &rarr; genuine new play
+  that max-over-plays scores), it now delivers <span class="good">2.6&ndash;152&times; per-play efficiency on
+  15/25 games</span>, with no regression anywhere.
+</div>
+
+<h2>The bug &amp; the fix</h2>
+<div class="grid">
+  <div class="card">
+    <div class="mut" style="font-size:12px;text-transform:uppercase;letter-spacing:.4px">Before (bugged)</div>
+    <p>Per-<code>full_reset</code>-play measurement (the actual eval metric) on tu93:</p>
+    <table>
+      <tr><th>Level</th><th class="num">transfer</th><th class="num">geodesic</th><th class="num">gain</th></tr>
+      <tr><td>L1&ndash;L5</td><td class="num">431&hellip;5170</td><td class="num">431&hellip;5170</td><td class="num bad">1.0&times;</td></tr>
+    </table>
+    <p class="mut" style="font-size:12.5px">The earlier &ldquo;5&ndash;152&times;&rdquo; claim was a wrong-baseline
+    artifact (replay vs <em>first-reach</em>, never verifying a new play was created).</p>
+  </div>
+  <div class="card">
+    <div class="good" style="font-size:12px;text-transform:uppercase;letter-spacing:.4px">After (fixed)</div>
+    <p>Same measurement, double-reset &rarr; new play scored by max-over-plays:</p>
+    <table>
+      <tr><th>Lvl</th><th class="num">transfer</th><th class="num">geodesic</th><th class="num">gain</th></tr>
+      <tr><td>L1</td><td class="num">431</td><td class="num">23</td><td class="num good">18.7&times;</td></tr>
+      <tr><td>L3</td><td class="num">1134</td><td class="num">93</td><td class="num good">12.2&times;</td></tr>
+      <tr><td>L5</td><td class="num">5170</td><td class="num">142</td><td class="num good">36.4&times;</td></tr>
+    </table>
+    <p class="mut" style="font-size:12.5px">Also reordered geodesic &rarr; <strong>strategy 0</strong> so
+    efficiency deploys from action 0; transfer is the strategy-1 coverage anchor.</p>
+  </div>
+</div>
+
+<h2>Complete eval-faithful map &mdash; 25 games</h2>
+<div class="card">
+<table>
+  <tr><th>Game</th><th class="num">L1 transfer</th><th class="num">L1 geodesic</th><th class="num">speedup</th><th>note</th></tr>
+  <tr><td>ft09</td><td class="num">4863</td><td class="num">32</td><td class="num good">152&times;</td><td></td></tr>
+  <tr><td>dc22</td><td class="num">5305</td><td class="num">48</td><td class="num good">110&times;</td><td></td></tr>
+  <tr><td>ls20</td><td class="num">7961</td><td class="num">73</td><td class="num good">109&times;</td><td class="mut">&ldquo;invisible mechanic&rdquo; game &mdash; solved &amp; sped up</td></tr>
+  <tr><td>s5i5</td><td class="num">2580</td><td class="num">30</td><td class="num good">86&times;</td><td></td></tr>
+  <tr><td>ar25</td><td class="num">2749</td><td class="num">56</td><td class="num good">49&times;</td><td class="mut">L2 also 42&times;</td></tr>
+  <tr><td>cn04</td><td class="num">1720</td><td class="num">45</td><td class="num good">38&times;</td><td></td></tr>
+  <tr><td>lp85</td><td class="num">459</td><td class="num">13</td><td class="num good">35&times;</td><td class="mut">deep: L1&ndash;L5 all efficient</td></tr>
+  <tr><td>su15</td><td class="num">369</td><td class="num">17</td><td class="num good">22&times;</td><td></td></tr>
+  <tr><td>tu93</td><td class="num">431</td><td class="num">23</td><td class="num good">19&times;</td><td class="mut">deep: L1&ndash;L5</td></tr>
+  <tr><td>m0r0</td><td class="num">1952</td><td class="num">105</td><td class="num good">19&times;</td><td></td></tr>
+  <tr><td>tn36</td><td class="num">143</td><td class="num">18</td><td class="num good">7.9&times;</td><td></td></tr>
+  <tr><td>cd82</td><td class="num">367</td><td class="num">55</td><td class="num good">6.7&times;</td><td></td></tr>
+  <tr><td>r11l</td><td class="num">223</td><td class="num">40</td><td class="num good">5.6&times;</td><td></td></tr>
+  <tr><td>vc33</td><td class="num">77</td><td class="num">25</td><td class="num good">3.1&times;</td><td class="good">L3: 8609&rarr;128 = 67&times;</td></tr>
+  <tr><td>tr87</td><td class="num">212</td><td class="num">83</td><td class="num good">2.6&times;</td><td></td></tr>
+  <tr style="opacity:.7"><td>lf52</td><td class="num">163</td><td class="num">163</td><td class="num warn">1.0&times;</td><td class="mut">animation desync &mdash; exact-frame breaks; no regression (transfer anchor still gets L2)</td></tr>
+  <tr style="opacity:.7"><td>sp80</td><td class="num">12</td><td class="num">12</td><td class="num warn">1.0&times;</td><td class="mut">already 12 actions &mdash; nothing to capture</td></tr>
+  <tr style="opacity:.55"><td>bp35 g50t ka59 re86<br>sb26 sc25 sk48 wa30</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num bad">0</td><td class="mut">W1 wall &mdash; never reach L1 (efficiency can&rsquo;t help; unchanged)</td></tr>
+</table>
+</div>
+<p class="sub"><span class="pill pg">15 games sped up 2.6&ndash;152&times;</span> &nbsp;
+  <span class="pill pw">2 neutral, no regression</span> &nbsp;
+  <span class="pill pb">8 still W1-walled</span></p>
+
+<h2>What this does to the score</h2>
+<div class="card">
+  <p>Verified scoring (installed <code>arc_agi/scorecard.py:123</code>):
+  <code>level_score = min(baseline&divide;actions &times; 100, 100)</code>, averaged over all game levels (unreached = 0),
+  per-game = <strong>max over plays</strong>.</p>
+  <p>The geodesic action counts (mostly <strong>13&ndash;105</strong>) are now in the <em>human-plausible</em>
+  range, so reached levels jump toward the cap; transfer&rsquo;s thousands score near zero. Example (tu93 L1,
+  assuming a human baseline ~30):</p>
+  <table>
+    <tr><th></th><th class="num">actions</th><th class="num">level score</th></tr>
+    <tr><td>transfer</td><td class="num">431</td><td class="num bad">~7 / 100</td></tr>
+    <tr><td>geodesic</td><td class="num">23</td><td class="num good">100 / 100 (capped)</td></tr>
+  </table>
+  <p style="margin-top:12px">So reached levels go from <span class="bad">single-digit</span> to
+  <span class="good">near-cap</span> &mdash; a <strong>10&ndash;100&times; per-level score increase</strong> on
+  the 15 helped games, strictly additive (max-over-plays never takes a worse play).</p>
+</div>
+
+<h2 class="warn">Honest uncertainty</h2>
+<div class="card" style="border-color:#3a3320">
+  <ul>
+    <li><strong>Human baselines are unknown offline.</strong> The exact per-level score needs the hidden games&rsquo;
+      baseline action counts. If humans are very efficient (small baseline), scores land below the cap but still
+      far above transfer. The <em>direction</em> and <em>magnitude</em> (large) are robust; the precise number is not.</li>
+    <li><strong>Coverage still bounds per-game score.</strong> Efficiency maximizes the score of <em>reached</em>
+      levels; it does not reach <em>more</em> levels. Games where we only reach L1 of many are still capped by that.</li>
+    <li><strong>The 8 W1 zero-games are untouched.</strong> Efficiency can&rsquo;t help where we never reach L1 &mdash;
+      that gap needs genuine mechanic-solving (the June-30 adopt-and-harden target).</li>
+    <li><strong>Deploy requires re-pushing the kernel.</strong> Kaggle v22 was built with the bugged no-op; the fix
+      must be re-pushed before submission or it ships transfer-only (~0.33).</li>
+  </ul>
+</div>
+
+<p class="foot">Generated from <code>scratchpad/sweep.py</code> (per-<code>full_reset</code>-play metric, the true
+max-over-plays scoring) over all 25 dev games. The fix + reorder live in
+<code>src/arcagi3/geodesic_replay_explorer.py</code> and <code>portfolio_policy.py</code>; notebook rebuilt (19 modules).</p>
+
+</div></body></html>
