@@ -33,11 +33,14 @@ def _fh(grid) -> bytes:
 
 
 class GeodesicReplayExplorer(TransferExplorer):
-    def __init__(self, *args, explore_levels: int = 12, replay_after_stall: int = 4000, **kwargs) -> None:
+    def __init__(self, *args, explore_levels: int = 12, replay_after_stall: int = 4000,
+                 max_cycles: int = 10, **kwargs) -> None:
         # Transition EXPLORE->REPLAY when either `explore_levels` are mapped OR the explorer goes
-        # `replay_after_stall` actions with no new level (it has mapped what it can this budget).
+        # `replay_after_stall` actions with no new level. MULTI-CYCLE: after each replay reaches the mapped
+        # depth, explore deeper from there and replay the now-longer chain (up to max_cycles).
         self.explore_levels = int(explore_levels)
         self.replay_after_stall = int(replay_after_stall)
+        self.max_cycles = int(max_cycles)
         super().__init__(*args, **kwargs)
 
     def reset_all(self):
@@ -52,6 +55,7 @@ class GeodesicReplayExplorer(TransferExplorer):
         self._replay: list = []              # flattened action queue for the REPLAY phase
         self._replay_i = 0
         self._since_level = 0
+        self._cycle = 0
 
     # -- exact-frame graph bookkeeping (runs during EXPLORE) --------------------------------------
     def _bfs(self, src: bytes, dst: bytes):
@@ -74,13 +78,21 @@ class GeodesicReplayExplorer(TransferExplorer):
         cur_h = _fh(grid)
 
         if self._phase == "replay":
-            # emit the precomputed geodesic actions; when exhausted, hand back to the explorer (it can
-            # extend from the efficiently-reached state).
+            # emit the precomputed geodesic actions in sequence
             if self._replay_i < len(self._replay):
                 tok = self._replay[self._replay_i]
                 self._replay_i += 1
                 return tok
-            return super().decide(grid, gstate_terminal, gstate_notplayed, levels, available)
+            # replay exhausted -> we've reached the mapped depth efficiently. MULTI-CYCLE: switch back to
+            # EXPLORE to map DEEPER levels from here; the next _begin_replay replays the full (now-deeper)
+            # chain. This progressively captures L2+ efficiency (where the 100-800x headroom lives).
+            self._phase = "explore"
+            self._level_start = cur_h
+            self._prev_h = None
+            self._prev_tok = None
+            self._gl_levels = levels
+            self._since_level = 0
+            # fall through into the EXPLORE logic below
 
         # EXPLORE phase
         if gstate_terminal or gstate_notplayed:
@@ -101,12 +113,13 @@ class GeodesicReplayExplorer(TransferExplorer):
                 self._gl_levels = levels
                 self._level_start = cur_h        # next level starts here
                 self._since_level = 0
-                if levels >= self.explore_levels:
+                if levels >= self.explore_levels and self._cycle < self.max_cycles:
                     return self._begin_replay()
             else:
                 self._since_level += 1
                 # explorer has stalled -> replay what we mapped (only if we mapped >=1 level)
-                if self._geodesics and self._since_level >= self.replay_after_stall:
+                if (self._geodesics and self._since_level >= self.replay_after_stall
+                        and self._cycle < self.max_cycles):
                     return self._begin_replay()
 
         tok = super().decide(grid, gstate_terminal, gstate_notplayed, levels, available)
@@ -116,7 +129,8 @@ class GeodesicReplayExplorer(TransferExplorer):
 
     def _begin_replay(self):
         self._phase = "replay"
-        self._replay = [t for geo in self._geodesics for t in geo]
+        self._replay = [t for geo in self._geodesics for t in geo]   # full accumulated geodesic chain
         self._replay_i = 0
+        self._cycle += 1
         self.expect_reset = True
         return ("reset",)
