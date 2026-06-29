@@ -30,17 +30,18 @@ def _default_strategies():
     from .chain_macro_explorer import ChainMacroExplorer
     from .geodesic_replay_explorer import GeodesicReplayExplorer
     return [
-        # STRATEGY 0 = EFFICIENCY play (the DOMINANT score lever): geodesic_replay explores like
-        # TransferExplorer (same coverage) AND replays the EXACT-FRAME shortest path to each reward in a
-        # NEW PLAY (double-reset), so max-over-plays scores the levels at 7-109x fewer actions (VALIDATED
-        # per-play: tu93 L1 23 vs 431=18.7x, ls20 109x, lp85 12-35x). Deployed FIRST so efficiency lands
-        # from action 0, not gated behind a 20000-action transfer stall.
-        ("geodesic_replay", lambda s: GeodesicReplayExplorer(seed=s, **DENSE)),
-        # STRATEGY 1 = pure-coverage ANCHOR (strict-superset floor): catches LATE-breakthrough levels the
-        # geodesic abandons exploring to replay (e.g. lf52 L2 at 6300 actions). Guarantees game score >=
-        # banked TransferExplorer on every game; max-over-plays unions its coverage with the geodesic's
-        # efficiency (lf52: L1 efficient from geodesic + L2 covered from here).
+        # STRATEGY 0 = pure-coverage ANCHOR (strict-superset floor): TransferExplorer completes levels at FULL
+        # speed (no replay diversion), guaranteeing game score >= banked TransferExplorer on every game. MUST
+        # be first: making the geodesic strategy 0 diverts budget into explore->replay cycles and completes
+        # levels ~2.5x SLOWER (push: 33482 vs 13411 actions for 3 levels) -> REGRESSES coverage under a bounded
+        # budget. Coverage-first is non-negotiable; efficiency is added as a later play.
         ("transfer_s0", lambda s: TransferExplorer(seed=s, **DENSE)),
+        # STRATEGY 1 = EFFICIENCY play (the dominant score lever, ADDED not substituted): geodesic_replay
+        # replays the EXACT-FRAME shortest path to each reward in a NEW PLAY (double-reset), so max-over-plays
+        # scores the levels at 7-109x fewer actions (validated per-play: tu93 18.7x, ls20 109x, lp85 12-35x).
+        # Runs AFTER transfer banks coverage -> strictly additive, cannot regress (if the eval budget is too
+        # tight for it to deploy, we keep transfer's coverage = the banked floor).
+        ("geodesic_replay", lambda s: GeodesicReplayExplorer(seed=s, **DENSE)),
         ("transfer_rel", lambda s: TransferRelationalExplorer(seed=s, **DENSE)),
         ("chain_macro", lambda s: ChainMacroExplorer(seed=s, enable_macro=True, macro_mode="hard", **DENSE)),
         ("transfer_s1", lambda s: TransferExplorer(seed=s + 101, **DENSE)),
