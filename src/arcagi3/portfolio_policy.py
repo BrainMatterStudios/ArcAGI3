@@ -31,16 +31,18 @@ def _default_strategies():
     from .geodesic_replay_explorer import GeodesicReplayExplorer
     return [
         # STRATEGY 0 = pure-coverage ANCHOR (strict-superset floor): TransferExplorer completes levels at FULL
-        # speed (no replay diversion), guaranteeing game score >= banked TransferExplorer on every game. MUST
-        # be first: making the geodesic strategy 0 diverts budget into explore->replay cycles and completes
-        # levels ~2.5x SLOWER (push: 33482 vs 13411 actions for 3 levels) -> REGRESSES coverage under a bounded
-        # budget. Coverage-first is non-negotiable; efficiency is added as a later play.
+        # speed, banking coverage as a play. MUST be a SEPARATE pure-transfer strategy (not a geodesic): because
+        # transfer banks the full coverage here, the geodesic (strategy 1) can replay AGGRESSIVELY (low R)
+        # WITHOUT any coverage risk -- its premature replays only affect ITS OWN play, and max-over-plays unions
+        # transfer's coverage with the geodesic's efficiency. (Making the geodesic strategy 0 reintroduces the
+        # coverage risk: a low R regresses [push R=4000 -> only L1], a high R defers efficiency past the budget
+        # on deep games [tu93 R=20000 never replays in 26000]. Keeping them separate is strictly safer.)
         ("transfer_s0", lambda s: TransferExplorer(seed=s, **DENSE)),
-        # STRATEGY 1 = EFFICIENCY play (the dominant score lever, ADDED not substituted): geodesic_replay
-        # replays the EXACT-FRAME shortest path to each reward in a NEW PLAY (double-reset), so max-over-plays
-        # scores the levels at 7-109x fewer actions (validated per-play: tu93 18.7x, ls20 109x, lp85 12-35x).
-        # Runs AFTER transfer banks coverage -> strictly additive, cannot regress (if the eval budget is too
-        # tight for it to deploy, we keep transfer's coverage = the banked floor).
+        # STRATEGY 1 = EFFICIENCY play (dominant score lever, ADDED not substituted): geodesic_replay re-explores
+        # then replays the EXACT-FRAME shortest path to each reward in a NEW PLAY (double-reset) -> max-over-plays
+        # scores those levels at 7-109x fewer actions (validated per-play: tu93 18.7x, ls20 109x, lp85 12-35x).
+        # Re-exploration is a budget cost, NOT a coverage risk (transfer already banked coverage). Deploys when
+        # the eval per-game budget is generous; if too tight, falls back to transfer coverage = the banked floor.
         ("geodesic_replay", lambda s: GeodesicReplayExplorer(seed=s, **DENSE)),
         ("transfer_rel", lambda s: TransferRelationalExplorer(seed=s, **DENSE)),
         ("chain_macro", lambda s: ChainMacroExplorer(seed=s, enable_macro=True, macro_mode="hard", **DENSE)),
