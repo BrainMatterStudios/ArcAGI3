@@ -156,9 +156,25 @@ def cell_md(src):
     return {"cell_type": "markdown", "metadata": {}, "source": src.splitlines(keepends=True)}
 
 
+VERIFY = """\
+# Verify the agent imports + selects PortfolioPolicy (catches import errors BEFORE the scored rerun).
+import sys as _sys
+_sys.path.insert(0, '/kaggle/working')
+try:
+    import importlib as _il
+    _ma = _il.import_module('my_agent')
+    print('[verify] agent _Policy =', getattr(_ma._Policy, '__name__', None), flush=True)
+    from arcagi3.portfolio_policy import PortfolioPolicy as _PP
+    print('[verify] PortfolioPolicy strategies =', _PP(seed=0).names, flush=True)
+    assert _ma._Policy is not None and _ma._Policy.__name__ == 'PortfolioPolicy', 'PortfolioPolicy NOT selected'
+    print('[verify] OK: PortfolioPolicy will run in the rerun', flush=True)
+except Exception as _e:
+    print('[verify] IMPORT CHECK FAILED (rerun will use fallback):', repr(_e), flush=True)
+"""
+
 nb = {
     "cells": [cell_md(MD), cell_code(INSTALL), cell_code(PROBE), cell_code(WRITE_PKG),
-              cell_code(WRITE_AGENT), cell_code(RUN), cell_code(DUMMY)],
+              cell_code(WRITE_AGENT), cell_code(VERIFY), cell_code(RUN), cell_code(DUMMY)],
     "metadata": {
         "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
         "language_info": {"name": "python", "version": "3.12"},
