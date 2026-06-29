@@ -30,10 +30,17 @@ def _default_strategies():
     from .chain_macro_explorer import ChainMacroExplorer
     from .geodesic_replay_explorer import GeodesicReplayExplorer
     return [
-        ("transfer_s0", lambda s: TransferExplorer(seed=s, **DENSE)),
-        # EFFICIENCY plays (the dominant score lever): geodesic_replay = exact-frame shortest-path replay
-        # (movement games, 18-110x FAITHFUL); chain_macro = solution-chain replay (click games, 3.7x).
+        # STRATEGY 0 = EFFICIENCY play (the DOMINANT score lever): geodesic_replay explores like
+        # TransferExplorer (same coverage) AND replays the EXACT-FRAME shortest path to each reward in a
+        # NEW PLAY (double-reset), so max-over-plays scores the levels at 7-109x fewer actions (VALIDATED
+        # per-play: tu93 L1 23 vs 431=18.7x, ls20 109x, lp85 12-35x). Deployed FIRST so efficiency lands
+        # from action 0, not gated behind a 20000-action transfer stall.
         ("geodesic_replay", lambda s: GeodesicReplayExplorer(seed=s, **DENSE)),
+        # STRATEGY 1 = pure-coverage ANCHOR (strict-superset floor): catches LATE-breakthrough levels the
+        # geodesic abandons exploring to replay (e.g. lf52 L2 at 6300 actions). Guarantees game score >=
+        # banked TransferExplorer on every game; max-over-plays unions its coverage with the geodesic's
+        # efficiency (lf52: L1 efficient from geodesic + L2 covered from here).
+        ("transfer_s0", lambda s: TransferExplorer(seed=s, **DENSE)),
         ("transfer_rel", lambda s: TransferRelationalExplorer(seed=s, **DENSE)),
         ("chain_macro", lambda s: ChainMacroExplorer(seed=s, enable_macro=True, macro_mode="hard", **DENSE)),
         ("transfer_s1", lambda s: TransferExplorer(seed=s + 101, **DENSE)),

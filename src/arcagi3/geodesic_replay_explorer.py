@@ -54,6 +54,7 @@ class GeodesicReplayExplorer(TransferExplorer):
         self._gl_levels = 0
         self._replay: list = []              # flattened action queue for the REPLAY phase
         self._replay_i = 0
+        self._replay_resets = 0              # double-reset prefix (-> new play) emitted before each replay
         self._since_level = 0
         self._cycle = 0
 
@@ -78,7 +79,13 @@ class GeodesicReplayExplorer(TransferExplorer):
         cur_h = _fh(grid)
 
         if self._phase == "replay":
-            # emit the precomputed geodesic actions in sequence
+            # FIRST emit a double-reset so the engine starts a NEW PLAY (full_reset on the 2nd consecutive
+            # reset) -> the efficient replay is scored as its own play by max-over-plays (a single reset is
+            # only a level-reset within the same play and gives NO efficiency credit).
+            if self._replay_resets > 0:
+                self._replay_resets -= 1
+                return ("reset",)
+            # then emit the precomputed geodesic actions in sequence
             if self._replay_i < len(self._replay):
                 tok = self._replay[self._replay_i]
                 self._replay_i += 1
@@ -131,6 +138,9 @@ class GeodesicReplayExplorer(TransferExplorer):
         self._phase = "replay"
         self._replay = [t for geo in self._geodesics for t in geo]   # full accumulated geodesic chain
         self._replay_i = 0
+        # this returns the 1st reset; _replay_resets emits the 2nd -> 2 consecutive resets -> engine flags
+        # full_reset on the 2nd -> the replay runs in a NEW PLAY (scored separately by max-over-plays).
+        self._replay_resets = 1
         self._cycle += 1
         self.expect_reset = True
         return ("reset",)
