@@ -85,8 +85,13 @@ class GeodesicReplayExplorer(TransferExplorer):
             if self._replay_resets > 0:
                 self._replay_resets -= 1
                 return ("reset",)
+            # if a replayed action drove the game terminal (a desync/death on a non-static board), ABORT the
+            # replay instead of emitting the remaining actions into a dead game -> fall through to explore,
+            # which resets and resumes. (Bounded either way, but this avoids wasting the rest of the queue.)
+            if gstate_terminal or gstate_notplayed:
+                self._replay_i = len(self._replay)   # drain the queue -> take the explore-switch path below
             # then emit the precomputed geodesic actions in sequence
-            if self._replay_i < len(self._replay):
+            elif self._replay_i < len(self._replay):
                 tok = self._replay[self._replay_i]
                 self._replay_i += 1
                 return tok
