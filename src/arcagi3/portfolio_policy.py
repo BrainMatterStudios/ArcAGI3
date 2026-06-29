@@ -28,8 +28,12 @@ def _default_strategies():
     from .relational_explorer import RelationalExplorer
     from .transfer_cai_explorer import TransferCAIExplorer
     from .chain_macro_explorer import ChainMacroExplorer
+    from .geodesic_replay_explorer import GeodesicReplayExplorer
     return [
         ("transfer_s0", lambda s: TransferExplorer(seed=s, **DENSE)),
+        # EFFICIENCY plays (the dominant score lever): geodesic_replay = exact-frame shortest-path replay
+        # (movement games, 18-110x FAITHFUL); chain_macro = solution-chain replay (click games, 3.7x).
+        ("geodesic_replay", lambda s: GeodesicReplayExplorer(seed=s, **DENSE)),
         ("transfer_rel", lambda s: TransferRelationalExplorer(seed=s, **DENSE)),
         ("chain_macro", lambda s: ChainMacroExplorer(seed=s, enable_macro=True, macro_mode="hard", **DENSE)),
         ("transfer_s1", lambda s: TransferExplorer(seed=s + 101, **DENSE)),
