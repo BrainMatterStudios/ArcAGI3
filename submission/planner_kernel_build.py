@@ -14,7 +14,12 @@ from pathlib import Path
 HERE = Path(__file__).parent
 OWNER = "ahmedmobasher86"
 
-INSTALL = "!pip install -q transformers qwen-vl-utils accelerate 2>/dev/null; print('deps installed', flush=True)\n"
+INSTALL = (
+    "!pip install -q --no-index --find-links /kaggle/input/competitions/arc-prize-2026-arc-agi-3/arc_agi_3_wheels arc-agi python-dotenv\n"
+    "!pip install -q transformers qwen-vl-utils accelerate\n"
+    "!pip install -q 'pillow==11.3.0'\n"   # transformers upgrades pillow to 12.x -> breaks matplotlib/torchvision (_Ink)
+    "print('deps installed', flush=True)\n"
+)
 
 BODY = r'''
 import os, sys, glob, json, re, time, logging
@@ -48,9 +53,11 @@ from qwen_vl_utils import process_vision_info
 PAL=["#000000","#0074D9","#FF4136","#2ECC40","#FFDC00","#AAAAAA","#F012BE","#FF851B","#7FDBFF","#870C25","#555555","#FFFFFF","#39CCCC","#01FF70","#85144b","#B10DC9"]
 cmap=ListedColormap(PAL)
 
-print("loading 7B VLM ...", flush=True); t0=time.time()
-model = Qwen2_5_VLForConditionalGeneration.from_pretrained(MODELDIR, torch_dtype=torch.float16, device_map="cuda")
-proc = AutoProcessor.from_pretrained(MODELDIR)
+print("loading 7B VLM (HF, internet on) ...", flush=True); t0=time.time()
+os.environ["PYTORCH_CUDA_ALLOC_CONF"]="expandable_segments:True"
+HFID="Qwen/Qwen2.5-VL-7B-Instruct"
+model = Qwen2_5_VLForConditionalGeneration.from_pretrained(HFID, torch_dtype=torch.float16, device_map="auto")  # shard across both T4s
+proc = AutoProcessor.from_pretrained(HFID)
 print(f"VLM loaded in {time.time()-t0:.0f}s", flush=True)
 
 def render(grid, path):
@@ -62,7 +69,7 @@ def ask(img, prompt):
     msgs=[{"role":"user","content":[{"type":"image","image":img},{"type":"text","text":prompt}]}]
     text=proc.apply_chat_template(msgs,tokenize=False,add_generation_prompt=True)
     imgs,vids=process_vision_info(msgs)
-    inp=proc(text=[text],images=imgs,videos=vids,padding=True,return_tensors="pt").to("cuda")
+    inp=proc(text=[text],images=imgs,videos=vids,padding=True,return_tensors="pt").to("cuda:0")
     with torch.no_grad(): out=model.generate(**inp,max_new_tokens=300,do_sample=False)
     return proc.batch_decode(out[:,inp.input_ids.shape[1]:],skip_special_tokens=True)[0]
 
