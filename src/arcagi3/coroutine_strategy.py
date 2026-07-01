@@ -40,7 +40,13 @@ class CoroutineStrategy:
                 tok = next(self._gen)           # prime to first yield (computed from obs0)
             else:
                 tok = self._gen.send(obs)
-            return tok if tok is not None else self._benign(available)
+            if tok is None:
+                return self._benign(available)
+            # SAFETY: never emit a click when ACTION6 is unavailable (the engine returns a null frame ->
+            # would crash the harness, e.g. tn36). Substitute a benign action; the search/plan just no-ops.
+            if tok[0] == "C" and 6 not in available:
+                return self._benign(available)
+            return tok
         except StopIteration:
             self._done = True
             return self._benign(available)
