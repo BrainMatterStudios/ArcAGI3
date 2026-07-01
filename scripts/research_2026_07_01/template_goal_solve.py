@@ -63,7 +63,7 @@ def solve(game, verbose=True):
 
     sel_color = {s: _color_at(g0, s[0], s[1]) for s in selectors}
     palette_colors = set(sel_color.values())
-    slots = sorted(appliers, key=lambda t: (t[0], t[1]))     # spatial order left-to-right (col, then row)
+    slots = sorted(appliers, key=lambda t: (t[1] // 6, t[0]))  # READING order: row-band then col (1D & 2D)
 
     # TARGET = the reference boxes: colored objects whose color is a PALETTE color (you reproduce the target
     # using the palette), that are NOT the palette swatches and NOT the slots. Ordered left-to-right.
@@ -77,7 +77,7 @@ def solve(game, verbose=True):
         near_slot = any(abs(cx - t[0]) + abs(cy - t[1]) <= 3 for t in appliers)
         if not near_sel and not near_slot:
             objs.append((o.color, cy, cx))
-    objs_sorted = sorted(objs, key=lambda o: (o[2], o[1]))    # left-to-right
+    objs_sorted = sorted(objs, key=lambda o: (o[1] // 6, o[2]))  # READING order: row-band then col (1D & 2D)
     target_seq = [o[0] for o in objs_sorted]
     if verbose:
         print(f"{game:>6}: selectors={len(selectors)} slots={len(slots)} target_objs={len(target_seq)} "
