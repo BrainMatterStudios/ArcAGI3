@@ -13,50 +13,50 @@ FRAME_COLOR = 4   # stencil frame ("don't care")
 CURSOR = 0        # active-piece marker
 
 
+def _frame_adjacent(grid):
+    """boolean mask: cells within 1 of a FRAME_COLOR(4) pixel (target centers are surrounded by the frame)."""
+    fm = (grid == FRAME_COLOR)
+    adj = np.zeros_like(fm)
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            adj |= np.roll(np.roll(fm, dr, axis=0), dc, axis=1)
+    return adj
+
+
 def perceive(grid):
+    """pieces = colored pixels NOT frame-adjacent (the movable shapes); targets = colored pixels frame-adjacent
+    (the stencil centers). Pieces and targets share colors, so we split by frame-adjacency, not size."""
     bg = P.detect_background(grid)
-    comps = P.connected_components(grid, background=bg)
-    pieces = {}   # color -> (centroid, size)  (large single-color blobs)
-    targets = {}  # color -> list of cell centroids (small framed markers)
-    # a cell is a "target" if it is colored (not bg/4/0) and adjacent to a frame-color(4) pixel
-    frame_cells = set()
-    ys, xs = np.where(grid == FRAME_COLOR)
-    for r, c in zip(ys.tolist(), xs.tolist()):
-        frame_cells.add((r, c))
-    for o in comps:
-        if o.color in (bg, FRAME_COLOR, CURSOR):
+    adj = _frame_adjacent(grid)
+    rows = np.arange(grid.shape[0])[:, None] * np.ones((1, grid.shape[1]))
+    pieces = {}   # color -> (cy, cx)
+    targets = {}  # color -> (cy, cx) centroid of target cells
+    for c in range(16):
+        if c in (bg, FRAME_COLOR, CURSOR):
             continue
-        if o.size >= 20:                       # large blob = a movable piece
-            if o.color not in pieces or o.size > pieces[o.color][1]:
-                pieces[o.color] = (o.centroid, o.size)
-        else:                                   # small region: target if near a frame
-            r0, c0, r1, c1 = o.bbox
-            near_frame = any((r, c) in frame_cells
-                             for r in range(r0 - 1, r1 + 2) for c in range(c0 - 1, c1 + 2))
-            if near_frame:
-                targets.setdefault(o.color, []).append(o.centroid)
+        cmask = (grid == c) & (rows < 60)      # exclude the bottom HUD bar
+        if not cmask.any():
+            continue
+        tmask = cmask & adj
+        pmask = cmask & ~adj
+        if tmask.sum() > 0:
+            ys, xs = np.where(tmask); targets[c] = (ys.mean(), xs.mean())
+        if pmask.sum() >= 8:
+            ys, xs = np.where(pmask); pieces[c] = (ys.mean(), xs.mean())
     return pieces, targets
 
 
 def active_color(grid):
-    """the piece currently carrying the color-0 cursor -> the dominant non-0 color touching a 0 pixel."""
-    bg = P.detect_background(grid)
-    for o in P.connected_components(grid, background=bg):
-        px_colors = None
-    # find components that contain BOTH color-0 and a piece color: the active blob renders 0 inside it.
+    """the active piece carries the color-0 cursor -> the perceived piece whose centroid is nearest the cursor
+    (uses perceive() pieces so cross-shaped pieces with small arms + the HUD bar are handled correctly)."""
     ys, xs = np.where(grid == CURSOR)
     if len(ys) == 0:
         return None
-    cy, cx = int(ys.mean()), int(xs.mean())
-    # nearest large-blob color to the cursor
-    best = None
-    for o in P.connected_components(grid, background=bg):
-        if o.color in (bg, FRAME_COLOR, CURSOR) or o.size < 20:
-            continue
-        d = abs(o.centroid[0] - cy) + abs(o.centroid[1] - cx)
-        if best is None or d < best[0]:
-            best = (d, o.color)
-    return best[1] if best else None
+    cy, cx = ys.mean(), xs.mean()
+    pieces, _ = perceive(grid)
+    if not pieces:
+        return None
+    return min(pieces, key=lambda c: abs(pieces[c][0] - cy) + abs(pieces[c][1] - cx))
 
 
 def solve(verbose=True):
@@ -73,27 +73,29 @@ def solve(verbose=True):
 
     pieces, targets = perceive(grid())
     if verbose:
-        print(f"pieces={ {c: (round(v[0][0]), round(v[0][1])) for c, v in pieces.items()} } "
-              f"target colors={ {c: len(ps) for c, ps in targets.items()} }")
+        print(f"pieces={ {c: (round(v[0]), round(v[1])) for c, v in pieces.items()} } "
+              f"targets={ {c: (round(v[0]), round(v[1])) for c, v in targets.items()} }")
     order = [c for c in targets if c in pieces]
     if not order:
         print("  no paintable (piece,target) color pairs -> abstain"); return 0
+    def cursor():
+        ys, xs = np.where(grid() == CURSOR)
+        return (ys.mean(), xs.mean()) if len(ys) else None
+
     lv = int(obs.levels_completed or 0); n = 0
     for color in order:
-        tc = targets[color]
-        tx = np.mean([p[1] for p in tc]); ty = np.mean([p[0] for p in tc])
+        ty, tx = targets[color]
         # select this color's piece via ACTION5 cycling
         for _ in range(5):
             if active_color(grid()) == color:
                 break
             step(5); n += 1
-        # drag toward the target centroid
+        # drag the active piece's HEAD (the color-0 cursor) toward the target; the trail paints it
         for _ in range(50):
-            g = grid(); pieces2, _ = perceive(g)
-            if color not in pieces2:
+            cur = cursor()
+            if cur is None:
                 break
-            (pcy, pcx), _ = pieces2[color]
-            dx, dy = tx - pcx, ty - pcy
+            dy, dx = ty - cur[0], tx - cur[1]
             if abs(dx) + abs(dy) < 2:
                 break
             a = (4 if dx > 0 else 3) if abs(dx) >= abs(dy) else (2 if dy > 0 else 1)
