@@ -10,6 +10,7 @@ import sys, time
 from drag_solve import solve as drag_solve
 from select_apply_probe import run as sa_run
 from general_solve import solve as gen_solve
+from template_goal_solve import solve as goal_solve
 
 ALL = ["ar25","bp35","cd82","cn04","dc22","ft09","g50t","ka59","lf52","lp85","ls20","m0r0",
        "r11l","re86","s5i5","sb26","sc25","sk48","sp80","su15","tn36","tr87","tu93","vc33","wa30"]
@@ -17,6 +18,13 @@ ALL = ["ar25","bp35","cd82","cn04","dc22","ft09","g50t","ka59","lf52","lp85","ls
 
 def unified(game, budget=15000, verbose=True):
     t0 = time.time()
+    # PLAY 0: goal-inference (reproduce-reference-via-palette) — cheap + human-optimal when it fires
+    try:
+        if goal_solve(game, verbose=False).get("solved"):
+            if verbose: print(f"{game:>6}: SOLVED via GOAL-INFERENCE ({time.time()-t0:.0f}s)")
+            return dict(game=game, solved=True, via="goal-inference")
+    except Exception:
+        pass
     # PLAY A: goal-directed drag (cheap, covers move/paint/carry with a movable->target read)
     try:
         if drag_solve(game, verbose=False).get("solved"):
