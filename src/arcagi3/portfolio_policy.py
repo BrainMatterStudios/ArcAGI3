@@ -30,6 +30,7 @@ def _default_strategies():
     from .chain_macro_explorer import ChainMacroExplorer
     from .geodesic_replay_explorer import GeodesicReplayExplorer
     from .mechanic_strategy import MechanicSolverStrategy
+    from .grabdrag_strategy import GrabDragStrategy
     return [
         # STRATEGY 0 = pure-coverage ANCHOR (strict-superset floor): TransferExplorer completes levels at FULL
         # speed, banking coverage as a play. MUST be a SEPARATE pure-transfer strategy (not a geodesic): because
@@ -55,6 +56,9 @@ def _default_strategies():
         # everything else it ABSTAINS (benign actions) so max-over-plays keeps the coverage/efficiency plays.
         # Appended LAST so the validated coverage+efficiency ordering is untouched -> cannot regress the floor.
         ("mechanic_solver", lambda s: MechanicSolverStrategy(seed=s)),
+        # additive ARCHETYPE play #2: source-free grab-drag solver (learns avatar by probing -> plan). Same
+        # abstain-on-non-match safety -> can only ADD (incl. a HIDDEN grab-drag game), never regress the floor.
+        ("grabdrag", lambda s: GrabDragStrategy(seed=s)),
     ]
 
 
