@@ -26,6 +26,7 @@ CORE = ["__init__.py", "perception.py", "world_model.py", "movement.py", "agent.
         "events.py",                       # dep of chain_macro
         "chain_macro_explorer.py",         # portfolio EFFICIENCY play (replay solution chain, lp85 3.7x)
         "geodesic_replay_explorer.py",     # portfolio EFFICIENCY play (exact-frame geodesic, movement 18-110x)
+        "mechanic_strategy.py",        # portfolio ARCHETYPE play (grab-drag/pattern-match solver, abstains else)
         "portfolio_policy.py",         # PRIMARY: multi-strategy portfolio (max-over-plays, strict-superset)
         "online_model.py", "online_explorer.py"]  # Phase A (opt-in via ARCAGI3_ONLINE=1)
 PKG = {name: base64.b64encode((SRC / name).read_bytes()).decode() for name in CORE}

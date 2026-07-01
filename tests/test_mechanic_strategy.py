@@ -26,7 +26,7 @@ def _drive(prefix, budget=200):
         elif tok[0] == "S":
             obs = env.step(GameAction.from_id(tok[1]))
         else:
-            obs = env.step(GameAction.ACTION6, data={"x": int(tok[0]), "y": int(tok[1])})
+            obs = env.step(GameAction.ACTION6, data={"x": int(tok[1]), "y": int(tok[2])})
         n += 1
         if obs.state is GameState.WIN or int(obs.levels_completed or 0) >= 1:
             break

@@ -29,6 +29,7 @@ def _default_strategies():
     from .transfer_cai_explorer import TransferCAIExplorer
     from .chain_macro_explorer import ChainMacroExplorer
     from .geodesic_replay_explorer import GeodesicReplayExplorer
+    from .mechanic_strategy import MechanicSolverStrategy
     return [
         # STRATEGY 0 = pure-coverage ANCHOR (strict-superset floor): TransferExplorer completes levels at FULL
         # speed, banking coverage as a play. MUST be a SEPARATE pure-transfer strategy (not a geodesic): because
@@ -49,6 +50,11 @@ def _default_strategies():
         ("transfer_s1", lambda s: TransferExplorer(seed=s + 101, **DENSE)),
         ("relational", lambda s: RelationalExplorer(seed=s, **DENSE)),
         ("transfer_cai", lambda s: TransferCAIExplorer(seed=s, **DENSE)),
+        # LAST (strict-superset ADD): the archetype mechanic-solver runs as its own max-over-plays play.
+        # On an archetype-matching game (grab-drag / pattern-match, incl. HIDDEN) it solves + scores; on
+        # everything else it ABSTAINS (benign actions) so max-over-plays keeps the coverage/efficiency plays.
+        # Appended LAST so the validated coverage+efficiency ordering is untouched -> cannot regress the floor.
+        ("mechanic_solver", lambda s: MechanicSolverStrategy(seed=s)),
     ]
 
 

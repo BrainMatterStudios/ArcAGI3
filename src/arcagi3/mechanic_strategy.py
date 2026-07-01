@@ -49,6 +49,7 @@ class MechanicSolverStrategy:
         self._queue: list = []          # pending action tokens for the current level
         self._planned_level = -1        # level we built the queue for
         self._abstain = False
+        self.gs = None                  # PortfolioPolicy exposes pols[idx].gs (guarded, .wm) -> None is safe
 
     def _benign(self, available):
         # a harmless action for abstain / when the queue is empty and nothing to do
@@ -70,8 +71,9 @@ class MechanicSolverStrategy:
                 return None
             used.add(ti)
             tcen = tiles[ti][2]; scen = slots[i][1]
-            tokens.append((int(round(tcen[1])), int(round(tcen[0]))))   # click tile (x=col, y=row)
-            tokens.append((int(round(scen[1])), int(round(scen[0]))))   # click slot
+            # click token format matches my_agent/SalienceExplorer: ("C", x, y) with x=col, y=row
+            tokens.append(("C", int(round(tcen[1])), int(round(tcen[0]))))   # click tile
+            tokens.append(("C", int(round(scen[1])), int(round(scen[0]))))   # click slot
         tokens.append(("S", 5))                                          # submit
         return tokens
 
