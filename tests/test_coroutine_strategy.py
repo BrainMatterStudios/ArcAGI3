@@ -25,3 +25,27 @@ def test_coroutine_general_agent_solves_dc22():
         if pol._done and maxlvl >= 1:
             return
     assert maxlvl >= 1, "coroutine general agent should solve dc22 reactively"
+
+
+def _reactive_maxlevel(game, budget=40000):
+    c = Arcade(operation_mode=OperationMode.OFFLINE, environments_dir="environment_files")
+    gid = next(e.game_id for e in c.get_environments() if e.game_id.startswith(game))
+    env = c.make(game_id=gid, scorecard_id=f"co-{game}-t"); obs = env.reset()
+    pol = CoroutineStrategy(general_agent_gen); last = np.zeros((64, 64), int); mx = 0
+    for _ in range(budget):
+        g = P.to_grid(obs.frame) if (obs.frame is not None and len(obs.frame)) else last
+        last = g; mx = max(mx, int(obs.levels_completed or 0))
+        if mx >= 1:
+            return mx
+        tok = pol.decide(g, gstate_terminal=(obs.state == GameState.GAME_OVER),
+                         levels=int(obs.levels_completed or 0), available=list(obs.available_actions or []))
+        try:
+            if tok[0] == "reset": obs = env.reset()
+            elif tok[0] == "S": obs = env.step(GameAction.from_id(tok[1]))
+            else: obs = env.step(GameAction.ACTION6, data={"x": int(tok[1]), "y": int(tok[2])})
+        except Exception: obs = env.reset()
+    return mx
+
+
+def test_peg_solitaire_class_solves_lf52():
+    assert _reactive_maxlevel("lf52") >= 1, "folded peg-solitaire class should solve lf52 reactively"

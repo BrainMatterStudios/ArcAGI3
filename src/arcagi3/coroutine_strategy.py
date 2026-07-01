@@ -50,8 +50,91 @@ def _delta(a, b):
     return int(np.sum(a[:56, :56] != b[:56, :56]))
 
 
+# ---------------------------------------------------------------------------
+# GOAL-CLASS: peg-solitaire (click-jump-remove; win when one peg remains).
+# General + frames-only: auto-detects the peg color (the color with the most
+# similar-sized blocks) and the grid spacing (nearest-neighbour distance). A jump =
+# click(peg) then click(peg + 2*spacing*dir); legal iff the peg count drops by one.
+# ---------------------------------------------------------------------------
+def _peg_centers(grid, color):
+    bg = P.detect_background(grid)
+    return sorted((int(round(o.centroid[1])), int(round(o.centroid[0])))
+                  for o in P.connected_components(grid, background=bg) if o.color == color)
+
+
+def _peg_class(grid):
+    from collections import defaultdict
+    bg = P.detect_background(grid)
+    by = defaultdict(list)
+    for o in P.connected_components(grid, background=bg):
+        if o.color != bg and o.color != 4 and o.size <= 40:
+            by[o.color].append(o)
+    best = None
+    for c, os in by.items():
+        if len(os) < 4:
+            continue
+        sizes = [o.size for o in os]
+        if max(sizes) > 2 * min(sizes) + 2:
+            continue
+        cen = [(int(round(o.centroid[1])), int(round(o.centroid[0]))) for o in os]
+        sp = min((abs(a[0] - b[0]) + abs(a[1] - b[1])) for i, a in enumerate(cen) for b in cen[i + 1:])
+        if 3 <= sp <= 16 and (best is None or len(os) > best[0]):
+            best = (len(os), c, sp)
+    return (best[1], best[2]) if best else None
+
+
+def peg_solitaire_gen(obs0):
+    """try the peg-solitaire class; RETURN (fall through) if it doesn't match or the DFS exhausts."""
+    g0 = obs0["grid"]; avail = list(obs0["available"])
+    if 6 not in avail:
+        return
+    cls = _peg_class(g0)
+    if cls is None:
+        return
+    color, sp = cls
+    if len(_peg_centers(g0, color)) < 3:
+        return
+    DIRS = [(0, -1), (1, 0), (0, 1), (-1, 0)]
+    stack = [[]]; seen = set(); tries = 0
+    while stack and tries < 400:
+        seq = stack.pop(); tries += 1
+        obs = yield ("reset",)
+        aborted = False
+        for (px, py, lx, ly) in seq:
+            yield ("C", px, py)
+            obs = yield ("C", lx, ly)
+            if obs["levels"] >= 1:
+                yield ("reset",); yield ("reset",)          # clean replay in a fresh run
+                for (ax, ay, bx, by) in seq:
+                    yield ("C", ax, ay); yield ("C", bx, by)
+                while True:
+                    yield ("S", avail[0] if avail else 5)   # solved -> abstain forever
+            if obs["terminal"]:
+                aborted = True; break
+        if aborted:
+            continue
+        pegs = _peg_centers(obs["grid"], color); pegset = set(pegs)
+        key = tuple(pegs)
+        if key in seen:
+            continue
+        seen.add(key)
+        for (px, py) in pegs:
+            for dx, dy in DIRS:
+                mx, my = px + sp * dx, py + sp * dy          # jumped-over cell
+                lx, ly = px + 2 * sp * dx, py + 2 * sp * dy  # landing cell
+                if not (0 <= lx < 64 and 0 <= ly < 64):
+                    continue
+                over = any(abs(mx - qx) + abs(my - qy) <= sp // 2 for (qx, qy) in pegset)
+                empty = not any(abs(lx - qx) + abs(ly - qy) <= sp // 2 for (qx, qy) in pegset)
+                if over and empty:
+                    stack.append(seq + [(px, py, lx, ly)])
+    return
+
+
 def general_agent_gen(obs0):
-    """game-agnostic search-replay solver as a generator (frames+feedback only, zero per-game code)."""
+    """game-agnostic search-replay solver as a generator (frames+feedback only, zero per-game code).
+    Tries known goal-CLASSES first (peg-solitaire), then falls through to generic affordance search."""
+    yield from peg_solitaire_gen(obs0)          # returns (falls through) if not a peg game / DFS exhausts
     g0 = obs0["grid"]; avail = list(obs0["available"])
     macros = [[("S", a)] for a in avail if a in (1, 2, 3, 4, 5)]
     targets = _salient(g0, 16) if 6 in avail else []
