@@ -67,11 +67,13 @@ class GeneralSearchStrategy:
         if self.macros is None:
             self._init(grid, available); self.planned_level = levels
 
-        # a level-up during SEARCH means the current candidate wins -> cache + switch to clean replay
+        # a level-up during SEARCH means the current candidate wins -> cache + switch to clean replay.
+        # Prepend a reset so replay = reset (this) + reset (solution[0]) = DOUBLE-RESET -> a fresh scored RUN,
+        # so the clean replay's actions don't accumulate with the discarded search (max-over-runs scoring).
         if self.mode == "search" and levels > self.planned_level:
-            self.solution = list(self.cur_flat)
+            self.solution = [("reset",)] + list(self.cur_flat)
             self.mode = "replay"; self.rp = 0
-            return ("reset",)                       # open a fresh (clean) play, then replay
+            return ("reset",)                       # first reset; solution[0] is the second (new run)
 
         if self.mode == "replay":
             if self.rp < len(self.solution):
