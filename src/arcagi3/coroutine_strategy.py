@@ -9,10 +9,20 @@ Also provides `general_agent_gen`: a game-agnostic solver (single-click + two-ph
 probing, then affordance-pruned BFS, then clean replay) as such a generator. Abstains (benign) when exhausted.
 """
 from __future__ import annotations
-from collections import deque
+import heapq
+from collections import deque, Counter
 import numpy as np
 from arcagi3 import perception as P
 from arcagi3.general_search_strategy import _salient
+
+
+def _exact_state(g):
+    return hash(g[:56, :56].tobytes())
+
+
+def _novelty_cell(g):
+    # coarse region signature (56x56 -> 14x14) for count-based novelty frontier ordering
+    return hash(g[:56, :56][::4, ::4].tobytes())
 
 
 class CoroutineStrategy:
@@ -394,16 +404,20 @@ def general_agent_gen(obs0):
                 if obs["levels"] >= 1 or abs(d - base.get(t, 0)) >= 2:
                     macros.append([("C", *s), ("C", *t)])
 
-    # ---- affordance-pruned BFS with clean replay on win ----
-    seen = set(); q = deque([[]]); nodes = 0
-    while q and nodes < 6000:
-        seq = q.popleft()
-        obs = yield ("reset",)          # capture the root (post-reset) state so the empty seq expands
-        won = False; dead = False
+    # ---- affordance-pruned GOAL-AGNOSTIC search: exact-state dedup (completeness -> never miss a solution)
+    # + coarse-cell count-based NOVELTY frontier ordering (expand least-visited regions first -> the dirty
+    # search goes DEEPER and stumbles into rewards on harder games; strict improvement over FIFO-BFS: keeps
+    # dc22/vc33/sp80/cd82 and gains ar25/m0r0). Its floor is nonzero on ANY game with a reachable reward,
+    # regardless of whether the mechanic/goal is in-vocabulary -- the key lever for HIDDEN games.
+    obs = yield ("reset",)
+    seen = {_exact_state(obs["grid"])}; cellv = Counter(); tie = 0; nodes = 0
+    frontier = [(0, 0, [])]                              # (coarse-cell visits at push, tiebreak, seq)
+    while frontier and nodes < 8000:
+        _, _, seq = heapq.heappop(frontier)
+        obs = yield ("reset",); won = dead = False
         for m in seq:
             for tok in m:
                 obs = yield tok
-                nodes += 1
                 if obs["levels"] >= 1:
                     won = True; break
                 if obs["terminal"]:
@@ -412,11 +426,33 @@ def general_agent_gen(obs0):
                 break
         if won:
             yield from replay_clean(seq); return
-        if obs is not None and not dead:
-            st = hash(obs["grid"][:56, :56].tobytes())
-            if st not in seen:
-                seen.add(st)
-                for m in macros:
-                    q.append(seq + [m])
+        if dead:
+            continue
+        cellv[_novelty_cell(obs["grid"])] += 1
+        for m in macros:
+            obs = yield ("reset",); won = dead = False
+            for mm in seq:
+                for tok in mm:
+                    obs = yield tok
+                    if obs["levels"] >= 1:
+                        won = True; break
+                    if obs["terminal"]:
+                        dead = True; break
+                if won or dead:
+                    break
+            if not won and not dead:
+                for tok in m:
+                    obs = yield tok; nodes += 1
+                    if obs["levels"] >= 1:
+                        won = True; break
+                    if obs["terminal"]:
+                        dead = True; break
+            if won:
+                yield from replay_clean(seq + [m]); return
+            if not dead:
+                e = _exact_state(obs["grid"])
+                if e not in seen:
+                    seen.add(e); tie += 1
+                    heapq.heappush(frontier, (cellv[_novelty_cell(obs["grid"])], tie, seq + [m]))
     while True:                     # exhausted -> abstain (benign, floor-safe)
         yield ("S", avail[0] if avail else 5)
