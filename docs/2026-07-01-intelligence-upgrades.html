@@ -1,0 +1,54 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ARC-AGI-3 — Intelligence upgrades for hidden games</title>
+<style>
+ :root{--bg:#0e1116;--card:#171c24;--edge:#263040;--ink:#e6edf3;--dim:#9aa7b4;--good:#3fb950;--warn:#d29922;--bad:#f85149;--acc:#58a6ff;--pur:#bc8cff}
+ *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,Segoe UI,Roboto,sans-serif;padding:30px}
+ .wrap{max-width:1080px;margin:0 auto}h1{font-size:25px;margin:0 0 4px}h2{font-size:18px;margin:26px 0 10px;color:var(--acc)}
+ .sub{color:var(--dim);margin-bottom:18px}.card{background:var(--card);border:1px solid var(--edge);border-radius:10px;padding:14px 16px;margin:10px 0}
+ .rank{display:inline-block;width:22px;height:22px;border-radius:50%;background:var(--acc);color:#04121f;font-weight:700;text-align:center;line-height:22px;margin-right:8px;font-size:13px}
+ .good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}.acc{color:var(--acc)}.pur{color:var(--pur)}.dim{color:var(--dim)}
+ table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid var(--edge);padding:6px 9px;text-align:left;vertical-align:top}th{color:var(--dim)}
+ code{background:#0b0e13;border:1px solid var(--edge);border-radius:4px;padding:1px 5px;font-size:12.5px}.mono{font-family:ui-monospace,Menlo,monospace}
+ ul{margin:5px 0 0;padding-left:18px}li{margin:3px 0}.pill{display:inline-block;padding:1px 7px;border-radius:12px;font-size:11px;border:1px solid var(--edge)}
+ .b{background:#12261a;border-color:#1c4028}.y{background:#2a230f;border-color:#4a3c14}.r{background:#2a1416;border-color:#4a1d20}
+</style></head><body><div class="wrap">
+<h1>Making the agent more intelligent on HIDDEN games</h1>
+<div class="sub">Research roadmap · 2026-07-01 · self-authored (the multi-agent workflow hit the weekly limit; resets Jul 3)</div>
+
+<div class="card"><b>The problem, precisely.</b> The current agent solves 25/25 <i>dev</i> games and the deployed general agent solves ~11/25 reactively zero-code. But HIDDEN games have new mechanics/palettes/layouts. The honest question: which upgrades most raise the probability of solving a game we have never seen? Ranked by (generalization × buildability × floor-safety), grounded in the agent's real weaknesses.</div>
+
+<h2>Ranked upgrades</h2>
+
+<div class="card"><span class="rank">1</span><b>Color-agnostic ROLE induction</b> &nbsp;<span class="pill b">do first · cheap · floor-safe</span>
+<p class="dim">Weakness it fixes: centroid-drag keys on colors 6/15/3, pull-drag on 9/15 — brittle on hidden palettes. Replace color constants with BEHAVIOUR/STRUCTURE: avatar/mover = the object that translates under actions (probe); goal = the salient distinct static object, or the one whose change precedes reward; selector/applier/handle = identified by their PROBED effect (the template class already does this — it is the model to copy). Every class then fires on hidden colors/layouts.</p>
+<p><b>First experiment (cheap):</b> recolor a dev class-game (permute its palette) and confirm the class still detects+solves; leave-COLOR-out. If a class only works on the original palette, it is not general — fix it. <span class="good">Highest-probability win: it makes the classes we already have transfer.</span></p></div>
+
+<div class="card"><span class="rank">2</span><b>General GOAL inference via counterfactual credit assignment</b> &nbsp;<span class="pill y">high value</span>
+<p class="dim">Weakness it fixes: goal inference only exists for the template class. The env is deterministic + resettable, so once ANY reward is reached (even by search/luck) we can do PERFECT credit assignment: delete-and-replay to find the CRITICAL actions (ddmin, already built in <span class="mono">minimize_solution.py</span>), and diff the pre-reward frames to find WHICH object/feature change caused the reward -> learn a transferable goal PREDICATE. It transfers across levels (level-weighted RHAE) and generalizes goal inference to any game where one reward is reachable.</p>
+<p><b>First experiment:</b> on dev games solved by search, extract the learned predicate from the win transition and verify it re-solves L1+ without re-search.</p></div>
+
+<div class="card"><span class="rank">3</span><b>Richer EFFECT induction (mechanic vocabulary)</b> &nbsp;<span class="pill y">medium-high</span>
+<p class="dim">Weakness it fixes: affordance induction covers move/click/select/drag but not the mechanics that fooled us on dev games. A general effect-classifier names each action/interaction effect from a few probes: TRANSLATE / ROTATE (A5 orientation) / PAINT (trail) / COLLECT (vanish-on-contact) / TOGGLE / SELECT / <b>LAUNCH</b> (bump imparts momentum — ka59) / <b>GRAVITY</b> (auto-fall + sign — bp35) / <b>CLONE-RECORD</b> (A5 banks a replaying ghost — g50t). Each new effect + a planner hook expands the space of hidden mechanics we can model.</p>
+<p><b>First experiment:</b> add a rotate + gravity-sign + launch detector; verify on the dev games that used them (ka59/bp35) via probing, then leave-mechanics-out on a held-out.</p></div>
+
+<div class="card"><span class="rank">4</span><b>Self-growing CLASS LIBRARY + structural matcher</b> &nbsp;<span class="pill y">medium</span>
+<p class="dim">Formalize every class as a <code>(behavioural-signature, parameterized-solver)</code> pair; a matcher classifies a hidden game to the nearest class by signature (not colors) and, crucially, handles a game that is a COMPOSITION of known classes. Makes the library extensible and turns "add a class" into data, not code.</p></div>
+
+<div class="card"><span class="rank">5</span><b>Smarter / deeper SEARCH</b> &nbsp;<span class="pill r">wall-time-bounded</span>
+<p class="dim">A*/greedy with a general progress heuristic (frame-completion / distance-to-salient-goal), hierarchical macro-abstraction, iterative deepening. CAVEAT (honest): the search cost is discarded in SCORE (max-over-runs replay) but NOT in WALL-TIME — every search action is a live REST call at eval, so per-game deep search is bounded by the 12h budget, not by score. Parallelism helps ACROSS games (swarm), not within a single deep game. Lower ROI than 1–3.</p></div>
+
+<div class="card"><span class="rank">6</span><b>Local NEURAL reasoner</b> &nbsp;<span class="pill r">high ceiling · high risk</span>
+<p class="dim">A small LOCAL model (fits T4, offline) that hypothesizes the mechanic/goal in structured form when symbolic induction fails — the only path for a TRULY novel affordance (the W1 gap). Risks: which model fits T4 offline; latency vs 12h/1-submission; and it MUST be grounded/verified against the deterministic env so it never ships a hallucinated plan (propose plan -> replay-verify -> only then commit). Highest ceiling, but do it last and gated.</p></div>
+
+<h2>Prioritized sequence &amp; honest ceiling</h2>
+<table>
+<tr><th>Step</th><th>Deliverable</th><th>Validation (leave-X-out)</th></tr>
+<tr><td>1 · color-agnostic roles</td><td>classes fire on any palette/layout</td><td>recolor dev game, class still solves</td></tr>
+<tr><td>2 · counterfactual goal</td><td>transferable win predicate from 1 reward</td><td>learned predicate re-solves L1+ no re-search</td></tr>
+<tr><td>3 · effect vocabulary</td><td>rotate/gravity/launch/clone detectors + planner hooks</td><td>held-out mechanic solved by probing</td></tr>
+<tr><td>4–6 · library / search / reasoner</td><td>matcher, guided search, gated local model</td><td>held-out family / wall-time / replay-verified</td></tr>
+</table>
+<div class="card dim">HONEST CEILING: these raise the FRACTION of hidden games whose mechanic is expressible/inducible — but a game whose win condition is genuinely outside the affordance+class+reasoner span still scores ~0 (and abstains, floor-safe). The field is &lt;1.2% RHAE; the realistic target is competitive coverage of the inducible slice + human-level efficiency on it (replay), not domination. Key proven lesson: every "impossible" dev game fell to deeper mechanic decode — so the ceiling is decode/perception depth, not a hard wall.</div>
+
+<div class="card"><b class="acc">Recommended: build #1 (color-agnostic roles) next.</b> Cheapest, floor-safe, and it directly converts the classes we already have from dev-specific into hidden-game-general — the single highest-probability improvement per unit effort.</div>
+</div></body></html>
