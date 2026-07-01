@@ -33,6 +33,7 @@ def _default_strategies():
     from .grabdrag_strategy import GrabDragStrategy
     from .paint_strategy import PaintStrategy
     from .glyph_strategy import GlyphStrategy
+    from .coroutine_strategy import CoroutineStrategy, general_agent_gen
     return [
         # STRATEGY 0 = pure-coverage ANCHOR (strict-superset floor): TransferExplorer completes levels at FULL
         # speed, banking coverage as a play. MUST be a SEPARATE pure-transfer strategy (not a geodesic): because
@@ -64,6 +65,11 @@ def _default_strategies():
         # additive ARCHETYPE plays #3/#4 (unusual mechanics; abstain on non-match -> floor-safe):
         ("paint", lambda s: PaintStrategy(seed=s)),          # re86 paint-to-stencil
         ("glyph", lambda s: GlyphStrategy(seed=s)),          # sc25 glyph-cast + reach
+        # GENERAL agent (LAST play): game-agnostic affordance-induction + search-replay driven over the reactive
+        # interface (coroutine). On a game whose mechanic is in its reach (incl. HIDDEN) it searches the real env
+        # and replays the solution in a clean run; otherwise it ABSTAINS (benign) and the portfolio rotates away.
+        # Appended LAST -> strictly additive, cannot regress the banked floor.
+        ("general_agent", lambda s: CoroutineStrategy(general_agent_gen, seed=s)),
     ]
 
 
