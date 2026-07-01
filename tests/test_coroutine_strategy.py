@@ -49,3 +49,15 @@ def _reactive_maxlevel(game, budget=40000):
 
 def test_peg_solitaire_class_solves_lf52():
     assert _reactive_maxlevel("lf52") >= 1, "folded peg-solitaire class should solve lf52 reactively"
+
+
+def test_folded_classes_solve_reactively():
+    # each folded goal-class solves its dev game through the reactive general agent, zero per-game wiring
+    assert _reactive_maxlevel("sb26") >= 1, "template-match class should solve sb26"
+    assert _reactive_maxlevel("r11l") >= 1, "centroid-drag class should solve r11l"
+    assert _reactive_maxlevel("su15") >= 1, "pull-drag class should solve su15"
+
+
+def test_generic_search_unaffected_by_class_folds():
+    # non-matching games still fall through to generic search (no false-fires)
+    assert _reactive_maxlevel("vc33") >= 1

@@ -261,12 +261,84 @@ def pull_drag_gen(obs0):
     return
 
 
+# ---------------------------------------------------------------------------
+# GOAL-CLASS: reproduce-a-reference-via-a-palette (pattern-match, e.g. sb26). Affordance-
+# grounded, frames-only: PALETTE = selector cells (two-phase probing), SLOTS = applier
+# cells, TARGET = the colored group in the palette's colors that is neither. Read the
+# target sequence (reading order), then per slot: select the target color, apply; submit.
+# ---------------------------------------------------------------------------
+def template_goal_gen(obs0):
+    g0 = obs0["grid"]; avail = list(obs0["available"])
+    if 6 not in avail:
+        return
+    targets = _salient(g0, 16)
+    base = {}
+    for (cx, cy) in targets:
+        yield ("reset",)
+        obs = yield ("C", cx, cy)
+        if obs["levels"] >= 1:
+            return                                    # single-click win -> let generic path handle it
+        base[(cx, cy)] = 0 if obs["terminal"] else _delta(obs["grid"], g0)
+    selectors, appliers = set(), set()
+    cand = [t for t in targets if base.get(t, 99) < 999]
+    for s in cand:
+        for t in cand:
+            if t == s:
+                continue
+            yield ("reset",)
+            obs = yield ("C", *s)
+            if obs["terminal"] or obs["levels"] >= 1:
+                continue
+            b = obs["grid"]
+            obs = yield ("C", *t)
+            d = 0 if obs["terminal"] else _delta(obs["grid"], b)
+            if obs["levels"] >= 1 or (d >= 2 and abs(d - base.get(t, 0)) >= 2):
+                selectors.add(s); appliers.add(t)
+    if not selectors or not appliers:
+        return
+    sel_color = {s: int(g0[s[1], s[0]]) for s in selectors}
+    palette = set(sel_color.values())
+    slots = sorted(appliers, key=lambda t: (t[1] // 6, t[0]))
+    bg = P.detect_background(g0)
+    objs = []
+    for o in P.connected_components(g0, background=bg):
+        if o.color not in palette:
+            continue
+        cy, cx = int(round(o.centroid[0])), int(round(o.centroid[1]))
+        if any(abs(cx - s[0]) + abs(cy - s[1]) <= 3 for s in selectors):
+            continue
+        if any(abs(cx - t[0]) + abs(cy - t[1]) <= 3 for t in appliers):
+            continue
+        objs.append((o.color, cy, cx))
+    target_seq = [o[0] for o in sorted(objs, key=lambda o: (o[1] // 6, o[2]))]
+    if len(slots) < 2 or len(target_seq) < len(slots) or any(c == 0 for c in target_seq[:len(slots)]):
+        return
+    target_seq = target_seq[:len(slots)]
+    yield ("reset",); obs = yield ("reset",)          # clean run
+    for i, slot in enumerate(slots):
+        sel = next((s for s in selectors if sel_color[s] == target_seq[i]), None)
+        if sel is None:
+            continue
+        yield ("C", *sel)
+        obs = yield ("C", slot[0], slot[1])
+        if obs["levels"] >= 1:
+            while True:
+                yield ("S", avail[0] if avail else 5)
+    if 5 in avail:
+        obs = yield ("S", 5)                          # submit
+        if obs["levels"] >= 1:
+            while True:
+                yield ("S", avail[0] if avail else 5)
+    return
+
+
 def general_agent_gen(obs0):
     """game-agnostic search-replay solver as a generator (frames+feedback only, zero per-game code).
-    Tries known goal-CLASSES first (peg-solitaire, centroid-drag, pull-drag), then generic search."""
+    Tries known goal-CLASSES (peg / centroid-drag / pull-drag / template-match), then generic search."""
     yield from peg_solitaire_gen(obs0)          # returns (falls through) if not a peg game / DFS exhausts
     yield from centroid_drag_gen(obs0)          # returns (falls through) if not a centroid-drag game
     yield from pull_drag_gen(obs0)              # returns (falls through) if not a pull-drag game
+    yield from template_goal_gen(obs0)          # returns (falls through) if not a reproduce-via-palette game
     g0 = obs0["grid"]; avail = list(obs0["available"])
     macros = [[("S", a)] for a in avail if a in (1, 2, 3, 4, 5)]
     targets = _salient(g0, 16) if 6 in avail else []
