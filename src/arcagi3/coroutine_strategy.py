@@ -131,10 +131,142 @@ def peg_solitaire_gen(obs0):
     return
 
 
+# ---------------------------------------------------------------------------
+# GOAL-CLASS: centroid-drag (click-drag handles to move a MOVER onto a GOAL).
+# Frames-only role detection: color 6 = mover point; color 15 = goal region (the
+# largest color-15 blob NOT containing the mover); color 3 = an un-selected handle.
+# One handle is pre-selected; split the goal G into T1=(Gx-5,Gy), T2=(Gx+5,Gy) whose
+# average is G: drag handle A to T1, select handle B (color-3), drag it to T2 ->
+# centroid == G -> mover on goal. Family-specific colors, but additive + floor-safe.
+# ---------------------------------------------------------------------------
+_MOVER, _GOALC, _HANDLE = 6, 15, 3
+
+
+def _mover_center(grid):
+    ys, xs = np.where(grid == _MOVER)
+    return (int(round(xs.mean())), int(round(ys.mean()))) if len(ys) else None
+
+
+def _goal_center(grid):
+    m = _mover_center(grid)
+    comps = [o for o in P.connected_components(grid) if o.color == _GOALC]
+    if not comps:
+        return None
+    def has_m(o):
+        if m is None:
+            return False
+        r0, c0, r1, c1 = o.bbox
+        return c0 <= m[0] <= c1 and r0 <= m[1] <= r1
+    cand = [o for o in comps if not has_m(o)] or comps
+    g = max(cand, key=lambda o: o.size)
+    return (int(round(g.centroid[1])), int(round(g.centroid[0])))
+
+
+def _unsel_handle(grid):
+    comps = [o for o in P.connected_components(grid) if o.color == _HANDLE]
+    if not comps:
+        return None
+    h = max(comps, key=lambda o: o.size)
+    return (int(round(h.centroid[1])), int(round(h.centroid[0])))
+
+
+def centroid_drag_gen(obs0):
+    """try the centroid-drag class; RETURN (fall through) if roles absent or it doesn't win."""
+    g0 = obs0["grid"]; avail = list(obs0["available"])
+    if 6 not in avail:
+        return
+    if _mover_center(g0) is None or _goal_center(g0) is None or _unsel_handle(g0) is None:
+        return
+    G = _goal_center(g0)
+    if G is None:
+        return
+    gx, gy = G
+    yield ("reset",); obs = yield ("reset",)          # double-reset -> fresh clean run
+    obs = yield ("C", gx - 5, gy)                      # drag pre-selected handle A to T1
+    if obs["levels"] >= 1:
+        while True:
+            yield ("S", avail[0] if avail else 5)
+    hb = _unsel_handle(obs["grid"])
+    if hb is not None:
+        obs = yield ("C", hb[0], hb[1])               # select handle B
+    obs = yield ("C", gx + 5, gy)                      # drag handle B to T2 -> centroid = G
+    if obs["levels"] >= 1:
+        while True:
+            yield ("S", avail[0] if avail else 5)
+    return
+
+
+# ---------------------------------------------------------------------------
+# GOAL-CLASS: pull-drag (a click grabs a nearby block and pulls it toward the click;
+# undo = ACTION7). Frames-only: TARGET = the color-9 region, BLOCK = a small color-15
+# object. Greedy closed loop: click a point on the block->target line within the grab
+# radius, re-perceive, undo on stall, until the block center lands in the target box.
+# ---------------------------------------------------------------------------
+_PULL_TARGET, _PULL_BLOCK, _GRAB = 9, 15, 8
+
+
+def _pull_target(grid):
+    comps = [o for o in P.connected_components(grid) if o.color == _PULL_TARGET and o.size >= 20]
+    if not comps:
+        return None
+    g = max(comps, key=lambda o: o.size)
+    r0, c0, r1, c1 = g.bbox
+    return (int(round(g.centroid[1])), int(round(g.centroid[0])), (c0, r0, c1, r1))
+
+
+def _pull_block(grid, tcx, tcy, prev=None):
+    comps = [o for o in P.connected_components(grid) if o.color == _PULL_BLOCK and 4 <= o.size <= 20]
+    if not comps:
+        return None
+    if prev is not None:                              # track by CONTINUITY (nearest to last position)
+        b = min(comps, key=lambda o: abs(o.centroid[1] - prev[0]) + abs(o.centroid[0] - prev[1]))
+    else:                                             # first frame: the block farthest from the target
+        b = max(comps, key=lambda o: abs(o.centroid[1] - tcx) + abs(o.centroid[0] - tcy))
+    return (int(round(b.centroid[1])), int(round(b.centroid[0])))
+
+
+def pull_drag_gen(obs0):
+    """try the pull-drag class; RETURN (fall through) if target/block absent or it doesn't win."""
+    g0 = obs0["grid"]; avail = list(obs0["available"])
+    if 6 not in avail or _pull_target(g0) is None:
+        return
+    yield ("reset",); obs = yield ("reset",)          # clean run
+    prev = None
+    for _ in range(40):
+        g = obs["grid"]
+        tgt = _pull_target(g)
+        if tgt is None:
+            return
+        tcx, tcy, (bx0, by0, bx1, by1) = tgt
+        blk = _pull_block(g, tcx, tcy, prev)
+        if blk is None:
+            return
+        bcx, bcy = blk; prev = blk
+        if bx0 <= bcx <= bx1 and by0 <= bcy <= by1:
+            return                                    # already inside (no win) -> fall through
+        dx, dy = tcx - bcx, tcy - bcy
+        dist = max(1, abs(dx) + abs(dy))
+        step = min(_GRAB, dist)
+        cx = int(bcx + dx * step / dist); cy = int(bcy + dy * step / dist)
+        before = (bcx, bcy)
+        obs = yield ("C", max(0, min(63, cx)), max(0, min(63, cy)))
+        if obs["levels"] >= 1:
+            while True:
+                yield ("S", avail[0] if avail else 5)
+        nb = _pull_block(obs["grid"], tcx, tcy, before)
+        if nb is not None:
+            prev = nb
+            if abs(nb[0] - before[0]) + abs(nb[1] - before[1]) < 1 and 7 in avail:
+                obs = yield ("S", 7)                  # stalled -> free undo
+    return
+
+
 def general_agent_gen(obs0):
     """game-agnostic search-replay solver as a generator (frames+feedback only, zero per-game code).
-    Tries known goal-CLASSES first (peg-solitaire), then falls through to generic affordance search."""
+    Tries known goal-CLASSES first (peg-solitaire, centroid-drag, pull-drag), then generic search."""
     yield from peg_solitaire_gen(obs0)          # returns (falls through) if not a peg game / DFS exhausts
+    yield from centroid_drag_gen(obs0)          # returns (falls through) if not a centroid-drag game
+    yield from pull_drag_gen(obs0)              # returns (falls through) if not a pull-drag game
     g0 = obs0["grid"]; avail = list(obs0["available"])
     macros = [[("S", a)] for a in avail if a in (1, 2, 3, 4, 5)]
     targets = _salient(g0, 16) if 6 in avail else []
