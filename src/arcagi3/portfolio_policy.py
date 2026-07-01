@@ -33,7 +33,7 @@ def _default_strategies():
     from .grabdrag_strategy import GrabDragStrategy
     from .paint_strategy import PaintStrategy
     from .glyph_strategy import GlyphStrategy
-    from .coroutine_strategy import CoroutineStrategy, general_agent_gen
+    from .coroutine_strategy import CoroutineStrategy, general_agent_gen, cheap_classes_gen
     return [
         # STRATEGY 0 = pure-coverage ANCHOR (strict-superset floor): TransferExplorer completes levels at FULL
         # speed, banking coverage as a play. MUST be a SEPARATE pure-transfer strategy (not a geodesic): because
@@ -43,6 +43,11 @@ def _default_strategies():
         # coverage risk: a low R regresses [push R=4000 -> only L1], a high R defers efficiency past the budget
         # on deep games [tu93 R=20000 never replays in 26000]. Keeping them separate is strictly safer.)
         ("transfer_s0", lambda s: TransferExplorer(seed=s, **DENSE)),
+        # EARLY fast class-play (reachability hardening): the cheap frame-detect goal-classes (peg-solitaire,
+        # centroid-drag, pull-drag) run right after the floor. On a non-matching game the generator EXHAUSTS
+        # immediately -> fast-rotates in ~1 action (no 20000 stall) -> negligible cost to movement games; on a
+        # matching HIDDEN class game it solves early instead of only via the last strategy. Floor-safe.
+        ("goal_classes_early", lambda s: CoroutineStrategy(cheap_classes_gen, seed=s)),
         # STRATEGY 1 = EFFICIENCY play (dominant score lever, ADDED not substituted): geodesic_replay re-explores
         # then replays the EXACT-FRAME shortest path to each reward in a NEW PLAY (double-reset) -> max-over-plays
         # scores those levels at 7-109x fewer actions (validated per-play: tu93 18.7x, ls20 109x, lp85 12-35x).
@@ -119,8 +124,12 @@ class PortfolioPolicy:
         else:
             self._since_level += 1
 
-        # plateaued on levels -> rotate to the next strategy (if any) via a new play
-        if (not self._multiplay_broken and self._since_level >= self.level_stall_limit
+        # rotate to the next strategy when the current one PLATEAUS (stall limit) OR signals it is EXHAUSTED
+        # (a coroutine class-play that abstained -> can't solve this game -> rotate in ~1 action instead of
+        # burning the whole stall limit). `_done` is absent on non-coroutine strategies, so this is a no-op
+        # for them (they still rotate on stall only) -> cannot regress the validated coverage ordering.
+        cur_exhausted = bool(getattr(cur, "_done", False))
+        if (not self._multiplay_broken and (self._since_level >= self.level_stall_limit or cur_exhausted)
                 and self.idx < len(self.pols) - 1):
             self.idx += 1
             self._since_level = 0

@@ -338,6 +338,18 @@ def template_goal_gen(obs0):
     return
 
 
+def cheap_classes_gen(obs0):
+    """FAST goal-class solvers only (frame-detect, no probing/search): peg-solitaire, centroid-drag, pull-drag.
+    Each returns in 0 actions if its roles are absent, so this is cheap on non-matching games -> safe to run
+    EARLY in the portfolio (before the expensive coverage explorers) so class games are solved fast at eval
+    where actions go over a slow gateway. Abstains (benign) if nothing matches."""
+    yield from peg_solitaire_gen(obs0)
+    yield from centroid_drag_gen(obs0)
+    yield from pull_drag_gen(obs0)
+    return          # no class matched -> RETURN (generator exhausts) so the portfolio fast-rotates in ~1 action
+    # (on a WIN, the matching class holds forever via its own benign loop and never reaches here)
+
+
 def general_agent_gen(obs0):
     """game-agnostic search-replay solver as a generator (frames+feedback only, zero per-game code).
     Tries known goal-CLASSES (peg / centroid-drag / pull-drag / template-match), then generic search."""
