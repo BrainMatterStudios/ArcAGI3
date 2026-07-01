@@ -87,12 +87,13 @@ def solve(game, max_nodes=3000, probe_cap=18, verbose=True):
             k = P.to_grid(obs.frame)[:56, :56].tobytes()
             if k not in seen: seen.add(k); q.append(seq + [m])
     plan_len = sum(len(m) for m in sol) if sol else None
+    tokens = [tok for m in sol for tok in m] if sol else None
     if verbose:
         hp = HUMAN_PROXY.get(game)
         r = f" {plan_len/hp:.1f}x-human" if plan_len and hp else ""
         print(f"{game:>6}: click={int(has_click)} macros={len(macros)} -> "
               f"{'SOLVED plan='+str(plan_len)+r if sol else 'unsolved'} (nodes={nodes})")
-    return dict(game=game, solved=sol is not None, plan_len=plan_len, has_click=has_click)
+    return dict(game=game, solved=sol is not None, plan_len=plan_len, has_click=has_click, tokens=tokens)
 
 
 if __name__ == "__main__":
