@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARC-AGI-3 — Strategy Reframe (2026-07-01)</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c232d; --ink:#e6edf3; --muted:#9aa7b4;
+    --line:#2a3441; --accent:#4ea1ff; --good:#3fb950; --warn:#d29922; --bad:#f85149;
+    --chip:#21303f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1060px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.5px}
+  h2{font-size:21px;margin:42px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 8px;color:var(--accent)}
+  .sub{color:var(--muted);font-size:14px;margin-bottom:8px}
+  p{margin:10px 0}
+  .lead{font-size:16px;color:#cdd9e5}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:16px 0}
+  .panel.flush{padding:0;overflow:hidden}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+  @media(max-width:760px){.grid2,.grid3{grid-template-columns:1fr}}
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+  tr:last-child td{border-bottom:none}
+  .chip{display:inline-block;background:var(--chip);border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;color:#bcd;margin:2px 4px 2px 0}
+  .tag{font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;text-transform:uppercase;letter-spacing:.4px}
+  .t-good{background:rgba(63,185,80,.15);color:var(--good);border:1px solid rgba(63,185,80,.4)}
+  .t-warn{background:rgba(210,153,34,.15);color:var(--warn);border:1px solid rgba(210,153,34,.4)}
+  .t-bad{background:rgba(248,81,73,.13);color:var(--bad);border:1px solid rgba(248,81,73,.4)}
+  .t-info{background:rgba(78,161,255,.13);color:var(--accent);border:1px solid rgba(78,161,255,.4)}
+  .big{font-size:34px;font-weight:800;letter-spacing:-1px;line-height:1}
+  .kpi{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:16px}
+  .kpi .l{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+  code{background:#0b0f14;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:#e6c07b}
+  .bar{height:22px;border-radius:5px;background:linear-gradient(90deg,var(--accent),#7b61ff);position:relative}
+  .barrow{display:grid;grid-template-columns:130px 1fr 56px;gap:10px;align-items:center;margin:7px 0;font-size:13px}
+  .barbg{background:#0b0f14;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+  ul{margin:8px 0;padding-left:20px}
+  li{margin:5px 0}
+  .callout{border-left:3px solid var(--accent);background:rgba(78,161,255,.06);padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0}
+  .callout.warn{border-color:var(--warn);background:rgba(210,153,34,.06)}
+  .callout.bad{border-color:var(--bad);background:rgba(248,81,73,.06)}
+  .callout.good{border-color:var(--good);background:rgba(63,185,80,.06)}
+  .mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:var(--muted)}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  .foot{color:var(--muted);font-size:12px;margin-top:50px;border-top:1px solid var(--line);padding-top:16px}
+  .num{font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>ARC-AGI-3 — Strategy Reframe</h1>
+  <div class="sub">Research synthesis · 2026-07-01 · grounded in the campaign (~20 prior angles), a June-30-milestone OSINT sweep, and a 6-expert adversarial paradigm workflow</div>
+
+  <p class="lead">Two findings change the picture more than any new algorithm would: <b>(1) the leaderboard numbers are RHAE <u>percentages</u> — the entire field is under 1.2%</b>, so the "0.33 vs 0.68 paradigm chasm" was reading percentages as fractions; and <b>(2) no top team open-sourced for the June-30 milestone</b>, so the campaign's designated "adopt-and-harden the drop" plan has nothing to adopt. The real gap to the cluster is <b>action-efficiency engineering</b>, not a missing paradigm — and the campaign wrote that lever off using reset-heavy experiments that <i>self-sabotage</i> the squared metric.</p>
+
+  <h2>1 · The scoring reframe (the load-bearing correction)</h2>
+  <div class="grid3">
+    <div class="kpi"><div class="l">Us (banked)</div><div class="big num">0.33<span style="font-size:18px">%</span></div><div class="sub" style="margin-top:6px">below the template ceiling</div></div>
+    <div class="kpi"><div class="l">"Template ceiling"</div><div class="big num">0.68<span style="font-size:18px">%</span></div><div class="sub" style="margin-top:6px">where ~everyone parked</div></div>
+    <div class="kpi"><div class="l">Tufa (SOTA)</div><div class="big num">1.17<span style="font-size:18px">%</span></div><div class="sub" style="margin-top:6px">"first meaningful jump", undisclosed</div></div>
+  </div>
+  <div class="callout">
+    Greg Kamradt described Tufa raising the lead <b>"from 0.68% to 1.17%… the first meaningful break past the template ceiling."</b> Even <b>Gemini 3.1 Pro (online frontier) scores 0.37%.</b> RHAE = <code>min(1.15, (human/agent)²)</code> per level, level-weighted. At these scores the whole field solves roughly the <b>same easy levels</b> and differs mainly in <b>actions-per-level</b>: template teams ≈12× human, us ≈17×, Tufa ≈9×.
+  </div>
+  <div class="callout bad">
+    <b>This overturns the campaign's most demoralizing belief.</b> The memory note <span class="mono">"0.33 is our codebase's ceiling; others reach 0.5–1.21 via a genuine paradigm difference"</span> mis-read percentages as fractions. ARC-AGI-3 is <b>brutally unsolved by everyone</b> — including online frontier models. We are not 4× behind a better paradigm; we are below a known efficiency ceiling.
+  </div>
+
+  <h2>2 · What the June-30 milestone actually produced</h2>
+  <div class="panel">
+    <p><span class="tag t-bad">Key</span> &nbsp;<b>No leaderboard-topping team open-sourced.</b> Tufa explicitly deferred to <i>end-of-competition</i>; no repos found from Reki, Tong Hui Kang, "the last dance", Helmut AGI, et al. The "adopt the drop" plan is moot.</p>
+    <p><span class="tag t-info">Corroboration</span> &nbsp;<b>Tong Hui Kang (0.80 leaderboard) publicly documented that an offline-trained action-prediction model FAILED</b> — <i>"no evidence the trained model is performing better than random… could not clear even the first level."</i> Independently confirms every learned-model kill in the campaign. His 0.80 is a different, undisclosed submission.</p>
+    <h3>Two adoptable offline-legal templates (the only real public assets)</h3>
+    <table>
+      <tr><th>Repo</th><th>Method</th><th>Value to us</th></tr>
+      <tr><td><span class="mono">thylinao1/<br>arc-agi-3-offline-agent</span> <span class="tag t-good">MIT</span></td><td>Reactive per-game online-CNN (StochasticGoose lineage), T4-ready, never reset-replays</td><td><b>The reset lesson:</b> its DECISION-LOG shows <b>resets/replays count as actions and crater the squared metric to 0.00</b> on 9/25 games. This is exactly our geodesic risk.</td></tr>
+      <tr><td><span class="mono">14H034160212/<br>arc-agi3-neurosymbolic</span></td><td>Local-LLM induces dynamics-as-code → classical planner → <b>verify against engine</b></td><td>Offline-legal cousin of the winning "Executable World Models". Solves <code>ls20</code> 7/7 (known game). Wall = pixel→symbol perception (our identified blocker).</td></tr>
+    </table>
+  </div>
+
+  <h2>3 · The two real levers</h2>
+  <div class="grid2">
+    <div class="panel">
+      <h3 style="margin-top:0">Lever A — Single-play efficiency <span class="tag t-good">buildable now</span></h3>
+      <p>The documented <b>0.33 → 0.68</b> path. Minimize actions on the levels we <i>already</i> solve, in a <b>single play with no resets</b>. The campaign concluded "efficiency is eval-inert" — but that verdict came from <b>geodesic reset-then-replay</b>, the exact pattern that zeroes the squared metric. The correct lever is lean first-solve, which we never measured cleanly.</p>
+      <p class="sub">Reverses a campaign error. Evidence: thylinao1 DECISION-LOG + the RHAE action-ratio math. Needs a 1-day local audit to confirm our agent is bleeding score to resets/over-exploration.</p>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0">Lever B — First-reward manufacture <span class="tag t-warn">gated on a 1-day test</span></h3>
+      <p>The <b>0.33 → ~0.45</b> path. A small, frozen, offline-authored library of <b>executable goal-archetypes</b> (target-click, reach-unique-cell, collect-all, toggle-all…) run as <b>strictly-additive max-over-plays</b> pursuit, gated to fire only when coverage stalls with zero reward. It <i>enumerates-and-pursues</i> a designer-intent goal instead of inferring it — crossing the <b>first reward</b> on archetype-shaped zero-games where pure coverage walls.</p>
+      <p class="sub"><code>sb26 L0</code> (cracked in 9 actions) is the existence proof that a zero-game can go 0→positive this way.</p>
+    </div>
+  </div>
+
+  <h2>4 · Paradigm panel — ranked (6 experts → 3 adversarial judges each)</h2>
+  <p class="sub">All six proposals collapsed to one lever: <i>bake the Executable-WM goal-hypothesis loop offline as a finite executable library, run additive, let the engine reward edge — not perception — disambiguate.</i> Scored on legal ∧ novel ∧ crosses-zero-game-on-hidden ∧ T4-buildable.</p>
+  <div class="panel flush">
+  <table>
+    <tr><th>#</th><th>Paradigm</th><th>Verdict</th><th>Survives</th></tr>
+    <tr><td>1</td><td><b>CGPP</b> — compiled goal-archetype predicate library, additive pursuit plays</td><td>Top survivor: most general grounding, cleanest W1 sidestep, sharpest kill-test</td><td><span class="tag t-good">build (gated)</span></td></tr>
+    <tr><td>2</td><td><b>Macro-Program Library</b> — perceptually-bound multi-step solvers</td><td>Best <i>diagnostic</i>: names the real axis — <b>action-composition depth</b> (BFS can't assemble a 9-step non-rewarded sequence). Fold into CGPP.</td><td><span class="tag t-info">fold in</span></td></tr>
+    <tr><td>3</td><td><b>Scout-then-Exploit</b> — stall-gated manufacture-and-verify</td><td>Right <i>plumbing</i> (stall-gate). Drop its "driver discovers new reward" claim (= W1).</td><td><span class="tag t-info">fold in</span></td></tr>
+    <tr><td>4</td><td><b>PDGP</b> — imagined rollouts over a forward model</td><td>Imports the Genie kill (correct dynamics → +0 levels). Subsumed.</td><td><span class="tag t-warn">subsumed</span></td></tr>
+    <tr><td>5</td><td><b>SysID World-Model</b> — fit dynamics, plan to goal library</td><td>Solves the <b>already-solved half</b>. 93–100% next-frame accuracy gave +0 levels. No-op dressed as a world-model.</td><td><span class="tag t-bad">kill</span></td></tr>
+    <tr><td>6</td><td><b>AHTL</b> — freeze the LLM enumerator offline</td><td>Discards the runtime novel-hypothesis organ that gives the WM paper its 58%. Per-game overfit.</td><td><span class="tag t-bad">kill</span></td></tr>
+  </table>
+  </div>
+
+  <h2>5 · Honest ceiling — and the Tufa question</h2>
+  <div class="callout warn">
+    <b>No buildable offline paradigm in the panel reaches Tufa's 1.17%.</b> CGPP's realistic landing is <b>~0.40–0.48</b> with a hard <b>0.33 floor</b> (additive, can't regress). It converts 1–2 archetype-shaped hidden zero-games and harvests deep-level efficiency; it does <i>not</i> crack genuinely-novel-mechanic games (invisible gating like <code>ls20</code> rotation, undecodable wins like <code>g50t</code>, combinatorial no-feedback binding like <code>sb26 L1</code>). W1 is real and re-emerges one level down.
+  </div>
+  <p><b>To actually outperform Tufa</b> (your stated goal) the two stackable levers are: <b>(A) super-human action-efficiency</b> via compiled optimal solvers on mechanics once ID'd — this is what pushes the very top past 1.0 on the squared metric — and <b>(B) first-reward manufacture</b> to unlock more scored levels. Tufa's own edge is an <i>undisclosed</i> "novel approach"; their published 58%-RHAE method is <b>online GPT-5.5 — illegal offline</b>. There is no shortcut to copy. The credible path is: <b>close the efficiency gap first (buildable, reverses a campaign error), add first-reward manufacture (gated), and treat beating-Tufa as the research frontier it genuinely is.</b></p>
+
+  <h2>6 · Two decisive &lt;1-day experiments (run before any build spend)</h2>
+  <div class="grid2">
+    <div class="panel">
+      <h3 style="margin-top:0">Exp 1 — Efficiency audit <span class="tag t-good">Lever A</span></h3>
+      <p>On 3–4 public levels we already solve, measure our agent's <b>actual action count</b> and the resulting per-level RHAE, and check how much is lost to <b>resets / over-exploration</b> vs a lean single-play solve. We hold the engine + <code>environment_files/</code>.</p>
+      <p class="sub"><b>If</b> we're at ~17× human and resets dominate → a lean first-solve rewrite is a real, immediate 0.33→0.5+ lever. <b>If</b> already lean → efficiency is tapped and Lever B is the only path.</p>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0">Exp 2 — Held-out predicate-recall <span class="tag t-warn">Lever B gate</span></h3>
+      <p>Hand-extract the true win-condition of all 8 public zero-games from <code>environment_files/*/*.py</code> (we hold the source). Build a compact ~8–12 predicate library leave-one-out. Measure: <b>does the frozen top-K (K≤4) contain the TRUE win-condition of ≥5/8 held-out games?</b></p>
+      <p class="sub"><b>≥5/8</b> → designer-intent vocabulary is compact &amp; transferable → build CGPP. <b>&lt;5/8, each bespoke</b> → win-conditions don't share a vocabulary → ship only the <code>sb26</code>-L0 integration, don't build the library.</p>
+    </div>
+  </div>
+
+  <h2>7 · Recommended plan</h2>
+  <div class="panel">
+    <ol>
+      <li><b>Run Exp 1 + Exp 2 (1–2 days, local, free).</b> They resolve the campaign's central tension on ground truth we already possess, before any frontier-authoring spend.</li>
+      <li><b>If Exp 1 shows efficiency headroom:</b> build the lean single-play solver (no reset-replay) — the documented 0.33→0.68 path. Highest-confidence, evidence-backed, reverses the "efficiency inert" error.</li>
+      <li><b>If Exp 2 passes (≥5/8):</b> build CGPP — start with 3 archetypes only, strictly-additive max-over-plays, stall-gated, anchored behind <code>transfer_s0</code>.</li>
+      <li><b>No-regression firewall (non-negotiable):</b> archetype/efficiency plays are additive and gated to never activate on a game coverage already wins → banked <b>0.33 floor by construction</b>. The moment anything touches coverage <i>ordering</i>, it becomes the killed GraphRanker. And re-push the kernel before submit (the geodesic no-op lesson).</li>
+    </ol>
+    <p class="sub">Budget: &lt;$500 frontier authoring + a few T4-hours. Trivially within 12h / 2×T4 / $10k.</p>
+  </div>
+
+  <div class="foot">
+    Sources: Kaggle leaderboard CSV (verified 2026-07-01) · <a href="https://digg.com/ai/k8o9t7me">Digg/Tufa 0.68→1.17</a> · <a href="https://officechai.com/ai/arc-agi-3/">Gemini 3.1 Pro 0.37%</a> · <a href="https://blog.huikang.dev/2026/05/31/autoresearch-hackathon.html">Tong Hui Kang autoresearch (failed trained model)</a> · <a href="https://github.com/thylinao1/arc-agi-3-offline-agent">thylinao1</a> · <a href="https://github.com/14H034160212/arc-agi3-neurosymbolic">14H034160212 neurosymbolic</a> · <a href="https://arxiv.org/abs/2605.05138">Executable World Models (online, illegal offline)</a>. Internal: OSINT agent + 6-expert adversarial paradigm workflow (25 agents) + campaign memory.
+  </div>
+
+</div>
+</body>
+</html>

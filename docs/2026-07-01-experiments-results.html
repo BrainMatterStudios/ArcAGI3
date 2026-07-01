@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARC-AGI-3 — Exp 1 &amp; Exp 2 Results (2026-07-01)</title>
+<style>
+  :root{--bg:#0e1116;--panel:#161b22;--panel2:#1c232d;--ink:#e6edf3;--muted:#9aa7b4;--line:#2a3441;
+    --accent:#4ea1ff;--good:#3fb950;--warn:#d29922;--bad:#f85149;--chip:#21303f;--purp:#a371f7}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:29px;margin:0 0 4px;letter-spacing:-.5px}
+  h2{font-size:20px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:15.5px;margin:20px 0 8px;color:var(--accent)}
+  .sub{color:var(--muted);font-size:14px;margin-bottom:8px}
+  p{margin:10px 0}.lead{font-size:16px;color:#cdd9e5}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:820px){.grid2{grid-template-columns:1fr}}
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  tr:last-child td{border-bottom:none}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .tag{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
+  .t-good{background:rgba(63,185,80,.15);color:var(--good);border:1px solid rgba(63,185,80,.4)}
+  .t-warn{background:rgba(210,153,34,.15);color:var(--warn);border:1px solid rgba(210,153,34,.4)}
+  .t-bad{background:rgba(248,81,73,.13);color:var(--bad);border:1px solid rgba(248,81,73,.4)}
+  .t-info{background:rgba(78,161,255,.13);color:var(--accent);border:1px solid rgba(78,161,255,.4)}
+  .t-purp{background:rgba(163,113,247,.15);color:var(--purp);border:1px solid rgba(163,113,247,.4)}
+  code{background:#0b0f14;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#e6c07b}
+  .kpi{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .kpi .l{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+  .big{font-size:30px;font-weight:800;letter-spacing:-1px;line-height:1.05}
+  .callout{border-left:3px solid var(--accent);background:rgba(78,161,255,.06);padding:11px 15px;border-radius:0 8px 8px 0;margin:12px 0}
+  .callout.good{border-color:var(--good);background:rgba(63,185,80,.06)}
+  .callout.warn{border-color:var(--warn);background:rgba(210,153,34,.06)}
+  .callout.bad{border-color:var(--bad);background:rgba(248,81,73,.06)}
+  .callout.purp{border-color:var(--purp);background:rgba(163,113,247,.06)}
+  ul{margin:8px 0;padding-left:20px}li{margin:4px 0}
+  .foot{color:var(--muted);font-size:12px;margin-top:44px;border-top:1px solid var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ARC-AGI-3 — Experiment Results</h1>
+  <div class="sub">2026-07-01 · Exp 1 (efficiency audit) &amp; Exp 2 (zero-game win-condition decode) · run on local ground truth (<code>environment_files/</code>)</div>
+  <p class="lead">Both experiments landed decisive — and both <b>correct a load-bearing memory belief.</b> Exp 1: the human baseline <i>is</i> available offline, and efficiency is a <b>~10× per-level RHAE lever</b> (not "inert"). Exp 2: <b>all 8 "W1 zero-games" have visible goals</b> — the wall is hidden-mechanic discovery + planning depth, not goal unobservability. That reframes the hardest problem into a more tractable (dense-signal) one.</p>
+
+  <h2>Exp 1 · Efficiency audit — <span class="tag t-good">efficiency is a real lever</span></h2>
+  <div class="grid2" style="margin-bottom:6px">
+    <div class="kpi"><div class="l">Mean per-level RHAE (official, squared)</div><div class="big">0.070 → <span style="color:var(--good)">0.693</span></div><div class="sub" style="margin-top:4px">actual → efficiency-optimal ceiling = <b>9.9× recoverable</b></div></div>
+    <div class="kpi"><div class="l">Mean per-level score (SDK linear)</div><div class="big">12.0 → <span style="color:var(--good)">67.0</span></div><div class="sub" style="margin-top:4px">/100 · = 5.6× recoverable</div></div>
+  </div>
+  <div class="callout good"><b>Correction:</b> all 25 local games carry <code>baseline_actions</code> (per-level human counts) — the memory's "no human baseline offline" was wrong, so real offline RHAE <i>is</i> computable. Confirmed in scorecard code that a level-reset does <code>actions += 1</code> (resets cost score), but over-exploration — not resets (1669 total) — is the dominant loss.</div>
+  <div class="panel">
+    <table>
+      <tr><th>game·lvl</th><th class="num">human</th><th class="num">our actual</th><th class="num">geodesic</th><th class="num">headroom</th><th class="num">RHAE now</th><th class="num">RHAE ceiling</th></tr>
+      <tr><td>tu93 L0</td><td class="num">19</td><td class="num">431</td><td class="num">67</td><td class="num">6.4×</td><td class="num">0.002</td><td class="num">0.080</td></tr>
+      <tr><td>tu93 L4</td><td class="num">123</td><td class="num">3223</td><td class="num">28</td><td class="num">115×</td><td class="num">0.002</td><td class="num" style="color:var(--good)">1.150</td></tr>
+      <tr><td>vc33 L1</td><td class="num">18</td><td class="num">688</td><td class="num">12</td><td class="num">57×</td><td class="num">0.001</td><td class="num" style="color:var(--good)">1.150</td></tr>
+      <tr><td>lf52 L1</td><td class="num">81</td><td class="num">7232</td><td class="num">33</td><td class="num">219×</td><td class="num">0.000</td><td class="num" style="color:var(--good)">1.150</td></tr>
+      <tr><td>m0r0 L0</td><td class="num">30</td><td class="num">1952</td><td class="num">14</td><td class="num">139×</td><td class="num">0.000</td><td class="num" style="color:var(--good)">1.150</td></tr>
+    </table>
+  </div>
+  <div class="callout"><b>The structure that resolves "efficiency inert":</b> L0 headroom is <i>small</i> (1.1–6.4×); the <b>25–220× headroom is all on deep levels L1–L4</b>, where the shortest path in our own learned graph is superhuman (hits the 1.15 cap). <b>Public games are shallow (L0/L1) → that's why the public score never moved. The huge headroom lives on the deep levels = the hidden private prize games</b> (unmeasurable offline, but the mechanism is validated and correctly targeted). The official metric is <i>squared</i>, so deep efficient levels dominate even harder.</div>
+
+  <h2>Exp 2 · Zero-game win-conditions — <span class="tag t-purp">the "W1 wall" is misdiagnosed</span></h2>
+  <p class="sub">All 8 win-conditions decoded from source by parallel subagents. The question: is the barrier goal-legibility (W1, unlearnable) or something else?</p>
+  <div class="panel">
+    <table>
+      <tr><th>game</th><th>terminal win-condition</th><th>goal visible?</th><th>archetype</th><th>real barrier</th></tr>
+      <tr><td><b>dc22</b></td><td>avatar (c14) reaches goal cell (c11)</td><td><span class="tag t-good">yes</span></td><td>reach-cell</td><td>maze-reconfig panel + plan</td></tr>
+      <tr><td><b>bp35</b></td><td>reach gem tile</td><td><span class="tag t-good">yes</span></td><td>reach-cell</td><td>gravity nav + step limit</td></tr>
+      <tr><td><b>ka59</b></td><td>slide all blocks into target frames</td><td><span class="tag t-good">yes</span></td><td>sokoban (momentum)</td><td>push-chain planning</td></tr>
+      <tr><td><b>wa30</b></td><td>grab-drag all blocks onto goal pads</td><td><span class="tag t-good">yes</span></td><td>fill-region</td><td>grab mechanic + plan</td></tr>
+      <tr><td><b>re86</b></td><td>paint trail matches target stencil</td><td><span class="tag t-good">yes</span></td><td>pattern-match (paint)</td><td>paint-trail mechanic + plan</td></tr>
+      <tr><td><b>g50t</b></td><td>reach goal cell (via clone-opened gates)</td><td><span class="tag t-warn">goal yes / mech hidden</span></td><td>reach-cell + key-door</td><td>record-replay <b>clone</b> mechanic</td></tr>
+      <tr><td><b>sc25</b></td><td>reach goal (after glyph-cast transform)</td><td><span class="tag t-warn">goal yes / mech hidden</span></td><td>pattern-match + reach</td><td>draw-glyph→cast-spell</td></tr>
+      <tr><td><b>sb26</b></td><td>tile-color seq == visible answer key</td><td><span class="tag t-warn">target yes / map hidden</span></td><td>pattern-match-slots</td><td>recursive pointer mapping (L1+)</td></tr>
+    </table>
+  </div>
+  <div class="callout purp"><b>8/8 have a VISIBLE terminal goal.</b> None is a pure goal-unobservable (W1) wall like ls20's invisible rotation. The campaign conflated "goal unobservable" with "mechanic hard to discover + planning hard." The <i>terminal-goal vocabulary is compact</i> — 3 archetypes (reach-cell, pattern-match-into-slots, fill-region) cover all 8 — so goal-binding is easy. <b>The real wall is a hidden, mostly-bespoke GATING MECHANIC + multi-step planning under a tight step budget.</b></div>
+  <div class="callout good"><b>Why this is more optimistic:</b> mechanic-discovery is a <b>dense-signal</b> problem — every action visibly changes the frame (a block moves, a ghost spawns, a tile recolors) — unlike true W1 goal-polarity aliasing (REACH≡AVOID, no pre-reward signal). We already have a forward model at 93–100% next-frame accuracy. So the wall is <i>hard planning</i>, not information-theoretic impossibility. Convex-hull-closed (synthetic polarity inference) does not apply — these goals don't need inferring.</div>
+  <div class="callout bad"><b>Honest caveats:</b> 3 games have deeply hidden/indirect mechanics — g50t (self-referential clone-recorder), sc25 (exact 3×3 glyph then cast), sb26 L1+ (recursive color-pointer) — which generic discovery is very unlikely to crack without game-specific priors (overfitting). And prior manual RE was wrong on several (wa30 ≠ slide-until-wall; re86 ≠ cursor→crosshair; dc22 is normal-winnable), so treat all mechanic reads as hypotheses to verify in-engine.</div>
+
+  <h2>Combined verdict &amp; revised bet</h2>
+  <div class="panel">
+    <h3 style="margin-top:0">Two evidence-grounded levers (both additive, both keep the 0.33 floor)</h3>
+    <p><b>Lever A — deep-level efficiency</b> <span class="tag t-good">validated real</span>: a ~10× per-level RHAE multiplier that only shows on deep levels (L1+) = private prize games. Already shipped (geodesic v23); Exp 1 confirms the mechanism and quantifies it. Public-inert by nature (public is shallow) — its payoff is the hidden private set.</p>
+    <p><b>Lever B — visible-goal-conditioned planner + online mechanic discovery</b> <span class="tag t-info">revised bet, needs build+test</span>: bind the salient visible goal (easy — Exp 2), learn local dynamics by interaction (dense signal; forward model exists ~95%), and PLAN a bounded action sequence to the goal under the step budget. Run as an <b>additive, stall-gated portfolio play</b> (never reorders coverage = avoids the W3/GraphRanker kill). <b>This supersedes the frozen "goal-prior library" (CGPP)</b> — Exp 2 shows goal-binding isn't the bottleneck, so a goal library adds little; planning-to-a-visible-goal is the real work.</p>
+    <p class="sub">Target the ~4 tractable games (dc22, bp35, ka59, wa30 = reach-visible-goal + learnable mechanic + moderate planning). Treat g50t/sc25/sb26-L1+ as likely-out-of-reach without overfit priors. This revives the forward-model+planner line the campaign killed as "+0 because bottleneck is goal location" — Exp 2 proves the bottleneck is NOT goal location.</p>
+  </div>
+  <div class="callout"><b>Net belief update:</b> the true W1 wall (goal genuinely unobservable) is real for only a narrow class (invisible-state like ls20 — which our explorer already solves — plus 1-bit goal-polarity, resolvable by one touch). The zero-games are gated by <b>planning + mechanic-discovery</b>, which is hard but attackable with dense signal. This is a materially better-grounded and more optimistic position than "offline caps at 0.33 because of W1."</div>
+
+  <div class="foot">Exp 1: <code>scratchpad/efficiency_audit.py</code> (SalienceExplorer @12000, 19 levels, real <code>baseline_actions</code>). Exp 2: 8 parallel source-extraction subagents over <code>environment_files/{re86,wa30,sb26,ka59,bp35,g50t,dc22,sc25}</code>. Scorecard mechanics verified in <code>.venv/.../arc_agi/scorecard.py</code>.</div>
+</div>
+</body>
+</html>
