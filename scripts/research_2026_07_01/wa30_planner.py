@@ -169,19 +169,110 @@ def _plan_sequence(avatar, block_pad_pairs, all_blocks):
     return full
 
 
+def plan_joint(avatar, blocks, goal_cells, max_nodes=800_000):
+    """Globally-optimal (min-action) JOINT plan via A* over the full state
+    (avatar, all block positions, facing, held-block-index). Heuristic = sum over blocks of
+    Manhattan-to-nearest-goal (cells) — admissible. Fits tight step budgets that the sequential
+    planner overruns. Returns action list or None."""
+    import heapq
+    borders = border_walls()
+    goal = set(goal_cells)
+    blocks = tuple(sorted(blocks))
+    n = len(blocks)
+
+    def h(bpos):
+        tot = 0
+        for (bx, by) in bpos:
+            tot += min((abs(bx - gx) + abs(by - gy)) for (gx, gy) in goal) // CELL
+        return tot
+
+    def is_win(bpos, held):
+        return held == -1 and all(b in goal for b in bpos)
+
+    start = (avatar[0], avatar[1], blocks, 0, -1)  # ax, ay, block-tuple, facing, held_idx
+    if is_win(start[2], start[4]):
+        return []
+    counter = 0
+    pq = [(h(blocks), 0, counter, start, [])]
+    best = {(start[0], start[1], start[2], start[3], start[4]): 0}
+    nodes = 0
+    while pq and nodes < max_nodes:
+        f, g, _, s, path = heapq.heappop(pq)
+        ax, ay, bpos, facing, held = s
+        key = (ax, ay, bpos, facing, held)
+        if g > best.get(key, 1 << 30):
+            continue
+        nodes += 1
+        for a in (1, 2, 3, 4, 5):
+            nax, nay, nb, nfac, nheld = ax, ay, bpos, facing, held
+            if a == 5:
+                if held != -1:
+                    nheld = -1
+                else:
+                    fc = faced_cell(ax, ay, facing)
+                    hit = next((i for i, b in enumerate(bpos) if b == fc), -1)
+                    if hit == -1:
+                        continue
+                    nheld = hit
+            else:
+                dx, dy = DELTAS[a]
+                if held == -1:
+                    nfac = facing_of(dx, dy)
+                    tgt = (ax + dx, ay + dy)
+                    if tgt in borders or tgt in bpos:
+                        nax, nay = ax, ay  # blocked; only facing changes
+                    else:
+                        nax, nay = tgt
+                else:
+                    hb = bpos[held]
+                    nav = (ax + dx, ay + dy)
+                    nbl = (hb[0] + dx, hb[1] + dy)
+                    others = tuple(b for i, b in enumerate(bpos) if i != held)
+                    if (nav in borders or nav in others) or (nbl in borders or nbl in others):
+                        continue  # drag blocked
+                    nax, nay = nav
+                    nb = tuple(nbl if i == held else b for i, b in enumerate(bpos))
+            ns = (nax, nay, nb, nfac, nheld)
+            nkey = (nax, nay, nb, nfac, nheld)
+            ng = g + 1
+            if ng >= best.get(nkey, 1 << 30):
+                continue
+            if is_win(nb, nheld):
+                return path + [a]
+            best[nkey] = ng
+            counter += 1
+            heapq.heappush(pq, (ng + h(nb), ng, counter, ns, path + [a]))
+    return None
+
+
+def _greedy_assign(blocks, pads):
+    """assign each block a distinct pad minimizing total Manhattan (greedy over sorted pair distances)."""
+    pairs = sorted(((abs(b[0]-p[0])+abs(b[1]-p[1]), bi, pi)
+                    for bi, b in enumerate(blocks) for pi, p in enumerate(pads)))
+    assign = {}; used_p = set()
+    for _, bi, pi in pairs:
+        if bi in assign or pi in used_p:
+            continue
+        assign[bi] = pads[pi]; used_p.add(pi)
+    return [assign[i] for i in range(len(blocks))]
+
+
 def plan_all(avatar, blocks, pads):
-    """Minimize total actions: search over block->pad assignments and placement orders (feasible for the
-    small block counts in wa30), keep the shortest plan that fits."""
+    """For few blocks (<=3) use the globally-optimal JOINT A*. For more, use assignment + order search:
+    greedy block->pad assignment, then min-total over placement orders (each leg = optimal per-block A*)."""
     from itertools import permutations
     n = len(blocks)
-    pads = pads[:n] if len(pads) >= n else pads
+    if n <= 3:
+        joint = plan_joint(avatar, blocks, pads)
+        if joint is not None:
+            return joint
+    pads = pads[:max(n, len(pads))]
+    assign = _greedy_assign(blocks, pads)
     best = None
-    # try each assignment of pads to blocks, and each placement order
-    for pad_perm in permutations(pads, n):
-        pairs0 = list(zip(blocks, pad_perm))
-        for order in permutations(range(n)):
-            pairs = [pairs0[i] for i in order]
-            plan = _plan_sequence(avatar, pairs, blocks)
-            if plan is not None and (best is None or len(plan) < len(best)):
-                best = plan
+    orders = permutations(range(n)) if n <= 7 else [sorted(range(n), key=lambda i: abs(blocks[i][0]-avatar[0])+abs(blocks[i][1]-avatar[1]))]
+    for order in orders:
+        pairs = [(blocks[i], assign[i]) for i in order]
+        plan = _plan_sequence(avatar, pairs, blocks)
+        if plan is not None and (best is None or len(plan) < len(best)):
+            best = plan
     return best
