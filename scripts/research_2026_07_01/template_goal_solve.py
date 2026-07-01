@@ -107,8 +107,95 @@ def solve(game, verbose=True):
     return dict(game=game, solved=solved, actions=n)
 
 
+def _read_target(g0, selectors, appliers, palette_colors):
+    """re-read the target sequence from the CURRENT frame using the learned structure."""
+    bg = P.detect_background(g0)
+    objs = []
+    for o in P.connected_components(g0, background=bg):
+        if o.color not in palette_colors:
+            continue
+        cy, cx = int(round(o.centroid[0])), int(round(o.centroid[1]))
+        near_sel = any(abs(cx - s[0]) + abs(cy - s[1]) <= 3 for s in selectors)
+        near_slot = any(abs(cx - t[0]) + abs(cy - t[1]) <= 3 for t in appliers)
+        if not near_sel and not near_slot:
+            objs.append((o.color, cy, cx))
+    return [o[0] for o in sorted(objs, key=lambda o: (o[2], o[1]))]
+
+
+def solve_multilevel(game, max_levels=12, verbose=True):
+    """LEVEL-WEIGHTED lever: learn the palette/slot structure ONCE at L0, then for each deeper level just
+    re-read the (new) target and re-plan -- human-optimal on every level, exploiting fixed-UI level structure."""
+    r0 = solve(game, verbose=False)
+    if not r0.get("solved"):
+        if verbose: print(f"{game:>6}: L0 not solved by goal-inference -> n/a"); return 0
+    # re-open and drive multi-level (re-derive structure once, then loop)
+    client = Arcade(operation_mode=OperationMode.OFFLINE, environments_dir="environment_files")
+    gid = next(e.game_id for e in client.get_environments() if e.game_id.startswith(game))
+    env = client.make(game_id=gid, scorecard_id=f"tgml-{game}")
+    obs = env.reset(); g0 = P.to_grid(obs.frame)
+    avail = list(obs.available_actions or [])
+    targets = salient_targets(g0, max_n=20)
+
+    def click(cx, cy):
+        nonlocal obs; obs = env.step(GameAction.ACTION6, data={"x": cx, "y": cy})
+    def won(): return obs.state == GameState.WIN
+    def dead(): return obs.state == GameState.GAME_OVER
+    def dl(a, b): return int(np.sum(a[:56, :56] != b[:56, :56]))
+
+    base = {}
+    for (cx, cy) in targets:
+        obs = env.reset(); click(cx, cy)
+        base[(cx, cy)] = (0 if dead() else dl(P.to_grid(obs.frame), g0), int(obs.levels_completed or 0) >= 1)
+    selectors, appliers = set(), set()
+    cand = [t for t in targets if not base[t][1]]
+    for s in cand:
+        for t in cand:
+            if t == s: continue
+            obs = env.reset(); click(*s)
+            if dead() or int(obs.levels_completed or 0) >= 1: continue
+            b = P.to_grid(obs.frame); click(*t)
+            if dead(): continue
+            d = dl(P.to_grid(obs.frame), b)
+            if int(obs.levels_completed or 0) >= 1 or (d >= 2 and abs(d - base[t][0]) >= 2):
+                selectors.add(s); appliers.add(t)
+    if not selectors or not appliers:
+        if verbose: print(f"{game:>6}: structure lost -> L0 only"); return 1
+    sel_color = {s: int(g0[s[1], s[0]]) for s in selectors}
+    palette_colors = set(sel_color.values())
+    slots = sorted(appliers, key=lambda t: (t[0], t[1]))
+
+    obs = env.reset(); lvl = 0
+    for _ in range(max_levels):
+        g = P.to_grid(obs.frame)
+        tgt = _read_target(g, selectors, appliers, palette_colors)
+        if len(tgt) < len(slots) or any(c == 0 for c in tgt[:len(slots)]):
+            break
+        for i, slot in enumerate(slots):
+            sel = next((s for s in selectors if sel_color[s] == tgt[i]), None)
+            if sel is None: continue
+            click(*sel); click(slot[0], slot[1])
+            if obs.state == GameState.GAME_OVER: break
+        if 5 in avail and obs.state != GameState.GAME_OVER:
+            obs = env.step(GameAction.from_id(5))
+        nl = int(obs.levels_completed or 0)
+        if nl > lvl:
+            lvl = nl
+        else:
+            break
+        if obs.state in (GameState.WIN, GameState.GAME_OVER):
+            break
+    if verbose:
+        print(f"{game:>6}: MULTI-LEVEL goal-inference solved {lvl} levels (state={obs.state})")
+    return lvl
+
+
 if __name__ == "__main__":
     games = sys.argv[1:] or ["sb26", "cn04", "lf52"]
-    print("General GOAL-INFERENCE for reproduce-reference-via-palette class (zero per-game code):\n")
-    for g in games:
-        solve(g)
+    if games and games[0] == "--multi":
+        print("Multi-level goal-inference (level-weighted RHAE lever):\n")
+        for g in games[1:] or ["sb26"]:
+            solve_multilevel(g)
+    else:
+        print("General GOAL-INFERENCE for reproduce-reference-via-palette class (zero per-game code):\n")
+        for g in games:
+            solve(g)
