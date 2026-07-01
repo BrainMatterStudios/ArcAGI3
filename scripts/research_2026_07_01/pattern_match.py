@@ -57,24 +57,40 @@ def solve(game="sb26", verbose=True):
     def click(cen):
         return env.step(GameAction.ACTION6, data={"x": int(round(cen[1])), "y": int(round(cen[0]))})
 
-    lv = int(obs.levels_completed or 0)
-    used_tiles = set()
-    for i, target in enumerate(ak):
-        # find an unused tile whose color matches the target
-        ti = next((k for k, (_, col, _) in enumerate(tiles) if col == target and k not in used_tiles), None)
-        if ti is None:
-            print(f"  no tile for target color {target} -> abstain"); return 0
-        used_tiles.add(ti)
-        obs = click(tiles[ti][2])                 # select the tile
-        obs = click(slots[i][1])                  # place into slot i
-        if obs.state == GameState.GAME_OVER:
+    def attempt_level():
+        nonlocal obs
+        grid = P.to_grid(obs.frame)
+        ak, tiles, slots = perceive(grid)
+        if not ak or not tiles or len(slots) < len(ak):
+            return False, f"perception incomplete ak={ak} tiles={len(tiles)} slots={len(slots)}"
+        lv = int(obs.levels_completed or 0)
+        used = set()
+        for i, target in enumerate(ak):
+            ti = next((k for k, (_, col, _) in enumerate(tiles) if col == target and k not in used), None)
+            if ti is None:
+                return False, f"no tile for target {target}"
+            used.add(ti)
+            obs = click(tiles[ti][2]); obs = click(slots[i][1])
+            if obs.state == GameState.GAME_OVER:
+                return False, "game over during placement"
+        obs = env.step(GameAction.ACTION5)
+        return (int(obs.levels_completed or 0) > lv or obs.state == GameState.WIN), "submitted"
+
+    solved = 0
+    while solved < (obs.win_levels or 8):
+        ok, msg = attempt_level()
+        lvnow = int(obs.levels_completed or 0)
+        if ok:
+            solved = lvnow
+            if verbose:
+                print(f"  L{solved-1} SOLVED (now level {solved}); {msg}")
+            if obs.state == GameState.WIN:
+                break
+        else:
+            if verbose:
+                print(f"  stopped at level {lvnow}: {msg}")
             break
-    obs = env.step(GameAction.ACTION5)            # submit
-    if int(obs.levels_completed or 0) > lv or obs.state == GameState.WIN:
-        print(f"  *** SOLVED sb26-class via source-free pattern-match ***")
-        return int(obs.levels_completed or 0)
-    print(f"  did not solve (levels {obs.levels_completed}, state {obs.state})")
-    return int(obs.levels_completed or 0)
+    return solved
 
 
 if __name__ == "__main__":
