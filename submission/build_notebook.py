@@ -28,6 +28,8 @@ CORE = ["__init__.py", "perception.py", "world_model.py", "movement.py", "agent.
         "geodesic_replay_explorer.py",     # portfolio EFFICIENCY play (exact-frame geodesic, movement 18-110x)
         "mechanic_strategy.py",        # portfolio ARCHETYPE play: pattern-match solver (abstains else)
         "grabdrag_strategy.py",        # portfolio ARCHETYPE play: source-free grab-drag solver (abstains else)
+        "paint_strategy.py",           # portfolio ARCHETYPE play: source-free paint-to-stencil (abstains else)
+        "glyph_strategy.py",           # portfolio ARCHETYPE play: source-free glyph-cast (abstains else)
         "portfolio_policy.py",         # PRIMARY: multi-strategy portfolio (max-over-plays, strict-superset)
         "online_model.py", "online_explorer.py"]  # Phase A (opt-in via ARCAGI3_ONLINE=1)
 PKG = {name: base64.b64encode((SRC / name).read_bytes()).decode() for name in CORE}

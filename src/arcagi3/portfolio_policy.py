@@ -31,6 +31,8 @@ def _default_strategies():
     from .geodesic_replay_explorer import GeodesicReplayExplorer
     from .mechanic_strategy import MechanicSolverStrategy
     from .grabdrag_strategy import GrabDragStrategy
+    from .paint_strategy import PaintStrategy
+    from .glyph_strategy import GlyphStrategy
     return [
         # STRATEGY 0 = pure-coverage ANCHOR (strict-superset floor): TransferExplorer completes levels at FULL
         # speed, banking coverage as a play. MUST be a SEPARATE pure-transfer strategy (not a geodesic): because
@@ -59,6 +61,9 @@ def _default_strategies():
         # additive ARCHETYPE play #2: source-free grab-drag solver (learns avatar by probing -> plan). Same
         # abstain-on-non-match safety -> can only ADD (incl. a HIDDEN grab-drag game), never regress the floor.
         ("grabdrag", lambda s: GrabDragStrategy(seed=s)),
+        # additive ARCHETYPE plays #3/#4 (unusual mechanics; abstain on non-match -> floor-safe):
+        ("paint", lambda s: PaintStrategy(seed=s)),          # re86 paint-to-stencil
+        ("glyph", lambda s: GlyphStrategy(seed=s)),          # sc25 glyph-cast + reach
     ]
 
 
