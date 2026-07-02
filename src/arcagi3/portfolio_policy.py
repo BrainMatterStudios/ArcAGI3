@@ -35,16 +35,20 @@ def _default_strategies():
     from .glyph_strategy import GlyphStrategy
     from .coroutine_strategy import CoroutineStrategy, general_agent_gen, cheap_classes_gen, oc_search_gen
     return [
-        # ORDERING = EFFICIENCY-FIRST (2026-07-02). The eval STOPS at the first full-solve (state==WIN), and the
-        # official RHAE is squared+depth-weighted -> the run that WINS must be EFFICIENT. The wandering coverage
-        # anchor (TransferExplorer) is therefore moved to LAST: it used to be strategy 0 and would fully-win
-        # solvable games INEFFICIENTLY, hitting WIN and stranding the efficiency plays (measured tu93 0.31/100).
-        # With the anchor last, the specialized class-solvers + geodesic produce the winning run (measured:
-        # mean squared-RHAE 4.42 -> 8.38 across 15 dev games, ZERO regressions; tu93 0.31->46.67, m0r0 0->11.34).
-        # The anchor still runs LAST as a pure-coverage fallback for games nothing efficient solves (banked floor
-        # preserved via max-over-plays). See docs/HANDOFF-2026-07-02 + [[arcagi3-efficiency-lever]].
+        # ORDERING = COVERAGE-FIRST (reverted 2026-07-02 after the efficiency-first experiment REGRESSED the live
+        # public score 0.33 -> 0.01). The anchor-LAST bet assumed a generous eval budget (8h/game) so the efficient
+        # plays would win first and the anchor would still be reached as a fallback. On the REAL eval that failed:
+        # the specialized/efficient plays solve ~nothing on the (harder, hidden) public games AND the anchor,
+        # behind 13 plays, never got reached -> the coverage floor collapsed. Lesson: under a TIGHT eval budget,
+        # COVERAGE is the achievable lever, not efficiency; the anchor MUST run FIRST to bank the floor. The
+        # squared-efficiency thesis needs a budget the eval doesn't provide. See [[arcagi3-efficiency-first-ordering]].
         #
-        # FIRST fast class-play (reachability hardening): the cheap frame-detect goal-classes (peg-solitaire,
+        # STRATEGY 0 = pure-coverage ANCHOR (banks the floor FAST, first): TransferExplorer completes what it can
+        # at full speed. Kept a SEPARATE pure-transfer play so the geodesic (below) can replay aggressively without
+        # coverage risk (transfer already banked coverage; the geodesic's premature replays only affect its OWN play,
+        # and max-over-plays unions coverage + efficiency).
+        ("transfer_s0", lambda s: TransferExplorer(seed=s, **DENSE)),
+        # EARLY fast class-play (reachability hardening): the cheap frame-detect goal-classes (peg-solitaire,
         # centroid-drag, pull-drag) run right after the floor. On a non-matching game the generator EXHAUSTS
         # immediately -> fast-rotates in ~1 action (no 20000 stall) -> negligible cost to movement games; on a
         # matching HIDDEN class game it solves early instead of only via the last strategy. Floor-safe.
@@ -82,11 +86,6 @@ def _default_strategies():
         # L0) and to deepen click games (cd82 L0->L2, vc33->L2). Abstains (benign) on exhaustion. eval-affordable
         # (8h/game); if it does worse than an earlier play on any game, max-over-plays discards it.
         ("oc_search", lambda s: CoroutineStrategy(oc_search_gen, seed=s)),
-        # COVERAGE ANCHOR (moved from FIRST to LAST, 2026-07-02): pure-transfer wandering solver as the final
-        # fallback. It banks coverage for any game no efficient/specialized play solved, WITHOUT winning solvable
-        # games inefficiently first (which strands the efficiency plays under the squared eval). max-over-plays
-        # keeps the banked floor; running last means the efficient plays' WINning run scores instead of this one.
-        ("transfer_s0", lambda s: TransferExplorer(seed=s, **DENSE)),
     ]
 
 

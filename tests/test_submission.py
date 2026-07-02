@@ -58,8 +58,6 @@ def test_my_agent_wins_btnc():
 
 
 def test_my_agent_wins_push():
-    # push is an anchor-only game; efficiency-first ordering (2026-07-02) moved the coverage anchor to LAST,
-    # so it is reached (and wins push, all levels) later — ~33.5k actions vs the old ~16k. Eval budget is
-    # 8h/game (~14.7M actions, no action cap), so coverage is preserved; the test budget reflects the new order.
-    obs, n = _drive("push", budget=50000)
+    # coverage anchor runs FIRST (coverage-first ordering) so push wins early again (~16k actions).
+    obs, n = _drive("push", budget=16000)
     assert obs.state.name == "WIN"
