@@ -99,7 +99,11 @@ def test_oc_search_solves_ls20_reactively():
 
 
 def test_oc_search_in_portfolio():
-    # the appended object-centric play is present and constructs (strictly additive -> floor-safe)
+    # object-centric play present; EFFICIENCY-FIRST ordering: class-solvers first, wandering anchor LAST
     from arcagi3.portfolio_policy import _default_strategies
     names = [n for (n, _) in _default_strategies()]
-    assert names[-1] == "oc_search", f"oc_search must be the LAST (additive) play; got {names[-1]}"
+    assert "oc_search" in names
+    assert names[-1] == "transfer_s0", f"coverage anchor must be LAST (efficiency-first); got {names[-1]}"
+    assert names[0] == "goal_classes_early", "specialized class-solvers must run first"
+    # efficiency plays must precede the wandering anchor so the WINning run is efficient (squared eval)
+    assert names.index("geodesic_replay") < names.index("transfer_s0")

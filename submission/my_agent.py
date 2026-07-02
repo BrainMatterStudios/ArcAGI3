@@ -21,7 +21,9 @@ _CANDIDATES = [
     "/kaggle/input/arcagi3",
     os.path.dirname(os.path.abspath(__file__)),
 ]
-for _p in _CANDIDATES:
+# Insert in REVERSE so the FIRST candidate (/kaggle/working, the freshly-embedded self-contained code)
+# ends up at sys.path[0] and CANNOT be shadowed by a stale attached dataset (each insert(0) reverses order).
+for _p in reversed(_CANDIDATES):
     if _p and os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
 
