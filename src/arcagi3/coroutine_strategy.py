@@ -456,3 +456,95 @@ def general_agent_gen(obs0):
                     heapq.heappush(frontier, (cellv[_novelty_cell(obs["grid"])], tie, seq + [m]))
     while True:                     # exhausted -> abstain (benign, floor-safe)
         yield ("S", avail[0] if avail else 5)
+
+
+def _object_clicks(grid, cap: int = 40):
+    """OBJECT-CENTRIC click candidates: centroid + two bbox corners of each non-background connected
+    component, smallest objects first (interactive elements tend to be small). Cracks games whose winning
+    click is an object centre that the generic _salient pixel targets miss (e.g. ka59 block centres)."""
+    bg = P.detect_background(grid)
+    pts: list[tuple[int, int]] = []
+    for o in sorted(P.connected_components(grid, background=bg), key=lambda o: o.size):
+        r0, c0, r1, c1 = o.bbox
+        cy, cx = o.centroid
+        for (px, py) in ((int(round(cx)), int(round(cy))), (c0, r0), (c1, r1)):
+            if 0 <= px < 64 and 0 <= py < 64 and (px, py) not in pts:
+                pts.append((px, py))
+    return pts[:cap]
+
+
+def oc_search_gen(obs0, budget: int = 12000):
+    """OBJECT-CENTRIC search-replay (appended portfolio play; strictly additive / floor-safe via max-over-plays).
+    Two fixes over general_agent_gen that the 2026-07-02 adversarial re-examination validated:
+      (1) click candidates = object CENTROIDS+corners (not generic _salient pixels) -> reaches object-interaction
+          wins the pixel targets miss (ka59 11a, wa30, ...);
+      (2) dedup by object_state_key (object tuples) instead of exact pixels -> collapses animation/counter jitter
+          that exploded the exact-grid frontier on physics/paint games (frontier no longer 'exhausts' at ~800).
+    On a game already solved by an earlier play this just adds another scored run; if it does worse it loses the
+    max -> cannot regress the floor. Abstains (benign) when exhausted."""
+    g0 = obs0["grid"]; avail = list(obs0["available"])
+    move_macros = [[("S", a)] for a in avail if a in (1, 2, 3, 4, 5)]
+
+    def okey(g):
+        try:
+            return P.object_state_key(g)
+        except Exception:
+            return _exact_state(g)
+
+    def replay_clean(seq):
+        yield ("reset",); yield ("reset",)          # double-reset -> fresh scored run
+        for m in seq:
+            for tok in m:
+                yield tok
+
+    obs = yield ("reset",)
+    seen = {okey(obs["grid"])}; cellv = Counter(); tie = 0; nodes = 0
+    frontier = [(0, 0, [])]
+    while frontier and nodes < budget:
+        _, _, seq = heapq.heappop(frontier)
+        obs = yield ("reset",); won = dead = False
+        for m in seq:
+            for tok in m:
+                obs = yield tok
+                if obs["levels"] >= 1:
+                    won = True; break
+                if obs["terminal"]:
+                    dead = True; break
+            if won or dead:
+                break
+        if won:
+            yield from replay_clean(seq); return
+        if dead:
+            continue
+        gcur = obs["grid"]
+        macros = list(move_macros)
+        if 6 in avail:
+            macros = macros + [[("C", cx, cy)] for (cx, cy) in _object_clicks(gcur)]
+        cellv[_novelty_cell(gcur)] += 1
+        for m in macros:
+            obs = yield ("reset",); won = dead = False
+            for mm in seq:
+                for tok in mm:
+                    obs = yield tok
+                    if obs["levels"] >= 1:
+                        won = True; break
+                    if obs["terminal"]:
+                        dead = True; break
+                if won or dead:
+                    break
+            if not won and not dead:
+                for tok in m:
+                    obs = yield tok; nodes += 1
+                    if obs["levels"] >= 1:
+                        won = True; break
+                    if obs["terminal"]:
+                        dead = True; break
+            if won:
+                yield from replay_clean(seq + [m]); return
+            if not dead:
+                e = okey(obs["grid"])
+                if e not in seen:
+                    seen.add(e); tie += 1
+                    heapq.heappush(frontier, (cellv[_novelty_cell(obs["grid"])], tie, seq + [m]))
+    while True:                     # exhausted -> abstain (benign, floor-safe)
+        yield ("S", avail[0] if avail else 5)

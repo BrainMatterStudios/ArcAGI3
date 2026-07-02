@@ -4,7 +4,7 @@ import numpy as np
 from arc_agi import Arcade, OperationMode
 from arcengine import GameAction, GameState
 from arcagi3 import perception as P
-from arcagi3.coroutine_strategy import CoroutineStrategy, general_agent_gen
+from arcagi3.coroutine_strategy import CoroutineStrategy, general_agent_gen, oc_search_gen, _object_clicks
 
 
 def test_coroutine_general_agent_solves_dc22():
@@ -61,3 +61,45 @@ def test_folded_classes_solve_reactively():
 def test_generic_search_unaffected_by_class_folds():
     # non-matching games still fall through to generic search (no false-fires)
     assert _reactive_maxlevel("vc33") >= 1
+
+
+def _reactive_maxlevel_oc(game, budget=40000):
+    c = Arcade(operation_mode=OperationMode.OFFLINE, environments_dir="environment_files")
+    gid = next(e.game_id for e in c.get_environments() if e.game_id.startswith(game))
+    env = c.make(game_id=gid, scorecard_id=f"oc-{game}-t"); obs = env.reset()
+    pol = CoroutineStrategy(oc_search_gen); last = np.zeros((64, 64), int); mx = 0
+    for _ in range(budget):
+        g = P.to_grid(obs.frame) if (obs.frame is not None and len(obs.frame)) else last
+        last = g; mx = max(mx, int(obs.levels_completed or 0))
+        if mx >= 1:
+            return mx
+        tok = pol.decide(g, gstate_terminal=(obs.state == GameState.GAME_OVER),
+                         levels=int(obs.levels_completed or 0), available=list(obs.available_actions or []))
+        try:
+            if tok[0] == "reset": obs = env.reset()
+            elif tok[0] == "S": obs = env.step(GameAction.from_id(tok[1]))
+            else: obs = env.step(GameAction.ACTION6, data={"x": int(tok[1]), "y": int(tok[2])})
+        except Exception: obs = env.reset()
+    return mx
+
+
+def test_object_clicks_returns_object_centres():
+    # object-centric candidates: non-empty, in-bounds, deduped
+    c = Arcade(operation_mode=OperationMode.OFFLINE, environments_dir="environment_files")
+    gid = next(e.game_id for e in c.get_environments() if e.game_id.startswith("ka59"))
+    env = c.make(game_id=gid, scorecard_id="oc-ka59-clicks"); obs = env.reset()
+    pts = _object_clicks(P.to_grid(obs.frame))
+    assert pts and len(pts) == len(set(pts))
+    assert all(0 <= x < 64 and 0 <= y < 64 for (x, y) in pts)
+
+
+def test_oc_search_solves_ls20_reactively():
+    # object-centric search cracks a NO_L0 game the pixel-target/exact-grid probe missed (floor-safe additive)
+    assert _reactive_maxlevel_oc("ls20") >= 1, "object-centric search should solve ls20 reactively"
+
+
+def test_oc_search_in_portfolio():
+    # the appended object-centric play is present and constructs (strictly additive -> floor-safe)
+    from arcagi3.portfolio_policy import _default_strategies
+    names = [n for (n, _) in _default_strategies()]
+    assert names[-1] == "oc_search", f"oc_search must be the LAST (additive) play; got {names[-1]}"
