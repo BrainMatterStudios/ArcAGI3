@@ -91,7 +91,7 @@ def main():
     ap.add_argument("--port", type=int, default=8879)
     ap.add_argument("--max-turns", type=int, default=120)
     ap.add_argument("--max-ctx-chars", type=int, default=90000)
-    ap.add_argument("--obs-cap", type=int, default=1800)
+    ap.add_argument("--obs-cap", type=int, default=4600)  # must exceed one 64x64 frame (4160 chars) or perception breaks
     ap.add_argument("--temperature", type=float, default=0.3)
     ap.add_argument("--max-tokens", type=int, default=4096)
     ap.add_argument("--log", default=None)
@@ -120,7 +120,13 @@ def main():
                 {"role": "user", "content": seed}]
     tot_in = tot_out = 0
     solved_hi = 0
+    fails = 0
     t0 = time.time()
+
+    def _safe(path):  # firewall: keep read/write inside the workspace
+        p = os.path.abspath(path if os.path.isabs(path) else os.path.join(ws, path))
+        return p if (p == ws or p.startswith(ws + os.sep)) else None
+
     for turn in range(1, a.max_turns + 1):
         # context budget: elide oldest tool observations if over budget
         while sum(len(m["content"]) for m in messages) > a.max_ctx_chars and len(messages) > 4:
@@ -132,13 +138,20 @@ def main():
                 break
         try:
             content, usage = http_chat(a.base_url, a.model, messages, a.temperature, a.max_tokens)
+            fails = 0
         except Exception as e:
-            emit(f"[turn {turn}] MODEL CALL FAILED: {e}"); time.sleep(3); continue
+            fails += 1
+            emit(f"[turn {turn}] MODEL CALL FAILED ({fails}): {e}")
+            if fails >= 5:
+                emit("[abort] 5 consecutive model-call failures"); break
+            time.sleep(3); continue
         tot_in += usage.get("prompt_tokens", 0); tot_out += usage.get("completion_tokens", 0)
         act = parse_action(content)
         emit(f"\n===== turn {turn} (ctx~{sum(len(m['content']) for m in messages)//4} tok, "
              f"cumul out={tot_out}) =====\n{cap(content, 1200)}")
-        messages.append({"role": "assistant", "content": content})
+        # store a bounded copy: a full <write> file body is on disk already, so echoing it in
+        # history just bloats context (can overflow the model window) — keep the reasoning + tag head.
+        messages.append({"role": "assistant", "content": cap(content, 3000)})
         if act is None:
             messages.append({"role": "user", "content":
                 "No valid tool tag found. Reply with EXACTLY ONE tag: <bash>...</bash>, "
@@ -149,21 +162,27 @@ def main():
         if act["tool"] == "bash":
             obs = run_bash(act["body"], ws)
         elif act["tool"] == "write":
-            p = act["path"] if os.path.isabs(act["path"]) else os.path.join(ws, act["path"])
-            try:
-                os.makedirs(os.path.dirname(p), exist_ok=True)
-                with open(p, "w") as f:
-                    f.write(act["body"])
-                obs = f"[wrote {len(act['body'])} chars to {act['path']}]"
-            except Exception as e:
-                obs = f"[write error: {e}]"
+            p = _safe(act["path"])
+            if p is None:
+                obs = "[write refused: path is outside the workspace]"
+            else:
+                try:
+                    os.makedirs(os.path.dirname(p), exist_ok=True)
+                    with open(p, "w") as f:
+                        f.write(act["body"])
+                    obs = f"[wrote {len(act['body'])} chars to {act['path']}]"
+                except Exception as e:
+                    obs = f"[write error: {e}]"
         elif act["tool"] == "read":
-            p = act["path"] if os.path.isabs(act["path"]) else os.path.join(ws, act["path"])
-            try:
-                with open(p) as f:
-                    obs = f.read()
-            except Exception as e:
-                obs = f"[read error: {e}]"
+            p = _safe(act["path"])
+            if p is None:
+                obs = "[read refused: path is outside the workspace]"
+            else:
+                try:
+                    with open(p) as f:
+                        obs = f.read()
+                except Exception as e:
+                    obs = f"[read error: {e}]"
         else:
             obs = "[unknown tool]"
         # track progress from the client session (levels_completed)

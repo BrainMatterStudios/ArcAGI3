@@ -30,11 +30,14 @@ def _norm(rec: Any) -> dict:
     return {"id": getattr(aid, "name", str(aid)), "data": dict(action.data or {})}
 
 
-def extract_winning_segments(history: list, actions_per_level: list[int], levels_completed: int) -> list[tuple[int, list[dict]]]:
+def extract_winning_segments(history: list, actions_per_level: list[int], levels_completed: int) -> list[tuple[int, list[dict], bool]]:
     """For each COMPLETED level, the actions of the winning attempt = everything after the last
-    RESET within that level's history slice (RESET is present in history; sum(apl)==len(history))."""
+    RESET within that level's history slice (RESET is present in history; sum(apl)==len(history)).
+    Returns (level, winning_actions, had_reset) — had_reset says the winning attempt actually began
+    with a RESET, so the replay should only RESET-prefix that level (else it wastes an action and
+    risks starting from a state that differs from the fresh level-entry state)."""
     hist = [_norm(r) for r in history]
-    segs: list[tuple[int, list[dict]]] = []
+    segs: list[tuple[int, list[dict], bool]] = []
     idx = 0
     for level, n in enumerate(actions_per_level):
         seg = hist[idx:idx + n]
@@ -42,7 +45,7 @@ def extract_winning_segments(history: list, actions_per_level: list[int], levels
         if level < levels_completed and n > 0:
             last_reset = max((i for i, r in enumerate(seg) if r["id"] == "RESET"), default=-1)
             win = seg[last_reset + 1:]
-            segs.append((level, win))
+            segs.append((level, win, last_reset >= 0))
     return segs
 
 
@@ -50,14 +53,14 @@ def _to_action_input(d: dict) -> arcengine.ActionInput:
     return arcengine.ActionInput(id=arcengine.GameAction[d["id"]], data=dict(d.get("data") or {}))
 
 
-def replay_segments(game: Any, segments: list[tuple[int, list[dict]]], *, reset_prefix: bool = True) -> dict:
+def replay_segments(game: Any, segments: list[tuple[int, list[dict], bool]], *, reset_prefix: bool = True) -> dict:
     """Replay winning segments into a FRESH, already-start_game()'d TAAF game. Self-verifying:
     after each level's segment, assert levels_completed advanced; on desync, STOP (bank what worked).
     Returns {'levels': reached, 'actions': taken, 'desynced_at': level or None}."""
     actions = 0
-    for level, win in segments:
+    for level, win, had_reset in segments:
         before = game.current_state.levels_completed
-        if reset_prefix:  # engine counts RESET as 1 action; matches how the winning attempt began
+        if reset_prefix and had_reset:  # only RESET-prefix a level whose winning attempt began with one
             try:
                 game.execute_action(arcengine.ActionInput(id=arcengine.GameAction.RESET, data={}))
                 actions += 1

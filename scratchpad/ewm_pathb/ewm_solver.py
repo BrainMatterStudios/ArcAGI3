@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -34,6 +35,31 @@ def _finish_remaining(games) -> None:
                 pass
 
 
+def _finish_one(game) -> None:
+    if game.game_run is not None and game.game_run.state == "playing":
+        try:
+            game.finish_game()
+        except Exception:
+            pass
+
+
+async def _kill_proc_group(proc) -> None:
+    """SIGKILL the agent AND its ./plan/./verify grandchildren (started in its own session)."""
+    if proc is None:
+        return
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        await asyncio.wait_for(proc.wait(), 10)
+    except Exception:
+        pass
+
+
 @dataclass
 class SolverEWM(Solver):
     label: str = "SolverEWM"
@@ -42,7 +68,7 @@ class SolverEWM(Solver):
     per_game_seconds: float = 600.0              # per-game time-box
     max_turns: int = 160
     max_ctx_chars: int = 110_000
-    obs_cap: int = 1800
+    obs_cap: int = 4600
     max_tokens: int = 4096
     port_base: int = 8890
     work_root: Path | None = field(default=None)
@@ -57,10 +83,18 @@ class SolverEWM(Solver):
             # sequential: one game at a time shares the single GPU/model + a distinct port
             for i, game in enumerate(games):
                 if self.soft_end_time is not None and datetime.now(timezone.utc) >= self.soft_end_time:
-                    if game.game_run is not None and game.game_run.state == "playing":
-                        game.finish_game()
+                    _finish_one(game)
                     continue
-                await self._play_one(game, self.port_base + (i % 20))
+                # PER-GAME ISOLATION: one game's failure must NOT crash the rest of the portfolio
+                # (an escaped exception makes Benchmark mark every remaining game 'crashed').
+                try:
+                    await self._play_one(game, self.port_base + (i % 20))
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:  # noqa: BLE001
+                    print(f"[SolverEWM] game {getattr(game, 'env_name', '?')} failed: "
+                          f"{type(e).__name__}: {e}", flush=True)
+                    _finish_one(game)
         except asyncio.CancelledError:
             _finish_remaining(games)
             raise
@@ -81,21 +115,25 @@ class SolverEWM(Solver):
                 f'exec "{self.python}" "$(dirname "$0")/{tgt}" "$@"\n')
             os.chmod(ws / name, 0o755)
 
-        srv = serve_game(game, port=port)
-        tokens = 0
+        srv = None
         proc = None
+        tokens = 0
         try:
+            srv = serve_game(game, port=port)
             env = {**os.environ, "GAME_SERVER_URL": f"http://127.0.0.1:{port}"}
+            # client-start MUST be time-bounded (a hang would otherwise burn the whole run budget)
             await asyncio.to_thread(subprocess.run,
                 [self.python, str(ws / "client/client.py"), "start", "target"],
-                cwd=str(ws), env=env, check=True, capture_output=True)
+                cwd=str(ws), env=env, check=True, capture_output=True, timeout=120)
+            # start_new_session -> its own process group so we can kill ./plan/./verify grandchildren too
             proc = await asyncio.create_subprocess_exec(
                 self.python, str(_HERE / "ewm_agent.py"),
                 "--workspace", str(ws), "--base-url", self.base_url, "--model", self.model,
                 "--port", str(port), "--max-turns", str(self.max_turns),
                 "--max-ctx-chars", str(self.max_ctx_chars), "--obs-cap", str(self.obs_cap),
                 "--max-tokens", str(self.max_tokens),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True)
             try:
                 out, _ = await asyncio.wait_for(proc.communicate(), timeout=self.per_game_seconds)
                 for line in reversed((out or b"").decode(errors="ignore").splitlines()):
@@ -106,17 +144,13 @@ class SolverEWM(Solver):
                         except Exception:
                             pass
             except asyncio.TimeoutError:
-                proc.terminate()
-                try:
-                    await asyncio.wait_for(proc.wait(), 10)
-                except Exception:
-                    proc.kill()
+                await _kill_proc_group(proc)
         except asyncio.CancelledError:
-            if proc is not None:
-                proc.kill()
+            await _kill_proc_group(proc)  # drain before finishing to avoid racing the flask worker
             raise
         finally:
-            srv.stop()
+            if srv is not None:
+                srv.stop()
             if game.game_run is not None and game.game_run.state == "playing":
                 try:
                     game.finish_game(generated_tokens=tokens)

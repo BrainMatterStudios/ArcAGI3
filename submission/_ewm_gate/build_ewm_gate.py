@@ -137,7 +137,7 @@ def run_game(game, port):
     print(f"[gate:{game}] running Qwen-driven EWM agent (code {code})...", flush=True)
     r = subprocess.run([PY, str(ROOT / "ewm_agent.py"), "--workspace", str(ws),
                         "--base-url", BASE_URL, "--model", "qwen", "--port", str(port),
-                        "--max-turns", "160", "--max-ctx-chars", "110000", "--obs-cap", "1800",
+                        "--max-turns", "160", "--max-ctx-chars", "110000", "--obs-cap", "4600",
                         "--max-tokens", "4096", "--temperature", "0.3"],
                        capture_output=True, text=True, timeout=60 * 60)
     sp.kill()

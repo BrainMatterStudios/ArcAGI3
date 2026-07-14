@@ -53,7 +53,7 @@ print(f"1. FULL-history replay -> levels_completed={full_lc}  (determinism {'OK'
 
 # 2. extract winning segment
 segs = extract_winning_segments(hist, apl, lc)
-seg_len = sum(len(w) for _, w in segs)
+seg_len = sum(len(w) for _, w, _ in segs)
 print(f"2. extracted {len(segs)} winning segment(s), total {seg_len} actions (vs {len(hist)} recorded)")
 
 # 3. replay only the segment into a fresh game

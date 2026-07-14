@@ -56,7 +56,7 @@ SOLVER_CELL = (
     "    base_url='http://127.0.0.1:1234/v1',        # setup_commands serves Qwen3.6-27B-FP8 here\n"
     "    model='vrfai/Qwen3.6-27B-FP8',\n"
     "    per_game_seconds=PER_GAME_SECONDS,\n"
-    "    max_turns=160, max_ctx_chars=110000, obs_cap=1800, max_tokens=4096,\n"
+    "    max_turns=160, max_ctx_chars=110000, obs_cap=4600, max_tokens=4096,\n"
     "    work_root='/kaggle/working/ewm_runs',\n"
     ")\n"
     "print(f'[ewm] solver = SolverEWM  per_game={PER_GAME_SECONDS}s  n_passes={N_PASSES}', flush=True)\n"
@@ -79,11 +79,12 @@ for c in nb["cells"]:
                           "source": EMBED.splitlines(keepends=True)})  # then unpack scaffold
         continue
     if c["cell_type"] == "code" and "_competition_games" in src:
-        # drop finetuned-only HELDOUT filtering + prints; set n_passes from knob
-        src = src.replace('HELDOUT={"ft09","re86","sb26","sc25","tu93"}\n', "")
+        # drop finetuned-only HELDOUT filtering + prints (whole block, exact 4-space source); set n_passes from knob
         src = src.replace(
-            'if not TRUE_SUBMISSION:\n        bm.games=[g for g in bm.games if getattr(g,"env_name","") in HELDOUT]\n'
-            '        print("[finetuned] commit validates LoRA on held-out:", [g.env_name for g in bm.games], flush=True)\n',
+            'HELDOUT={"ft09","re86","sb26","sc25","tu93"}\n'
+            'if not TRUE_SUBMISSION:\n'
+            '    bm.games=[g for g in bm.games if getattr(g,"env_name","") in HELDOUT]\n'
+            '    print("[finetuned] commit validates LoRA on held-out:", [g.env_name for g in bm.games], flush=True)\n',
             "")
         src = src.replace("bm.n_passes = 1", "bm.n_passes = N_PASSES")
         # ALWAYS compute a soft_end (incl. real submission) so SolverEWM self-paces + finishes
