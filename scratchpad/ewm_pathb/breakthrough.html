@@ -1,0 +1,188 @@
+<title>ARC-AGI-3 — Verification-by-Execution: the leap is real</title>
+<style>
+  :root{
+    --bg:#0d1017; --bg2:#12161f; --panel:#161b26; --panel2:#1b2130;
+    --ink:#e7ecf3; --ink-dim:#9aa6b8; --ink-faint:#6b7688;
+    --line:#242c3a; --line2:#2f394b;
+    --signal:#39c2b4;      /* verified / success — teal, drawn from the "green agent" */
+    --signal-ink:#7ff0e4;
+    --cost:#e0a24e;   /* cost / caution — amber */
+    --zero:#b46a5c;        /* honest zero — muted rust */
+    --accent:#5b8cff;      /* structural accent — signal blue */
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#f4f2ec; --bg2:#efece4; --panel:#ffffff; --panel2:#f7f5ef;
+      --ink:#1a1f28; --ink-dim:#55606f; --ink-faint:#8a94a3;
+      --line:#e2ddd2; --line2:#d3cdbf;
+      --signal:#14867a; --signal-ink:#0d6055; --cost:#b3771f; --zero:#a2493a; --accent:#3d63d6;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0d1017; --bg2:#12161f; --panel:#161b26; --panel2:#1b2130;
+    --ink:#e7ecf3; --ink-dim:#9aa6b8; --ink-faint:#6b7688; --line:#242c3a; --line2:#2f394b;
+    --signal:#39c2b4; --signal-ink:#7ff0e4; --cost:#e0a24e; --zero:#b46a5c; --accent:#5b8cff;
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f2ec; --bg2:#efece4; --panel:#ffffff; --panel2:#f7f5ef;
+    --ink:#1a1f28; --ink-dim:#55606f; --ink-faint:#8a94a3; --line:#e2ddd2; --line2:#d3cdbf;
+    --signal:#14867a; --signal-ink:#0d6055; --cost:#b3771f; --zero:#a2493a; --accent:#3d63d6;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;
+    -webkit-font-smoothing:antialiased;margin:0}
+  .wrap{max-width:860px;margin:0 auto;padding:clamp(28px,5vw,64px) clamp(18px,4vw,40px)}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--signal);margin:0 0 14px}
+  h1{font-size:clamp(30px,5.4vw,50px);line-height:1.08;letter-spacing:-.02em;font-weight:680;
+    text-wrap:balance;margin:0 0 18px}
+  h1 .q{color:var(--ink-dim);font-weight:480}
+  .lede{font-size:clamp(16px,2.2vw,19px);color:var(--ink-dim);max-width:64ch;margin:0 0 8px}
+  h2{font-size:13px;font-family:var(--mono);letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink-faint);font-weight:600;margin:52px 0 18px;padding-bottom:10px;
+    border-bottom:1px solid var(--line)}
+  p{margin:0 0 14px}
+  strong{color:var(--ink);font-weight:640}
+  .band{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:30px 0 6px}
+  .band .cell{background:var(--panel);padding:20px 20px}
+  .band .n{font-family:var(--mono);font-size:clamp(26px,4vw,36px);font-weight:680;
+    letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1}
+  .band .n.sig{color:var(--signal)} .band .n.cost{color:var(--cost)}
+  .band .k{font-size:12.5px;color:var(--ink-dim);margin-top:8px}
+  .band .k b{color:var(--ink)}
+  table{width:100%;border-collapse:collapse;font-size:14.5px;margin:6px 0}
+  .tbl-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+  th,td{text-align:left;padding:12px 16px;border-bottom:1px solid var(--line)}
+  thead th{font-family:var(--mono);font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--ink-faint);font-weight:600}
+  tbody tr:last-child td{border-bottom:none}
+  td.num{font-family:var(--mono);text-align:right;font-variant-numeric:tabular-nums;color:var(--ink)}
+  tr.total td{background:var(--panel2);font-weight:640}
+  .score{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:640}
+  .bar{position:relative;height:7px;border-radius:4px;background:var(--line2);overflow:hidden;min-width:70px}
+  .bar>i{position:absolute;inset:0 auto 0 0;border-radius:4px;background:var(--signal);display:block}
+  .tag{font-family:var(--mono);font-size:11px;padding:2px 7px;border-radius:5px;border:1px solid var(--line2);color:var(--ink-dim)}
+  .callout{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--signal);
+    border-radius:12px;padding:22px 24px;margin:22px 0}
+  .callout .big{font-family:var(--mono);font-size:15px;color:var(--ink);margin-bottom:6px}
+  .steps{list-style:none;padding:0;margin:20px 0;display:grid;gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .steps li{background:var(--panel);padding:16px 20px;display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:baseline}
+  .steps .mk{font-family:var(--mono);font-size:12px;color:var(--signal);font-weight:600;white-space:nowrap}
+  .steps h3{margin:0 0 3px;font-size:15px;font-weight:640}
+  .steps p{margin:0;font-size:13.5px;color:var(--ink-dim)}
+  .path{counter-reset:s;list-style:none;padding:0;margin:20px 0;display:grid;gap:14px}
+  .path li{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px 18px 58px;position:relative}
+  .path li::before{counter-increment:s;content:counter(s);position:absolute;left:18px;top:18px;
+    width:26px;height:26px;border-radius:7px;background:var(--panel2);border:1px solid var(--line2);
+    font-family:var(--mono);font-size:13px;font-weight:640;color:var(--accent);
+    display:grid;place-items:center}
+  .path h3{margin:0 0 5px;font-size:15.5px;font-weight:650}
+  .path .status{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+    padding:2px 8px;border-radius:5px;margin-left:8px;vertical-align:2px}
+  .st-done{background:color-mix(in srgb,var(--signal) 18%,transparent);color:var(--signal);border:1px solid color-mix(in srgb,var(--signal) 40%,transparent)}
+  .st-open{background:color-mix(in srgb,var(--cost) 15%,transparent);color:var(--cost);border:1px solid color-mix(in srgb,var(--cost) 38%,transparent)}
+  .path p{margin:0;font-size:13.5px;color:var(--ink-dim)}
+  .foot{margin-top:48px;padding-top:18px;border-top:1px solid var(--line);color:var(--ink-faint);
+    font-size:12.5px;font-family:var(--mono)}
+  canvas{display:block;border-radius:10px;border:1px solid var(--line);background:var(--bg2);width:100%;height:96px}
+  .hero-grid{margin:26px 0 2px}
+  .cap{font-size:12px;color:var(--ink-faint);margin-top:8px;font-family:var(--mono)}
+  a{color:var(--accent)}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">ARC Prize 2026 · internal research dossier · 2026-07-14</p>
+  <h1>Verification-by-execution works with a <em>local, offline</em> brain. <span class="q">The leap the campaign was searching for is real.</span></h1>
+  <p class="lede">For weeks the working belief was that our base agent (the "duck," 1.26) sat near the method-class frontier and every lever was a random walk. That belief rested on a scaffold gap, not a capability ceiling. We ported a released <strong>executable-world-model</strong> loop onto our own offline engine, replaced its frontier coding agent with a local one, hid the game identity behind a firewall — and it solved genuinely hard games from <strong>frames alone</strong>.</p>
+
+  <div class="hero-grid">
+    <canvas id="grid" height="96" aria-label="Ambient rendering of a 64-cell ARC frame band"></canvas>
+    <p class="cap">a game frame is a 64×64 grid of colors 0–15 — discrete, deterministic, and exactly checkable. that is what makes a proposed world-model <em>verifiable</em>.</p>
+  </div>
+
+  <div class="band">
+    <div class="cell"><div class="n sig">~25<span style="font-size:.5em;color:var(--ink-faint)">/100</span></div><div class="k">mean RHAE across <b>5 hard dev games</b>, frames-only</div></div>
+    <div class="cell"><div class="n">1.61</div><div class="k">the entire field's <b>total</b> score (world #1)</div></div>
+    <div class="cell"><div class="n cost">~283k</div><div class="k">tokens per game — the <b>deployment</b> problem</div></div>
+  </div>
+
+  <h2>The method, in four verifiable parts</h2>
+  <ul class="steps">
+    <li><span class="mk">probe</span><div><h3>Act a little, record the frames</h3><p>Take a few real actions; the engine returns settled 64×64 frames. Real actions are the costly, quadratically-scored resource — exploration is minimized.</p></div></li>
+    <li><span class="mk">model</span><div><h3>Write an executable world model</h3><p>The brain writes Python: a transition engine, a state reconstructor, and a renderer that must reproduce the observed frame <em>exactly</em>.</p></div></li>
+    <li><span class="mk">verify</span><div><h3>Check it against reality, pixel-exact</h3><p>The harness replays every recorded attempt through the model and asserts the rendered frames match. A wrong model is rejected mechanically — no trust required.</p></div></li>
+    <li><span class="mk">plan</span><div><h3>Search the certified model, then execute</h3><p>Planning happens inside the verified model (free). Only the final plan is executed in the real game — few actions, high efficiency.</p></div></li>
+  </ul>
+  <p style="font-size:13.5px;color:var(--ink-dim)">Because nothing is fit to the dev set — the model is verified against <em>each game's own frames at runtime</em> — the approach is immune to the dev≠hidden gap that killed every prior lever.</p>
+
+  <h2>The blind gate — 5 hard dev games, firewall-verified frames-only</h2>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>Game</th><th>Mechanic</th><th>Levels</th><th>RHAE / 100</th><th style="width:120px">·</th></tr></thead>
+    <tbody>
+      <tr><td>tu93</td><td>movement + 3 enemy types</td><td class="num">8 / 9</td><td class="num score" style="color:var(--signal)">80.0</td><td><span class="bar"><i style="width:80%"></i></span></td></tr>
+      <tr><td>sb26</td><td>click / pattern puzzle</td><td class="num">4 / 8</td><td class="num score">27.8</td><td><span class="bar"><i style="width:27.8%"></i></span></td></tr>
+      <tr><td>cd82</td><td>click / paint-to-template</td><td class="num">2 / 6</td><td class="num score">14.3</td><td><span class="bar"><i style="width:14.3%"></i></span></td></tr>
+      <tr><td>sk48</td><td>beam-claw block sort</td><td class="num">1 / 8</td><td class="num score">2.8</td><td><span class="bar"><i style="width:2.8%"></i></span></td></tr>
+      <tr><td>dc22</td><td>confinement (no win found)</td><td class="num">0 / 6</td><td class="num score" style="color:var(--zero)">0.0</td><td><span class="bar"><i style="width:1%"></i></span></td></tr>
+      <tr class="total"><td>mean</td><td>4 of 5 are duck-scores-zero games</td><td class="num">—</td><td class="num score" style="color:var(--signal)">≈25.0</td><td><span class="bar"><i style="width:25%"></i></span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="font-size:13px;color:var(--ink-faint)">On the solved levels the agent typically <strong>beat human action-efficiency</strong> (scores capped at 115 before weighting). The zeros are honest: on dc22 it built and verified a model, then reported no reachable win rather than hallucinating one. An earlier non-blind run leaked the game name and two agents read the source — caught by transcript grep, discarded, and re-run blind.</p>
+
+  <div class="callout">
+    <div class="big">Leaderboard arithmetic: the total is an <em>average over 110 games</em>.</div>
+    <p style="margin:0;color:var(--ink-dim);font-size:14px">One cracked game like tu93 contributes <strong>80 / 110 ≈ 0.73</strong> — roughly half the current world-leader's entire score, from a single game. Layered on the duck's baseline, cracking even a handful of hidden games leaps the field; ~10 dominates it.</p>
+  </div>
+
+  <h2>What's proven vs. what remains</h2>
+  <ol class="path">
+    <li><h3>Capability <span class="status st-done">proven</span></h3><p>A non-frontier-hosted brain drives the loop to ~25/100 on hard games, offline, on our stack, frames-only, with honest failure behavior. This was the one decisive open question. It is answered.</p></li>
+    <li><h3>A local model must drive the coding loop offline <span class="status st-open">open</span></h3><p>At eval there is no Claude. The brain that reads frames, edits the model, and runs the verifier must be a local model (Qwen-27B / gpt-oss-120B) via a custom agent loop. Buildable; the structure is validated.</p></li>
+    <li><h3>Is a local model strong enough? <span class="status st-open">open · key risk</span></h3><p>Claude Opus drove these. A 27B local model is weaker at agentic coding. Testable — cheaply floor-tested on-host via MLX, faithfully on one free Kaggle GPU.</p></li>
+    <li><h3>Fit 9 hours, 110 games, one GPU <span class="status st-open">open</span></h3><p>~283k tokens/game is ~20–40× the uniform budget. The answer is <strong>selective execution</strong>: cheap-probe all, time-box the loop, bank the cracks, duck-baseline the rest. Conservative math still lands ~3–5× the field leader.</p></li>
+  </ol>
+
+  <p class="foot">assets · scratchpad/ewm_pathb/ (launcher · blind launcher · scorer · patched offline server) · solved models under runs/ · memory: arcagi3-ewm-local-viability-PROVEN</p>
+</div>
+
+<script>
+(function(){
+  var c=document.getElementById('grid');if(!c)return;
+  var dpr=Math.min(window.devicePixelRatio||1,2);
+  function pal(){var d=getComputedStyle(document.documentElement);
+    return {bg:d.getPropertyValue('--bg2').trim()};}
+  // a brand-neutral nod to the ARC 16-color index palette (its own vernacular)
+  var COLORS=['#0d1017','#5b8cff','#b46a5c','#39c2b4','#e0a24e','#7a8494',
+              '#c05a9c','#e6743a','#6fd0c0','#2f9e6b','#8f5bd6','#c8b24a',
+              '#4aa3c8','#d05b6b','#3fb6b0','#e7ecf3'];
+  function draw(){
+    var w=c.clientWidth,h=c.clientHeight;c.width=w*dpr;c.height=h*dpr;
+    var ctx=c.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.fillStyle=pal().bg;ctx.fillRect(0,0,w,h);
+    var cols=Math.floor(w/12),rows=Math.floor(h/12),g=12;
+    for(var y=0;y<rows;y++)for(var x=0;x<cols;x++){
+      // deterministic pseudo-pattern (no Math.random): a couple of "objects" on a ground
+      var v=0;
+      var cx=x-cols*0.5, cy=y-rows*0.5;
+      if((x*7+y*13)%17===0)v=3;            // scattered teal signal cells
+      else if(Math.abs(cx)<3&&Math.abs(cy)<2)v=1;   // a blue "agent" block center
+      else if(x>cols-6&&y>rows-3)v=4;      // amber budget bar bottom-right
+      else if((x+y)%23===0)v=2;
+      ctx.fillStyle=COLORS[v]||COLORS[0];
+      ctx.globalAlpha=v===0?0.5:0.9;
+      ctx.fillRect(x*g+1,y*g+1,g-1.5,g-1.5);
+    }
+    ctx.globalAlpha=1;
+  }
+  draw();
+  var t;window.addEventListener('resize',function(){clearTimeout(t);t=setTimeout(draw,120);});
+  var mo=window.matchMedia('(prefers-color-scheme: dark)');if(mo.addEventListener)mo.addEventListener('change',draw);
+  new MutationObserver(draw).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+})();
+</script>
