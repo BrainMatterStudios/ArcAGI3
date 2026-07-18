@@ -35,7 +35,30 @@ new_cells = []
 for c in nb["cells"]:
     src = "".join(c.get("source", []))
     if c["cell_type"] == "code" and "setup_commands.json" in src:
-        new_cells.append(c)  # keep serve-Qwen cell
+        # Guard the vLLM serve to the SCORED rerun only: it asserts + needs the RTX-6000-class eval
+        # GPU (TP=1 can't fit 27B-FP8 on any free interactive GPU), so the CPU-safe commit must skip
+        # it. The sys.path/.pth setup above the loop is kept (bm-load needs taaf importable).
+        old = (
+            'for command in json.loads((BUNDLE_DIR / "setup_commands.json").read_text()):\n'
+            '    print(f"taaf.kaggle: setup command: {command}", flush=True)\n'
+            '    subprocess.run(command, shell=True, check=True, cwd=WORKING_DIR, env=env)\n'
+            '    # Re-read in case the command persisted new env keys.\n'
+            '    env = _command_env()\n'
+            '    os.environ.update(env)\n')
+        new = (
+            'if TRUE_SUBMISSION:  # serving Qwen needs the eval GPU; the CPU-safe commit skips it\n'
+            '    for command in json.loads((BUNDLE_DIR / "setup_commands.json").read_text()):\n'
+            '        print(f"taaf.kaggle: setup command: {command}", flush=True)\n'
+            '        subprocess.run(command, shell=True, check=True, cwd=WORKING_DIR, env=env)\n'
+            '        env = _command_env()\n'
+            '        os.environ.update(env)\n'
+            'else:\n'
+            '    print("[shadow] commit: skipping setup_commands (no GPU serve)", flush=True)\n')
+        if old not in src:
+            raise SystemExit("setup_commands loop did not match — inspect the setup cell")
+        c = {"cell_type": "code", "metadata": {}, "execution_count": None, "outputs": [],
+             "source": src.replace(old, new).splitlines(keepends=True)}
+        new_cells.append(c)  # keep (guarded) serve-Qwen cell
         new_cells.append({"cell_type": "code", "metadata": {}, "execution_count": None, "outputs": [],
                           "source": EMBED.splitlines(keepends=True)})
         continue
