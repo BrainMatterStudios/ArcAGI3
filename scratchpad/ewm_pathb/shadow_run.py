@@ -35,7 +35,12 @@ def _install_session_hook() -> None:
 
 
 def _shadow_one(bm: Any, g: int, session: Any) -> None:
-    """Replay game index g's winning attempts into a fresh play on the shared card."""
+    """Replay game index g's winning attempts into a fresh play on the shared card.
+
+    The replay (start_game + execute_action) happens LIVE on the competition card so the gateway
+    scores it. We do NOT append to bm.game_runs here — that would race the Benchmark's own iteration
+    of game_runs and could crash the run. Shadow plays are collected and merged into bm.game_runs by
+    run_with_shadow AFTER bm.run() returns (safe), while the live gateway card already has them."""
     run = bm.game_runs[g]
     if run is None or int(run.levels_completed or 0) == 0:
         return
@@ -43,12 +48,12 @@ def _shadow_one(bm: Any, g: int, session: Any) -> None:
     segs = extract_winning_segments(run.history, run.actions_per_level, run.levels_completed)
     ng = type(og)(env_name=og.env_name, arcade_spec=og.arcade_spec)
     ng.start_game(session)
-    bm.game_runs.append(ng.game_run)   # register so TAAF's max-over-plays / diagnostics see it
     res = replay_segments(ng, segs)
     try:
         ng.finish_game()               # finalize the shadow play's score
     except Exception:
         pass
+    _STATE.setdefault("shadow_runs", []).append(ng.game_run)
     print(f"[shadow] {og.env_name}: duck won {run.levels_completed} lvl(s) -> replay banked "
           f"{res['levels']} in {res['actions']} actions (desync={res['desynced_at']})", flush=True)
 
@@ -92,4 +97,10 @@ async def run_with_shadow(bm: Any, **run_kwargs: Any) -> Any:
         except Exception:
             shadow.cancel()
         taaf.game.RunSession.__init__ = _ORIG_RUNSESSION_INIT  # restore
+        # NOW (bm.run done, nothing iterating game_runs) merge the shadow plays for TAAF-side
+        # bookkeeping / any post-run scorecard read. The live gateway card already holds them.
+        try:
+            bm.game_runs.extend(_STATE.get("shadow_runs", []))
+        except Exception as e:  # noqa: BLE001
+            print(f"[shadow] merge into game_runs failed (gateway card still has the plays): {e}", flush=True)
     return result

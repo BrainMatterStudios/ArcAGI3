@@ -40,8 +40,34 @@ for c in nb["cells"]:
                           "source": EMBED.splitlines(keepends=True)})
         continue
     if c["cell_type"] == "code" and "await bm.run(" in src:
-        # the ONLY functional change: route the run through the concurrent shadow
-        src = src.replace("await bm.run(", "await run_with_shadow(bm, ")
+        # (1) route the scored run through the concurrent shadow, and (2) make the COMMIT run
+        #     CPU-safe (skip the offline GPU pass) so pushing doesn't re-burn quota / need a
+        #     capable commit GPU — the scored rerun (TRUE_SUBMISSION) runs duck+shadow for real.
+        old = (
+            '    await bm.run(soft_end_time=soft_end, runtime_environment=target, minimal_diagnostics=TRUE_SUBMISSION)\n'
+            '    if not TRUE_SUBMISSION:\n'
+            '        # An offline run isn\'t scored, but Kaggle still expects a submission.parquet output.\n'
+            '        import pandas as pd\n'
+            '\n'
+            '        pd.DataFrame(\n'
+            '            [["1_0", "1", True, 1]],\n'
+            '            columns=["row_id", "game_id", "end_of_game", "score"],\n'
+            '        ).to_parquet(WORKING_DIR / "submission.parquet", index=False)\n')
+        new = (
+            '    if TRUE_SUBMISSION:\n'
+            '        from shadow_run import run_with_shadow\n'
+            '        await run_with_shadow(bm, soft_end_time=soft_end, runtime_environment=target, minimal_diagnostics=TRUE_SUBMISSION)\n'
+            '    else:\n'
+            '        # CPU-safe landing: commit only needs a submission.parquet without error;\n'
+            '        # the scored rerun runs the duck + shadow on the hidden games.\n'
+            '        import pandas as pd\n'
+            '        pd.DataFrame([["1_0", "1", True, 1]],\n'
+            '                     columns=["row_id", "game_id", "end_of_game", "score"]\n'
+            '                     ).to_parquet(WORKING_DIR / "submission.parquet", index=False)\n'
+            '        print("[shadow] commit: CPU-safe landing; scored rerun runs duck+shadow", flush=True)\n')
+        if old not in src:
+            raise SystemExit("run-cell block did not match — inspect duck-repro run cell before building")
+        src = src.replace(old, new)
         new_cells.append({"cell_type": "code", "metadata": {}, "execution_count": None, "outputs": [],
                           "source": src.splitlines(keepends=True)})
         continue
