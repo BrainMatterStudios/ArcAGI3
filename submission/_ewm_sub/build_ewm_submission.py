@@ -74,7 +74,30 @@ for c in nb["cells"]:
                           "source": SOLVER_CELL.splitlines(keepends=True)})
         continue
     if c["cell_type"] == "code" and "setup_commands.json" in src:
-        new_cells.append(c)  # keep the serve-Qwen cell
+        # CPU-safe commit: guard the vLLM serve to the scored rerun (a fresh CLI push lands on a
+        # P100 that can't serve 27B-FP8; setup_commands asserts an RTX-6000-class GPU). sys.path
+        # setup above the loop is kept so bm-load works on the commit.
+        old = (
+            'for command in json.loads((BUNDLE_DIR / "setup_commands.json").read_text()):\n'
+            '    print(f"taaf.kaggle: setup command: {command}", flush=True)\n'
+            '    subprocess.run(command, shell=True, check=True, cwd=WORKING_DIR, env=env)\n'
+            '    # Re-read in case the command persisted new env keys.\n'
+            '    env = _command_env()\n'
+            '    os.environ.update(env)\n')
+        new = (
+            'if TRUE_SUBMISSION:  # serving Qwen needs the eval GPU; the CPU-safe commit skips it\n'
+            '    for command in json.loads((BUNDLE_DIR / "setup_commands.json").read_text()):\n'
+            '        print(f"taaf.kaggle: setup command: {command}", flush=True)\n'
+            '        subprocess.run(command, shell=True, check=True, cwd=WORKING_DIR, env=env)\n'
+            '        env = _command_env()\n'
+            '        os.environ.update(env)\n'
+            'else:\n'
+            '    print("[ewm] commit: skipping setup_commands (no GPU serve)", flush=True)\n')
+        if old not in src:
+            raise SystemExit("setup_commands loop did not match — inspect the setup cell")
+        c = {"cell_type": "code", "metadata": {}, "execution_count": None, "outputs": [],
+             "source": src.replace(old, new).splitlines(keepends=True)}
+        new_cells.append(c)  # keep (guarded) serve-Qwen cell
         new_cells.append({"cell_type": "code", "metadata": {}, "execution_count": None, "outputs": [],
                           "source": EMBED.splitlines(keepends=True)})  # then unpack scaffold
         continue
