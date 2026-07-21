@@ -121,26 +121,36 @@ def main() -> None:
             src = patch_cell_source()
             seen["hook"] = True
 
-        cells.append(
-            {
-                "cell_type": cell["cell_type"],
-                "metadata": cell.get("metadata", {}),
-                "source": src.splitlines(keepends=True),
-                **(
-                    {"execution_count": None, "outputs": []}
-                    if cell["cell_type"] == "code"
-                    else {}
-                ),
-            }
-        )
+        # Copy the original cell and override only `source`. Rebuilding a cell from
+        # scratch drops keys nbconvert needs — notably `attachments`, which carries the
+        # embedded logo in cell 0; without it the commit fails at render time with
+        # "InvalidNotebook: missing attachment: tufa_labs.png" even though every code
+        # cell ran correctly.
+        out_cell = dict(cell)
+        out_cell["source"] = src.splitlines(keepends=True)
+        if cell["cell_type"] == "code":
+            out_cell["execution_count"] = None
+            out_cell["outputs"] = []
+        cells.append(out_cell)
 
     missing = [name for name, found in seen.items() if not found]
     if missing:
         raise SystemExit(f"never found these anchor cells: {missing}")
 
+    # A dropped cell key is invisible until Kaggle renders the notebook and the commit
+    # fails. Catch it here instead.
+    for i, (before, after) in enumerate(zip(nb["cells"], cells)):
+        lost = set(before) - set(after)
+        if lost:
+            raise SystemExit(f"cell {i} lost keys {sorted(lost)} — nbconvert will reject this")
+
     nb["cells"] = cells
     OUT.write_text(json.dumps(nb, indent=1))
-    print(f"wrote {OUT}  ({len(cells)} cells, anchors: {sorted(seen)})")
+    attachments = sum(1 for c in cells if c.get("attachments"))
+    print(
+        f"wrote {OUT}  ({len(cells)} cells, {attachments} with attachments, "
+        f"anchors: {sorted(seen)})"
+    )
 
 
 if __name__ == "__main__":
