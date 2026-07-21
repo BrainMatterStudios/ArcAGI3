@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Build submission/_duck_patched/duck-patched.ipynb.
+
+Takes the accessible duck bundle (submission/_repro/duck-repro.ipynb) and applies:
+
+  1. The CPU-safe-commit guard, identical to _duck_base: interactive kernels only get a
+     P100, which cannot serve Qwen3.6-27B-FP8, so the vLLM setup and the benchmark run
+     are both gated on TRUE_SUBMISSION. The commit lands a dummy parquet; the scored
+     rerun does the real work on the RTX 6000.
+
+  2. The in-memory harness patches from duck_patches.py, inlined into the notebook's
+     existing "Customization hook" cell (cell 11 in the source notebook) — after the
+     source bundle is on sys.path and the benchmark is loaded, before bm.run().
+
+Nothing here changes the model, sampling parameters, concurrency, per-game budget, the
+game list, or the submission path. The only behavioural deltas are the ACTION7 round
+trip and the animation metadata.
+
+Usage:  .venv/bin/python submission/_duck_patched/build_duck_patched.py
+"""
+import json
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+BASE = REPO / "submission/_repro/duck-repro.ipynb"
+PATCHES = Path(__file__).parent / "duck_patches.py"
+OUT_DIR = Path(__file__).parent
+OUT = OUT_DIR / "duck-patched.ipynb"
+
+CPU_SAFE_SETUP_OLD = (
+    'for command in json.loads((BUNDLE_DIR / "setup_commands.json").read_text()):\n'
+    '    print(f"taaf.kaggle: setup command: {command}", flush=True)\n'
+    '    subprocess.run(command, shell=True, check=True, cwd=WORKING_DIR, env=env)\n'
+    "    # Re-read in case the command persisted new env keys.\n"
+    "    env = _command_env()\n"
+    "    os.environ.update(env)\n"
+)
+CPU_SAFE_SETUP_NEW = (
+    "if TRUE_SUBMISSION:  # serving Qwen needs the eval GPU; the CPU-safe commit skips it\n"
+    '    for command in json.loads((BUNDLE_DIR / "setup_commands.json").read_text()):\n'
+    '        print(f"taaf.kaggle: setup command: {command}", flush=True)\n'
+    "        subprocess.run(command, shell=True, check=True, cwd=WORKING_DIR, env=env)\n"
+    "        env = _command_env()\n"
+    "        os.environ.update(env)\n"
+    "else:\n"
+    '    print("[duck] commit: skipping setup_commands (no GPU serve)", flush=True)\n'
+)
+
+CPU_SAFE_RUN_OLD = (
+    "    await bm.run(soft_end_time=soft_end, runtime_environment=target, "
+    "minimal_diagnostics=TRUE_SUBMISSION)\n"
+    "    if not TRUE_SUBMISSION:\n"
+    "        # An offline run isn't scored, but Kaggle still expects a submission.parquet output.\n"
+    "        import pandas as pd\n"
+    "\n"
+    "        pd.DataFrame(\n"
+    '            [["1_0", "1", True, 1]],\n'
+    '            columns=["row_id", "game_id", "end_of_game", "score"],\n'
+    "        ).to_parquet(WORKING_DIR / \"submission.parquet\", index=False)\n"
+)
+CPU_SAFE_RUN_NEW = (
+    "    if TRUE_SUBMISSION:\n"
+    "        await bm.run(soft_end_time=soft_end, runtime_environment=target, "
+    "minimal_diagnostics=TRUE_SUBMISSION)\n"
+    "    else:\n"
+    "        import pandas as pd\n"
+    '        pd.DataFrame([["1_0", "1", True, 1]],\n'
+    '                     columns=["row_id", "game_id", "end_of_game", "score"]\n'
+    "                     ).to_parquet(WORKING_DIR / \"submission.parquet\", index=False)\n"
+    '        print("[duck] commit: CPU-safe landing; scored rerun runs the patched duck", flush=True)\n'
+)
+
+HOOK_MARKER = "Make one-off changes to `bm`, `bm.games`, or `bm.solver` here"
+
+
+def patch_cell_source() -> str:
+    """The customization-hook cell: duck_patches.py inlined, then applied."""
+    body = PATCHES.read_text()
+    return (
+        "# ============================================================================\n"
+        "# In-memory harness patches. Inlined from submission/_duck_patched/duck_patches.py\n"
+        "# by build_duck_patched.py — edit that file and rebuild, never edit this cell.\n"
+        "#\n"
+        "# The Kaggle source dataset is read-only, so these are monkey-patches. They run\n"
+        "# after the bundle is on sys.path and the benchmark is loaded, before bm.run().\n"
+        "# Model, sampling, concurrency, budgets and the game list are untouched.\n"
+        "# ============================================================================\n"
+        "\n"
+        f"{body}\n"
+        "\n"
+        "_patch_results = apply_all()\n"
+        "if any"
+        '("FAIL" in line for line in _patch_results):\n'
+        "    # Loud but non-fatal: a failed patch means upstream moved, and we want that in\n"
+        "    # the log rather than a silently unpatched scored run.\n"
+        '    print("[duck-patch] WARNING: at least one patch did not apply", flush=True)\n'
+    )
+
+
+def main() -> None:
+    nb = json.loads(BASE.read_text())
+    seen = {"setup": False, "run": False, "hook": False}
+    cells = []
+
+    for cell in nb["cells"]:
+        src = "".join(cell.get("source", []))
+
+        if cell["cell_type"] == "code" and "setup_commands.json" in src:
+            if CPU_SAFE_SETUP_OLD not in src:
+                raise SystemExit("setup_commands loop did not match — upstream notebook changed")
+            src = src.replace(CPU_SAFE_SETUP_OLD, CPU_SAFE_SETUP_NEW)
+            seen["setup"] = True
+
+        elif cell["cell_type"] == "code" and "await bm.run(" in src:
+            if CPU_SAFE_RUN_OLD not in src:
+                raise SystemExit("run-cell block did not match — upstream notebook changed")
+            src = src.replace(CPU_SAFE_RUN_OLD, CPU_SAFE_RUN_NEW)
+            seen["run"] = True
+
+        elif cell["cell_type"] == "code" and HOOK_MARKER in src:
+            src = patch_cell_source()
+            seen["hook"] = True
+
+        cells.append(
+            {
+                "cell_type": cell["cell_type"],
+                "metadata": cell.get("metadata", {}),
+                "source": src.splitlines(keepends=True),
+                **(
+                    {"execution_count": None, "outputs": []}
+                    if cell["cell_type"] == "code"
+                    else {}
+                ),
+            }
+        )
+
+    missing = [name for name, found in seen.items() if not found]
+    if missing:
+        raise SystemExit(f"never found these anchor cells: {missing}")
+
+    nb["cells"] = cells
+    OUT.write_text(json.dumps(nb, indent=1))
+    print(f"wrote {OUT}  ({len(cells)} cells, anchors: {sorted(seen)})")
+
+
+if __name__ == "__main__":
+    main()
