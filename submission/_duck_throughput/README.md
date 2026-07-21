@@ -57,6 +57,35 @@ Verified by direct execution of the helper:
 
 It can degrade to the current duck; it cannot produce a broken serve command.
 
+## Change 2 — adaptive per-game budget
+
+The bundle ships `max_runtime_s_per_game=7920` with `concurrency=28`, which exactly fills a 9h
+budget **if** the eval set is 110 games (110/28 = 4 waves × 7920 = 31,680s). Two things are
+unresolved: the ARC-AGI-3 technical report says the competition set is **55** fully-private
+environments (2 waves = 4.4h, leaving ~4.6h of GPU idle), and the total notebook cap has four
+conflicting public figures.
+
+Rather than bet on either number, the budget is derived at runtime from what the gateway
+actually serves, right after `bm.games = _competition_games()`. The rule is **one-directional —
+raise only, never lower**:
+
+| games | waves | computed | effect |
+|---|---|---|---|
+| 25 | 1 | 28,620s | raise |
+| 55 | 2 | 14,310s | raise — claims the idle half |
+| 110 | 4 | 7,155s | **unchanged** |
+| 140 | 5 | 5,724s | unchanged |
+
+So a 110-game set is byte-for-byte the current behaviour and carries no regression risk; a
+55-game set uses the hours we would otherwise idle. `_elapsed` subtracts real setup + vLLM serve
+time, and the 0.9 factor leaves room for the solver to drain and the scorecard to close. Any
+missing knob or exception leaves the budget untouched with a logged reason.
+
+**Caveat:** there is still no stall detection (`solver.py:245-261`), so a longer per-game budget
+also means a hopeless game holds its slot longer. Depth is the only thing that scores and most
+games are not hopeless, so this should be net positive — but it is an argument for building the
+stall detector next, not a reason to skip this.
+
 ## Not changed
 
 Model, quantization, sampling parameters, `concurrency`, `max_runtime_s_per_game`, `n_passes`,

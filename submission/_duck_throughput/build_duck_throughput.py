@@ -101,16 +101,66 @@ def _retuned_setup_commands():
 '''
 
 
+GAMES_SET_OLD = "    bm.games = _competition_games()"
+GAMES_SET_NEW = '''    bm.games = _competition_games()
+
+    # --- adaptive per-game budget -------------------------------------------------
+    # The bundle ships max_runtime_s_per_game=7920 with concurrency=28, which exactly
+    # fills a 9h budget IF the eval set is 110 games (110/28 = 4 waves x 7920 = 31680s).
+    # Two things are unresolved: the ARC-AGI-3 technical report says the competition set
+    # is 55 fully-private environments (which would be 2 waves = 4.4h, leaving ~4.6h of
+    # GPU idle), and the total notebook cap has four conflicting public figures.
+    #
+    # Rather than bet on either number, derive the budget from what the gateway actually
+    # serves. The rule is deliberately one-directional: RAISE the per-game budget when
+    # there are fewer waves than the shipped tuning assumed, never lower it. So a
+    # 110-game set is byte-for-byte the current behaviour, and a 55-game set claims the
+    # idle half. Anything unexpected leaves the budget untouched.
+    try:
+        _n_games = len(bm.games)
+        _conc = int(getattr(bm.solver, "concurrency", 0) or 0)
+        _total = float(getattr(target, "max_runtime_s", 0.0) or 0.0)
+        _current = float(getattr(bm.solver, "max_runtime_s_per_game", 0.0) or 0.0)
+        if _n_games > 0 and _conc > 0 and _total > 0 and _current > 0:
+            _waves = -(-_n_games // _conc)  # ceil
+            _elapsed = time.time() - NOTEBOOK_START_EPOCH  # setup + vLLM serve
+            # 0.9 leaves room for the solver to drain and the scorecard to close.
+            _per_game = (_total - _elapsed) * 0.9 / _waves
+            if _per_game > _current:
+                bm.solver.max_runtime_s_per_game = _per_game
+                print(f"[duck-adaptive] {_n_games} games / concurrency {_conc} "
+                      f"= {_waves} wave(s); per-game budget {_current:.0f}s -> "
+                      f"{_per_game:.0f}s ({_elapsed:.0f}s already spent on setup)",
+                      flush=True)
+            else:
+                print(f"[duck-adaptive] {_n_games} games / {_conc} = {_waves} wave(s); "
+                      f"computed {_per_game:.0f}s is not above the shipped "
+                      f"{_current:.0f}s — budget UNCHANGED", flush=True)
+        else:
+            print("[duck-adaptive] missing a knob "
+                  f"(games={_n_games}, concurrency={_conc}, total={_total}, "
+                  f"current={_current}) — budget UNCHANGED", flush=True)
+    except Exception as _exc:
+        print(f"[duck-adaptive] WARNING: {_exc!r} — budget UNCHANGED", flush=True)
+    # ------------------------------------------------------------------------------'''
+
+
 def main() -> None:
     if not BASE.exists():
         raise SystemExit(f"missing {BASE} — run build_duck_patched.py first")
 
     nb = json.loads(BASE.read_text())
     patched = False
+    adaptive = False
     cells = []
 
     for cell in nb["cells"]:
         src = "".join(cell.get("source", []))
+        if cell["cell_type"] == "code" and GAMES_SET_OLD in src:
+            if src.count(GAMES_SET_OLD) != 1:
+                raise SystemExit("bm.games assignment is not unique in its cell")
+            src = src.replace(GAMES_SET_OLD, GAMES_SET_NEW, 1)
+            adaptive = True
         if cell["cell_type"] == "code" and SETUP_LOAD_OLD in src:
             if src.count(SETUP_LOAD_OLD) != 1:
                 raise SystemExit("setup-commands loop is not unique in its cell")
@@ -132,10 +182,17 @@ def main() -> None:
 
     if not patched:
         raise SystemExit("never found the setup-commands loop")
+    if not adaptive:
+        raise SystemExit("never found the bm.games assignment")
+
+    for i, (before, after) in enumerate(zip(nb["cells"], cells)):
+        lost = set(before) - set(after)
+        if lost:
+            raise SystemExit(f"cell {i} lost keys {sorted(lost)} — nbconvert will reject this")
 
     nb["cells"] = cells
     OUT.write_text(json.dumps(nb, indent=1))
-    print(f"wrote {OUT}")
+    print(f"wrote {OUT}  (serving retune + adaptive budget)")
 
 
 if __name__ == "__main__":
