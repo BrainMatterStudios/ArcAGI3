@@ -58,13 +58,30 @@ ACTION_RE = re.compile(
     r"<(bash|write|read|done)(?:\s+path=\"([^\"]*)\")?\s*(?:/>|>(.*?)</\1>)",
     re.DOTALL)
 
+# Tag-vocabulary drift (gate v6): under long context the model starts emitting
+# <verify></verify>, <plan --from-current>, <g move ACTION1> — inventing tags named
+# after the COMMANDS instead of wrapping them in <bash>. Each such turn burned on a
+# "no valid tool tag" nudge; cd82 churned 300 turns in 597s that way. The intent is
+# unambiguous, so alias these to the bash commands they obviously mean.
+_ALIAS_RE = re.compile(
+    r"<(verify|plan|status|g)\b([^<>]*?)\s*/?>\s*(?:</\1>)?\s*$", re.IGNORECASE)
+_ALIAS_CMD = {"verify": "./verify", "plan": "./plan", "status": "./g status", "g": "./g"}
+
 def parse_action(text):
     """Return the LAST well-formed action tag (models often think, then act)."""
     matches = list(ACTION_RE.finditer(text))
-    if not matches:
-        return None
-    m = matches[-1]
-    return {"tool": m.group(1), "path": m.group(2), "body": (m.group(3) or "").strip()}
+    if matches:
+        m = matches[-1]
+        return {"tool": m.group(1), "path": m.group(2), "body": (m.group(3) or "").strip()}
+    m = _ALIAS_RE.search(text.strip())
+    if m:
+        tool = m.group(1).lower()
+        args = (m.group(2) or "").strip()
+        cmd = _ALIAS_CMD[tool]
+        if args and tool != "status":
+            cmd += " " + args
+        return {"tool": "bash", "path": None, "body": cmd}
+    return None
 
 def run_bash(cmd, cwd, timeout=180):
     try:

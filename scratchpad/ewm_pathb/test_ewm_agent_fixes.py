@@ -353,3 +353,35 @@ def test_reconstruction_tool_adapts_to_one_arg_impl():
     spec.loader.exec_module(srt2)
     assert srt2.reconstruct_initial_state_from_attempt(3, {"initial_frame": "F"}) == {"level": 3}
     assert calls["args2"] == (3, "F")
+
+
+# --- unit: tag-vocabulary aliases (defect #7, gate v6: 146/300 turns burned) ---
+
+def test_alias_verify_variants():
+    for text in ("<verify>\n</verify>", "<verify/>", "thinking first\n<verify></verify>"):
+        act = ea.parse_action(text)
+        assert act == {"tool": "bash", "path": None, "body": "./verify"}, (text, act)
+
+
+def test_alias_plan_with_args():
+    act = ea.parse_action("<plan --from-current>")
+    assert act == {"tool": "bash", "path": None, "body": "./plan --from-current"}
+
+
+def test_alias_g_move():
+    act = ea.parse_action("<g move ACTION1>")
+    assert act == {"tool": "bash", "path": None, "body": "./g move ACTION1"}
+
+
+def test_alias_status():
+    act = ea.parse_action("<status/>")
+    assert act == {"tool": "bash", "path": None, "body": "./g status"}
+
+
+def test_real_tags_still_win_over_aliases():
+    act = ea.parse_action("<verify/>\n<bash>./g status</bash>")
+    assert act["tool"] == "bash" and act["body"] == "./g status"
+
+
+def test_no_alias_on_prose():
+    assert ea.parse_action("I should run verify next.") is None

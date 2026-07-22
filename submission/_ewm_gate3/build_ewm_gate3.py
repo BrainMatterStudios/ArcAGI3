@@ -201,7 +201,10 @@ def run_game(game, port):
                                 # Let the TIME BOX bind, not the turn cap. The 2026-07-22 audit
                                 # fixes are now the agent's defaults; we pin them here so the gate
                                 # is immune to default drift and reads as an explicit config.
-                                "--max-turns", "300", "--max-ctx-chars", "110000",
+                                # v6 hit the 300-turn cap on all 3 games at 1/6-1/2 of the
+                                # time box (146/300 cd82 turns were tag-drift). With drift
+                                # aliased into real commands, let the TIME BOX bind.
+                                "--max-turns", "500", "--max-ctx-chars", "110000",
                                 "--max-ctx-tokens", "45000",
                                 # audit repairs: readable spec, full-file writes, duck-matched
                                 # sampling + repetition penalty, worked example.
