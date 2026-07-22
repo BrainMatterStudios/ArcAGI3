@@ -13,6 +13,28 @@ from world_model_state_io import initial_state_reconstruction
 
 
 def reconstruct_initial_state_from_attempt(level: int, attempt: dict) -> dict:
+    # The contract is initial_state_reconstruction(level_index, initial_frame), but
+    # models writing world_model_state_io.py cannot read this call site and sometimes
+    # define a 1-parameter version (a whole 2026-07-22 gate run was lost to that: the
+    # same 1-arg signature rewritten 114 times against an invisible 2-arg call).
+    # Adapt by declared arity instead of failing: a 1-param implementation gets the
+    # frame only. inspect (not try/TypeError) so real TypeErrors inside the model's
+    # code still surface.
+    import inspect
+
+    try:
+        params = [
+            p for p in inspect.signature(initial_state_reconstruction).parameters.values()
+            if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+        ]
+        takes_one = len(params) == 1 and not any(
+            p.kind == p.VAR_POSITIONAL
+            for p in inspect.signature(initial_state_reconstruction).parameters.values()
+        )
+    except (TypeError, ValueError):
+        takes_one = False
+    if takes_one:
+        return initial_state_reconstruction(attempt["initial_frame"])
     return initial_state_reconstruction(level, attempt["initial_frame"])
 
 

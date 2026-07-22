@@ -271,3 +271,85 @@ def test_scaffold_write_is_refused(stub_server, tmp_path):
     ]
     _run_agent(ws, base_url)
     assert (ws / "search_lib.py").read_text() == original, "scaffold file was clobbered"
+
+
+# --- unit: write-time signature lint (defect class from gates v4+v5) -------
+
+def test_signature_lint_catches_the_v5_bug():
+    """1-arg initial_state_reconstruction must be flagged the moment it is written."""
+    body = "def initial_state_reconstruction(frame_data):\n    return {}\n" \
+           "def state_renderer(state):\n    return []\n"
+    out = ea.check_signatures("world_model_state_io.py", body)
+    assert "SIGNATURE ERROR" in out and "initial_state_reconstruction takes 1" in out
+    assert "level_index, initial_frame" in out
+
+
+def test_signature_lint_passes_correct_contract():
+    body = ("def initial_state_reconstruction(level_index, initial_frame):\n    return {}\n"
+            "def state_renderer(state):\n    return []\n")
+    assert ea.check_signatures("world_model_state_io.py", body) == ""
+
+
+def test_signature_lint_flags_missing_function():
+    body = "def initial_state_reconstruction(level_index, initial_frame):\n    return {}\n"
+    out = ea.check_signatures("world_model_state_io.py", body)
+    assert "MISSING function state_renderer" in out
+
+
+def test_signature_lint_checks_engine_arity():
+    out = ea.check_signatures("world_model_engine.py",
+                              "def world_model_engine(state):\n    return state\n")
+    assert "takes 1" in out and "world_model_engine(state, action)" in out
+
+
+def test_signature_lint_tolerates_varargs_and_other_files():
+    assert ea.check_signatures("world_model_engine.py",
+                               "def world_model_engine(*args):\n    return None\n") == ""
+    assert ea.check_signatures("helpers.py", "def foo():\n    pass\n") == ""
+
+
+def test_describe_write_carries_the_lint():
+    obs = ea.describe_write("world_model_state_io.py",
+                            "def initial_state_reconstruction(frame):\n    return {}\n")
+    assert "py-compile OK" in obs and "SIGNATURE ERROR" in obs
+
+
+def test_reconstruction_tool_adapts_to_one_arg_impl():
+    """The scaffold must call a 1-param implementation with the frame only."""
+    import types
+    sys.modules.pop("state_reconstruction_tools", None)
+    for m in ["game_status", "session_tools", "world_model_engine"]:
+        mod = types.ModuleType(m); sys.modules[m] = mod
+    sys.modules["game_status"].RUNNING = "RUNNING"
+    for fn in ["attempt_step_count", "read_attempt_prefix_for_level",
+               "read_current_attempt", "read_latest_attempt_for_level", "truncate_attempt"]:
+        setattr(sys.modules["session_tools"], fn, lambda *a: None)
+    sys.modules["world_model_engine"].world_model_engine = lambda s, a: (s, "RUNNING")
+
+    calls = {}
+    sio = types.ModuleType("world_model_state_io")
+    def one_arg(initial_frame):          # the exact v5 shape
+        calls["args"] = (initial_frame,)
+        return {"level": 1}
+    sio.initial_state_reconstruction = one_arg
+    sys.modules["world_model_state_io"] = sio
+
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "srt", str(HERE / "src/agent/workspace_init/state_reconstruction_tools.py"))
+    srt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(srt)
+
+    out = srt.reconstruct_initial_state_from_attempt(3, {"initial_frame": "FRAME"})
+    assert out == {"level": 1}
+    assert calls["args"] == ("FRAME",), "1-param impl must receive the frame only"
+
+    # and the correct 2-param contract still gets (level, frame)
+    def two_arg(level_index, initial_frame):
+        calls["args2"] = (level_index, initial_frame)
+        return {"level": level_index}
+    sio.initial_state_reconstruction = two_arg
+    srt2 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(srt2)
+    assert srt2.reconstruct_initial_state_from_attempt(3, {"initial_frame": "F"}) == {"level": 3}
+    assert calls["args2"] == (3, "F")

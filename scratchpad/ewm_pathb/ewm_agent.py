@@ -106,21 +106,67 @@ _SCAFFOLD_LOCKED = {
     "g", "verify", "plan",
 }
 
+# Required arity of the deliverable functions, enforced at write time. Both gate runs
+# were lost to the model guessing a signature the scaffold calls differently (v4:
+# apply_render_overrides 2-vs-5 args; v5: initial_state_reconstruction 1-vs-2, rewritten
+# 114 times). The model cannot read the scaffold's call sites, so tell it the moment it
+# writes the wrong signature instead of letting ./verify discover it turns later.
+_REQUIRED_SIGNATURES = {
+    "world_model_engine.py": {"world_model_engine": 2},
+    "world_model_state_io.py": {"initial_state_reconstruction": 2, "state_renderer": 1},
+}
+_SIGNATURE_HINTS = {
+    "world_model_engine": "world_model_engine(state, action) -> (new_state, game_status)",
+    "initial_state_reconstruction":
+        "initial_state_reconstruction(level_index, initial_frame) -> state",
+    "state_renderer": "state_renderer(state) -> 64x64 grid",
+}
+
+def check_signatures(path, body):
+    """Return signature problems in a just-written deliverable file, as user-facing text."""
+    import ast as _ast
+    want = _REQUIRED_SIGNATURES.get(os.path.basename(path))
+    if not want:
+        return ""
+    try:
+        tree = _ast.parse(body)
+    except SyntaxError:
+        return ""   # the compile check already reports this
+    problems = []
+    found = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.FunctionDef) and node.name in want:
+            found.add(node.name)
+            n_args = len(node.args.args) + len(node.args.posonlyargs)
+            has_var = node.args.vararg is not None
+            if n_args != want[node.name] and not has_var:
+                problems.append(
+                    f"{node.name} takes {n_args} argument(s) but the scaffold calls it "
+                    f"with {want[node.name]}. Required: {_SIGNATURE_HINTS[node.name]}")
+    for name, arity in want.items():
+        if name not in found:
+            problems.append(f"MISSING function {name}. Required: {_SIGNATURE_HINTS[name]}")
+    return " SIGNATURE ERROR: " + " | ".join(problems) if problems else ""
+
 def describe_write(path, body):
     """A MEANINGFUL observation for a write — never the uninformative 'wrote N chars'.
 
     The old observation carried zero information, so (identical write, 'wrote N chars')
     pairs formed a perfect attractor. For Python files we compile and report OK or the
-    exact SyntaxError, which gives the model a real gradient to act on.
+    exact SyntaxError, and lint the deliverables' required signatures, which gives the
+    model a real gradient to act on.
     """
     n = len(body)
     if path.endswith(".py"):
         try:
             compile(body, path, "exec")
-            return f"[wrote {n} chars to {path}; py-compile OK]"
         except SyntaxError as e:
             return (f"[wrote {n} chars to {path}; SyntaxError line {e.lineno}: {e.msg}. "
                     "Fix it before running anything.]")
+        sig = check_signatures(path, body)
+        if sig:
+            return f"[wrote {n} chars to {path}; py-compile OK;{sig}]"
+        return f"[wrote {n} chars to {path}; py-compile OK]"
     return f"[wrote {n} chars to {path}]"
 
 SYSTEM = """You are the coding brain of a verification-by-execution game solver. You solve an unknown 64x64 grid game by (1) probing it with a few real actions, (2) writing an EXECUTABLE WORLD MODEL in Python that reproduces the observed frames EXACTLY, (3) VERIFYING it against recorded frames, (4) PLANNING through the verified model and executing the plan. Real game actions are costly (scored by (human_actions/your_actions)^2); simulation is free.
@@ -146,8 +192,9 @@ EXACT SIGNATURES you must implement (this is the contract ./verify checks — do
      * action is a DICT {"name": "ACTION1".."ACTION7", "x": int, "y": int}  (x,y only for ACTION6)
      * game_status is one of the exact strings "RUNNING", "LEVEL_COMPLETED", "GAME_OVER"
      * model ONE attempt's dynamics only; never load a real frame into the engine
-  world_model_state_io.py:  initial_state_reconstruction(...) builds the level's start state;
-     state_renderer(state) returns the 64x64 grid that must match the recorded frame EXACTLY
+  world_model_state_io.py:  initial_state_reconstruction(level_index, initial_frame) -> state
+     * EXACTLY TWO parameters, in that order; initial_frame is the settled 64x64 frame
+     state_renderer(state) -> the 64x64 int grid; must match the recorded frame EXACTLY
   world_model_main_planner.py:  edit ONLY candidate_actions(state) if the game uses ACTION6 clicks
 Infer COMPACT general mechanics; do not hardcode level layouts.
 DO NOT define apply_render_overrides — the scaffold already provides a working default. Put
