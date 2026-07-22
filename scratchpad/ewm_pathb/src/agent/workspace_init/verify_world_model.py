@@ -11,7 +11,18 @@ from state_reconstruction_tools import reconstruct_initial_state_from_attempt
 from session_tools import Attempt, read_all_attempts_for_level
 from timeout_tools import fail_after_timeout
 from world_model_engine import world_model_engine
-from world_model_state_io import apply_render_overrides, state_renderer
+from world_model_state_io import state_renderer
+
+# apply_render_overrides is an OPTIONAL, verification-only visual escape hatch. Models
+# routinely rewrite world_model_state_io.py without it, or define it with a signature that
+# doesn't match this file's 5-arg call — a whole gate run (2026-07-22) was lost to exactly
+# that TypeError, which the model could not fix because it must not edit this scaffold. If
+# it is absent, fall back to a no-op that returns the frame unchanged (the default behavior).
+try:
+    from world_model_state_io import apply_render_overrides
+except Exception:
+    def apply_render_overrides(frame, *args, **kwargs):
+        return frame
 
 
 TIMEOUT_SECONDS = 180
@@ -30,7 +41,23 @@ def _render_frame(
 ) -> np.ndarray:
     level_index = int(state["level"])
     base_frame = state_renderer(state)
-    patched_frame = apply_render_overrides(base_frame.copy(), state, level_index, attempt_index, step_count)
+    try:
+        patched_frame = apply_render_overrides(
+            base_frame.copy(), state, level_index, attempt_index, step_count)
+    except TypeError:
+        # Signature mismatch: the model defined apply_render_overrides with the wrong
+        # arity. It is optional and no-op by default, so ignore it rather than crash the
+        # whole verifier — the alternative wasted an entire run cycling signatures.
+        patched_frame = base_frame
+        if level_index not in _WARNED_RENDER_OVERRIDE_LEVELS:
+            print(
+                "verify_world_model.py: warning: apply_render_overrides has the wrong "
+                "signature and was IGNORED. It is optional; do not define it unless needed. "
+                "If you do, its exact contract is apply_render_overrides(frame, state, "
+                "level_index, attempt_index, step_count) -> frame."
+            )
+            _WARNED_RENDER_OVERRIDE_LEVELS.add(level_index)
+        return patched_frame
     if not np.array_equal(base_frame, patched_frame) and level_index not in _WARNED_RENDER_OVERRIDE_LEVELS:
         print(
             f"verify_world_model.py: warning: level {level_index} uses apply_render_overrides; "

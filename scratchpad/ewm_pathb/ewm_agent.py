@@ -150,6 +150,9 @@ EXACT SIGNATURES you must implement (this is the contract ./verify checks — do
      state_renderer(state) returns the 64x64 grid that must match the recorded frame EXACTLY
   world_model_main_planner.py:  edit ONLY candidate_actions(state) if the game uses ACTION6 clicks
 Infer COMPACT general mechanics; do not hardcode level layouts.
+DO NOT define apply_render_overrides — the scaffold already provides a working default. Put
+only initial_state_reconstruction and state_renderer in world_model_state_io.py. Fix real
+mismatches in your engine/renderer, never with a render override.
 
 YOU DO NOT NEED TO WRITE SEARCH. `world_model_main_planner.py` is already a WORKING planner that calls a correct BFS from `search_lib.py` over YOUR engine. Focus your effort on the three modeling pieces: (1) `world_model_engine(state, action)` dynamics, (2) `world_model_state_io.py` (initial_state_reconstruction + state_renderer that renders the frame EXACTLY), and (3) if the game uses ACTION6 clicks, edit ONLY the small `candidate_actions(state)` function in world_model_main_planner.py to return the few meaningful click targets (object centroids, buttons, palette swatches) — never all 64x64 cells. Then `./plan --from-current` and `./verify` just work.
 
