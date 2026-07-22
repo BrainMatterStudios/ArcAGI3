@@ -58,7 +58,6 @@ def patch_estimator() -> str:
         return "fixB estimator: SKIP (already applied)"
 
     original = ta._estimate_tokens
-    image_tokens = _configured_image_tokens()
 
     def _walk_strip_images(value: Any) -> tuple[Any, int]:
         """Replace image data-urls with a placeholder; count how many were removed."""
@@ -87,11 +86,14 @@ def patch_estimator() -> str:
 
     def _estimate_tokens(value: Any) -> int:
         stripped, n_images = _walk_strip_images(value)
-        return original(stripped) + n_images * image_tokens
+        # Lazy env read: MULTIMODAL_UPSCALE is exported by setup_commands, which runs
+        # before any real request but AFTER this patch is installed in a CPU-safe
+        # commit. Computing per call keeps the estimate correct under any ordering.
+        return original(stripped) + n_images * _configured_image_tokens()
 
     _estimate_tokens._image_aware = True  # type: ignore[attr-defined]
     ta._estimate_tokens = _estimate_tokens
-    return f"fixB estimator: OK (images now {image_tokens} tok each, was len/3 of base64)"
+    return f"fixB estimator: OK (images now {_configured_image_tokens()} tok each at current env, was len/3 of base64)"
 
 
 def patch_gameover_wipe() -> str:
