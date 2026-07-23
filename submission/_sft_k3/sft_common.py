@@ -1,0 +1,123 @@
+"""sft_common.py — shared corpus/encoding logic for the K3 teacher-distillation SFT.
+
+Used by prep_dataset.py (local), test_loss_mask.py (local) and sft-k3.ipynb (Kaggle,
+imported from the corpus dataset). Single source of truth for:
+  * message normalization (raw duck-harness trace -> Qwen3.5 chat-template shape)
+  * render (full conversation text + target-suffix split at the LAST
+    '<|im_start|>assistant' — a special-token boundary, so the suffix tokenizes
+    identically in isolation and in context, and the mask survives the processor's
+    image-token expansion which only touches the prefix)
+  * encode_with_mask (input_ids/pixel_values/labels; loss on target tokens only)
+  * front-truncation of overlong conversations
+"""
+from __future__ import annotations
+
+import base64
+import copy
+import io
+import json
+
+ASSISTANT_MARK = "<|im_start|>assistant"
+IMAGE_PAD_ID = 248056  # <|image_pad|> in the Qwen3.6 tokenizer
+
+
+def normalize_sample(raw: dict) -> tuple[list[dict], dict]:
+    """Harvested sample -> (messages, target) in chat-template shape.
+
+    The Qwen3.5 template needs `reasoning_content` (ours is `reasoning`) and
+    dict-form tool_call `arguments` (ours are JSON strings, per the OpenAI wire
+    format the capture proxy recorded).
+    """
+    def fix_msg(m: dict) -> dict:
+        m = copy.deepcopy(m)
+        if "reasoning" in m:
+            m["reasoning_content"] = m.pop("reasoning")
+        for tc in m.get("tool_calls") or []:
+            args = tc.get("function", {}).get("arguments")
+            if isinstance(args, str):
+                try:
+                    tc["function"]["arguments"] = json.loads(args)
+                except json.JSONDecodeError:
+                    tc["function"]["arguments"] = {"code": args}
+        return m
+
+    return [fix_msg(m) for m in raw["messages"]], fix_msg(raw["target"])
+
+
+def extract_images(messages: list[dict]):
+    """PIL images from data-url content parts, in document order."""
+    from PIL import Image  # deferred: kernel-side torch image stack
+    out = []
+    for m in messages:
+        if isinstance(m.get("content"), list):
+            for p in m["content"]:
+                if p.get("type") == "image_url":
+                    b64 = p["image_url"]["url"].split(",", 1)[1]
+                    out.append(Image.open(io.BytesIO(b64.decode() if isinstance(b64, bytes) else base64.b64decode(b64))).convert("RGB"))
+    return out
+
+
+def render(tokenizer, messages: list[dict], target: dict, tools: list[dict]) -> tuple[str, str]:
+    """-> (full_text, target_text). preserve_thinking=True matches how the model
+    is SERVED (vLLM --default-chat-template-kwargs preserve_thinking) and how the
+    teacher data was collected: prior turns keep their <think> blocks."""
+    full = tokenizer.apply_chat_template(
+        messages + [target], tools=tools, tokenize=False,
+        add_generation_prompt=False, preserve_thinking=True)
+    cut = full.rfind(ASSISTANT_MARK)
+    if cut <= 0:
+        raise ValueError("no assistant block found in rendered conversation")
+    return full, full[cut:]
+
+
+def truncate_front(messages: list[dict], max_over: int = 200):
+    """Drop the oldest turn after [system, first-user]; then any orphaned tool
+    responses. Returns a NEW list one unit shorter, or None if nothing droppable."""
+    if len(messages) <= 3:
+        return None
+    msgs = messages[:2] + messages[3:]
+    while len(msgs) > 2 and msgs[2]["role"] == "tool":
+        msgs = msgs[:2] + msgs[3:]
+    return msgs if len(msgs) < len(messages) else None
+
+
+def encode_with_mask(processor, messages: list[dict], target: dict,
+                     tools: list[dict], max_len: int):
+    """-> (features dict, info dict). Loss mask = target suffix only.
+
+    input_ids come from the PROCESSOR (image pads expanded to real image tokens);
+    n_tgt comes from tokenizing target_text alone — exact because the suffix
+    starts at the special token <|im_start|>, across which BPE cannot merge, and
+    contains no images. Front-truncates whole turns until <= max_len.
+    """
+    tok = processor.tokenizer
+    dropped_turns = 0
+    while True:
+        full_text, target_text = render(tok, messages, target, tools)
+        images = extract_images(messages)
+        # truncation=False, max_length=None are REQUIRED: the saved tokenizer's
+        # init_kwargs carry a stale max_length=1024 which the processor merges
+        # into text_kwargs and silently truncates with (found 2026-07-23).
+        enc = processor(text=[full_text], images=images or None,
+                        return_tensors="pt", truncation=False, max_length=None)
+        n_total = enc["input_ids"].shape[1]
+        if n_total <= max_len:
+            break
+        nxt = truncate_front(messages)
+        if nxt is None:
+            return None, {"error": "untruncatable_overlong", "n_total": int(n_total)}
+        messages, dropped_turns = nxt, dropped_turns + 1
+
+    tgt_ids = tok(target_text, add_special_tokens=False)["input_ids"]
+    n_tgt = len(tgt_ids)
+    ids = enc["input_ids"][0]
+    if ids[-n_tgt:].tolist() != tgt_ids:
+        raise AssertionError("target suffix tokens do not match in-context tail")
+    labels = ids.clone()
+    labels[:-n_tgt] = -100
+    feats = {k: v for k, v in enc.items()}
+    feats["labels"] = labels.unsqueeze(0)
+    info = {"n_total": int(n_total), "n_target": n_tgt, "n_images": len(images),
+            "n_image_tokens": int((ids == IMAGE_PAD_ID).sum()),
+            "dropped_turns": dropped_turns}
+    return feats, info
