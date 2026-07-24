@@ -23,8 +23,17 @@ July text-LoRA recipe (deps bundle / FP8-upcast / r=16) + multimodal delta. **Me
 | **total** | **~90** |
 
 Full-vocab logits at 32K would be ~49GB alone -> `logits_to_keep` + manual CE is what makes 32K fit.
-OOM fallback: `SFT_MAX_LEN=24576` (front-truncation of oldest turns is built in; -5.4GB). Loss = target
-assistant turn only (mask verified by `test_loss_mask.py`). preserve_thinking=True matches vLLM serving.
+Loss = target assistant turn only (mask verified by `test_loss_mask.py`). preserve_thinking=True matches
+vLLM serving.
+
+**2026-07-24 OOM fix (run 1 died at step 5):** config-level quant-stripping left compressed-tensors'
+INSTANCE-level `forward` wrappers live -> weight fake-quant (QDQ) ran every forward with big fp32 clamp
+temporaries, blowing the ~1GB margin. `strip_quantization_runtime` (sft_common, unit-tested against
+compressed-tensors 0.17.1) now unwraps them so forward is pure dense bf16. Until a clean run reports the
+true peak (printed per optim step), default is the safety fallback `SFT_MAX_LEN=24576` (-5.4GB);
+restore 32768 via env after verifying headroom. This run RESTARTS from step 0: checkpoint-4 sits only in
+the dead run's output AND was trained under QDQ forward semantics — resuming it under the changed
+(pure-bf16) forward would mix inconsistent dynamics; 4 steps is cheap to redo.
 """
 
 C_GUARD = """\
@@ -42,7 +51,7 @@ print("transformers", transformers.__version__, "| peft", peft.__version__)
 if TRAIN:
     assert transformers.__version__.split(".")[:2] >= ["5", "6"] or "dev" in transformers.__version__, \\
         "qwen3_5 needs transformers>=5.6.2 — refresh the arc3-deps-prep bundle"
-MAX_LEN = int(os.environ.get("SFT_MAX_LEN", 32768))
+MAX_LEN = int(os.environ.get("SFT_MAX_LEN", 24576))  # safety default after 07-23 OOM; 32768 once true peak known
 EPOCHS = float(os.environ.get("SFT_EPOCHS", 3))
 """
 
@@ -83,6 +92,15 @@ if TRAIN:
     model.is_quantized = False
     if hasattr(model, "hf_quantizer"): model.hf_quantizer = None
     model.config.use_cache = False
+    # 07-24 OOM fix: config stripping is NOT enough — compressed-tensors leaves
+    # instance-level QDQ forward wrappers that fake-quantize weights every forward.
+    from sft_common import strip_quantization_runtime
+    qstats = strip_quantization_runtime(model)
+    print("strip_quantization_runtime:", qstats)
+    assert qstats["quantized_modules"] > 0, \\
+        "no quantized modules found — load path changed, verify forwards are clean before training"
+    from collections import Counter
+    print("param dtypes:", Counter(str(p.dtype) for p in model.parameters()))
     n_par = sum(p.numel() for p in model.parameters()) / 1e9
     print(f"loaded {model.config.model_type}: {n_par:.1f}B params, class {type(model).__name__}")
 
@@ -106,9 +124,16 @@ else:
 C_TRAINER = """\
 if TRAIN:
     from torch.utils.data import Dataset
-    from transformers import Trainer, TrainingArguments
+    from transformers import Trainer, TrainerCallback, TrainingArguments
     from transformers.trainer_utils import get_last_checkpoint
     import shutil, torch.nn.functional as F
+
+    class PeakMem(TrainerCallback):
+        # per-optim-step peak so the next log quantifies the real memory budget
+        def on_step_end(self, args, state, control, **kw):
+            print(f"[step {state.global_step}] peak GPU mem "
+                  f"{torch.cuda.max_memory_allocated()/2**30:.1f} GiB", flush=True)
+            torch.cuda.reset_peak_memory_stats()
 
     class Rows(Dataset):
         def __init__(self, rows): self.rows = rows
@@ -148,11 +173,10 @@ if TRAIN:
         logging_steps=1, save_strategy="steps", save_steps=4, save_total_limit=3,
         remove_unused_columns=False, dataloader_num_workers=0, report_to="none")
     trainer = TargetLossTrainer(model=model, args=args, train_dataset=Rows(train_rows),
-                                data_collator=collate)
+                                data_collator=collate, callbacks=[PeakMem()])
     ckpt = get_last_checkpoint(OUT) if os.path.isdir(OUT) else None
     print("resume checkpoint:", ckpt)
     trainer.train(resume_from_checkpoint=ckpt)
-    print(f"peak GPU mem: {torch.cuda.max_memory_allocated()/2**30:.1f} GiB")
     trainer.save_model("/kaggle/working/sft_adapter")
     proc.save_pretrained("/kaggle/working/sft_adapter")
     print("adapter saved:", os.listdir("/kaggle/working/sft_adapter"))

@@ -24,15 +24,28 @@ cd submission/_sft_k3 && kaggle kernels push --accelerator NvidiaRtxPro6000
 RTX Pro 6000 (96GB) needs ALL of: competition attached + `--accelerator NvidiaRtxPro6000`
 + `enable_internet: false` (July-proven; the metadata `machine_shape` field does NOT select it).
 Interactive/commit fallback GPUs (P100/T4) hit the CPU-safe guard: plan printed, no training.
-Env knobs: `SFT_MAX_LEN` (default 32768; drop to 24576 on OOM), `SFT_EPOCHS` (default 3).
-Expected: ~33 optim steps (88×3 / 8), ~60-90 s/sample → ~5-7 h; peak ~90 GiB is printed.
+Env knobs: `SFT_MAX_LEN` (default **24576** — safety margin after the 07-23 OOM; restore
+32768 once a clean run's per-step peak prints show headroom), `SFT_EPOCHS` (default 3).
+Expected: ~33 optim steps (88×3 / 8), ~60-90 s/sample → ~5-7 h; per-step peak GiB is printed.
+
+### Post-mortem, run 1 (2026-07-23): OOM at step 5 inside compressed_tensors QDQ
+Config-level quant-stripping left compressed-tensors' instance-level `forward` wrappers
+live, fake-quantizing weights every forward (fp32 clamp temporaries → OOM with ~1GB free).
+Fixed by `sft_common.strip_quantization_runtime` (called right after load; unit test
+`test_strip_quant.py` proves against compressed-tensors 0.17.1 that the wrapper is removed
+and dense-bf16 forward is restored bit-identical). Run 2 RESTARTS from step 0 — deliberate:
+checkpoint-4 lives only in the dead run's output (not auto-preserved) and was trained under
+QDQ forward semantics; resuming it under the now-pure-bf16 forward would mix inconsistent
+dynamics. 4 steps (~45 min) is cheap to redo.
 
 ## 3. Resume after the 12h cap
 Checkpoints land in `/kaggle/working/sft_out/checkpoint-N` every 4 optim steps (≤3 kept).
-To resume: add the dead run's kernel output as a source (`kernel_sources` or a dataset made
-from its output) and re-push — the notebook globs `/kaggle/input/**/sft_out/checkpoint-*`,
-copies them into `/kaggle/working/sft_out`, and `trainer.train(resume_from_checkpoint=...)`
-continues (optimizer + LR schedule + epoch state restored by HF Trainer).
+`/kaggle/working` is NOT auto-preserved across runs. To resume: add the dead run's kernel
+output as a source (its version output via `kernel_sources`, or a dataset built from
+`kaggle kernels output`) and re-push — the notebook globs
+`/kaggle/input/**/sft_out/checkpoint-*`, copies into `/kaggle/working/sft_out`, and
+`trainer.train(resume_from_checkpoint=...)` continues (optimizer + LR schedule + epoch
+state restored by HF Trainer). Only resume checkpoints produced AFTER the QDQ fix.
 
 ## 4. Harvest the adapter
 Kernel outputs: `sft_adapter/` (adapter_model.safetensors + adapter_config.json + processor files)
@@ -57,9 +70,9 @@ weights actually reach the served model:
 3. Only then wire the merged snapshot into the duck submission (setup_commands.json model path).
 
 ## Gaps that need the GPU to verify (cannot be validated on this Mac)
-- `AutoModelForImageTextToText` load + quant-strip on the FP8 VL snapshot (July proved the
-  text path via `AutoModelForCausalLM`; the VL class path is new).
-- `logits_to_keep` + PEFT wrapper pass-through on qwen3_5 (signature verified in
-  transformers 5.12.1 locally; runtime behavior needs the GPU).
-- Real peak memory vs the ~90 GiB estimate; fallback documented (`SFT_MAX_LEN=24576`).
+- ~~Model load on the FP8 VL snapshot~~ PROVEN by run 1 (loaded, trained 4 steps, saved).
+- `strip_quantization_runtime` on the REAL 27B in-kernel (unit-proven on a toy model vs
+  compressed-tensors 0.17.1; the in-kernel assert `quantized_modules > 0` + per-step peak
+  prints will confirm on run 2).
+- Real peak memory at 24576 (then 32768) — quantified per optim step from run 2 onward.
 - Training throughput (~60-90 s/sample estimate) vs the 12 h cap.

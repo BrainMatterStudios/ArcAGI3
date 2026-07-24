@@ -21,6 +21,43 @@ ASSISTANT_MARK = "<|im_start|>assistant"
 IMAGE_PAD_ID = 248056  # <|image_pad|> in the Qwen3.6 tokenizer
 
 
+def strip_quantization_runtime(model) -> dict:
+    """Remove compressed-tensors' RUNTIME QDQ so forward is pure dense-bf16 matmul.
+
+    transformers decompresses the FP8 checkpoint to dense bf16 params at load
+    (run_compressed=False), but every quantized Linear keeps an INSTANCE-level
+    `forward` wrapper (compressed_tensors set_forward_quantized:
+    `module.forward = quantized_forward.__get__(module)`) that fake-quantizes the
+    weight on EVERY forward — large fp32 clamp temporaries caused the 2026-07-23
+    CUDA OOM at step 5. Config-level stripping does NOT remove these.
+
+    Inverse (verified against compressed-tensors 0.17.1 source): delete the
+    instance attr so the class forward reappears; set the documented off-switch
+    `quantization_enabled = False` (belt-and-braces for other versions); drop
+    the registered qparams and scheme attrs. Returns counts for logging.
+    """
+    qsuffix = ("_scale", "_zero_point", "_g_idx", "_global_scale")
+    n_mod = n_fwd = n_par = 0
+    for mod in model.modules():
+        if not hasattr(mod, "quantization_scheme"):
+            continue
+        n_mod += 1
+        if "forward" in mod.__dict__:  # the QDQ wrapper shadows the class method
+            del mod.__dict__["forward"]
+            n_fwd += 1
+        mod.quantization_enabled = False
+        for store in (mod._parameters, mod._buffers):
+            for name in [n for n in store if n.endswith(qsuffix)]:
+                del store[name]
+                n_par += 1
+        for attr in ("quantization_scheme", "quantization_status"):
+            mod.__dict__.pop(attr, None)
+    shadowed = [n for n, m in model.named_modules() if "forward" in m.__dict__]
+    assert not shadowed, f"forward still shadowed on: {shadowed[:5]}"
+    return {"quantized_modules": n_mod, "unwrapped_forwards": n_fwd,
+            "removed_qparams": n_par}
+
+
 def normalize_sample(raw: dict) -> tuple[list[dict], dict]:
     """Harvested sample -> (messages, target) in chat-template shape.
 
