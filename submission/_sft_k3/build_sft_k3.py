@@ -52,7 +52,7 @@ if TRAIN:
     assert transformers.__version__.split(".")[:2] >= ["5", "6"] or "dev" in transformers.__version__, \\
         "qwen3_5 needs transformers>=5.6.2 — refresh the arc3-deps-prep bundle"
 MAX_LEN = int(os.environ.get("SFT_MAX_LEN", 24576))  # safety default after 07-23 OOM; 32768 once true peak known
-EPOCHS = float(os.environ.get("SFT_EPOCHS", 3))
+EPOCHS = float(os.environ.get("SFT_EPOCHS", 2))  # 07-25: 3->2; ~16min/step makes 3 epochs a 3.5-session grind, and 2 is safer against overfit on 392 BC samples
 """
 
 C_INPUTS = """\
