@@ -170,7 +170,7 @@ if TRAIN:
         learning_rate=1e-4, lr_scheduler_type="cosine", warmup_ratio=0.03,
         bf16=True, gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
-        logging_steps=1, save_strategy="steps", save_steps=4, save_total_limit=3,
+        logging_steps=1, save_strategy="steps", save_steps=8, save_total_limit=8,
         remove_unused_columns=False, dataloader_num_workers=0, report_to="none")
     trainer = TargetLossTrainer(model=model, args=args, train_dataset=Rows(train_rows),
                                 data_collator=collate, callbacks=[PeakMem()])
@@ -240,7 +240,9 @@ meta = {
     "dataset_sources": ["ahmedmobasher86/arc3-sft-k3-corpus",
                         "driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot"],
     "competition_sources": ["arc-prize-2026-arc-agi-3"],
-    "kernel_sources": ["ahmedmobasher86/arc3-deps-prep"],
+    # self-mount: exposes the previous version's /kaggle/working (sft_out checkpoints) for 12h-cap resume
+    "kernel_sources": ["ahmedmobasher86/arc3-deps-prep",
+                       "ahmedmobasher86/arc-agi-3-sft-k3"],
 }
 (HERE / "kernel-metadata.json").write_text(json.dumps(meta, indent=2))
 print("wrote sft-k3.ipynb + kernel-metadata.json")
