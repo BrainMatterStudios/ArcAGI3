@@ -21,6 +21,38 @@ ASSISTANT_MARK = "<|im_start|>assistant"
 IMAGE_PAD_ID = 248056  # <|image_pad|> in the Qwen3.6 tokenizer
 
 
+def dequantize_fp8_inplace(model) -> dict:
+    """Materialize TRUE bf16 weights from compressed-tensors FP8 storage: w_bf16 = w_f8 * weight_scale.
+
+    MUST run BEFORE strip_quantization_runtime, which deletes the scales without
+    applying them. 2026-07-26 root cause: on the VL snapshot, transformers keeps the
+    256 quantized Linears as f8e4m3 STORAGE (values = w_true/scale, per-tensor scale);
+    runs 1-5 stripped the scales unapplied and trained the LoRA against weights
+    inflated by 1/scale — base per-token NLL ~14.7 nats (above uniform ln(V)~12.4).
+    The July text-model recipe's "upcast on load" claim did not hold for this snapshot.
+    """
+    import torch
+    n, missing = 0, []
+    for name, mod in model.named_modules():
+        w = mod._parameters.get("weight")
+        if w is None or w.dtype != torch.float8_e4m3fn:
+            continue
+        scale = None
+        for store in (mod._parameters, mod._buffers):
+            if "weight_scale" in store:
+                scale = store["weight_scale"]
+        if scale is None:
+            missing.append(name)
+            continue
+        mod._parameters["weight"] = torch.nn.Parameter(
+            (w.float() * scale.float()).to(torch.bfloat16), requires_grad=False)
+        n += 1
+    assert not missing, f"f8 weights without a weight_scale: {missing[:5]}"
+    left = [n2 for n2, p in model.named_parameters() if p.dtype == torch.float8_e4m3fn]
+    assert not left, f"f8 params remain after dequant: {left[:5]}"
+    return {"dequantized": n}
+
+
 def strip_quantization_runtime(model) -> dict:
     """Remove compressed-tensors' RUNTIME QDQ so forward is pure dense-bf16 matmul.
 

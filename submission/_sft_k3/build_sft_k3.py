@@ -52,7 +52,7 @@ if TRAIN:
     assert transformers.__version__.split(".")[:2] >= ["5", "6"] or "dev" in transformers.__version__, \\
         "qwen3_5 needs transformers>=5.6.2 — refresh the arc3-deps-prep bundle"
 MAX_LEN = int(os.environ.get("SFT_MAX_LEN", 24576))  # safety default after 07-23 OOM; 32768 once true peak known
-EPOCHS = float(os.environ.get("SFT_EPOCHS", 2))  # 07-25: 3->2; ~16min/step makes 3 epochs a 3.5-session grind, and 2 is safer against overfit on 392 BC samples
+EPOCHS = float(os.environ.get("SFT_EPOCHS", 0.30))  # 07-26 run-6 bring-up: ~14 steps completes inside the pre-reset quota AND banks the A1-favored early checkpoints (8 + final ~14) on the FIXED base; raise toward 2 only after the checkpoint sweep says deeper helps
 """
 
 C_INPUTS = """\
@@ -84,7 +84,6 @@ if TRAIN:
     from transformers import AutoModelForImageTextToText
     model = AutoModelForImageTextToText.from_pretrained(
         MODEL, torch_dtype=torch.bfloat16, device_map={"": 0})
-    # July recipe: weights upcast FP8->bf16 on load; strip quant metadata so this is plain bf16 LoRA
     for a in ("quantization_config", "_pre_quantization_dtype"):
         if hasattr(model.config, a):
             try: setattr(model.config, a, None)
@@ -92,15 +91,21 @@ if TRAIN:
     model.is_quantized = False
     if hasattr(model, "hf_quantizer"): model.hf_quantizer = None
     model.config.use_cache = False
-    # 07-24 OOM fix: config stripping is NOT enough — compressed-tensors leaves
-    # instance-level QDQ forward wrappers that fake-quantize weights every forward.
-    from sft_common import strip_quantization_runtime
+    # 07-26 ROOT-CAUSE FIX (runs 1-5 invalid): the VL snapshot loads with 256 Linears kept as
+    # f8e4m3 STORAGE (w_true/scale). Scales MUST be applied before strip deletes them —
+    # runs 1-5 trained against scale-less casts (base NLL ~14.7 nats = worse than uniform).
+    from sft_common import dequantize_fp8_inplace, strip_quantization_runtime
+    dstats = dequantize_fp8_inplace(model)
+    print("dequantize_fp8_inplace:", dstats)
+    # 07-24 OOM fix: compressed-tensors also leaves instance-level QDQ forward wrappers.
     qstats = strip_quantization_runtime(model)
     print("strip_quantization_runtime:", qstats)
     assert qstats["quantized_modules"] > 0, \\
         "no quantized modules found — load path changed, verify forwards are clean before training"
     from collections import Counter
-    print("param dtypes:", Counter(str(p.dtype) for p in model.parameters()))
+    dtypes = Counter(str(p.dtype) for p in model.parameters())
+    print("param dtypes:", dtypes)
+    assert "torch.float8_e4m3fn" not in dtypes, "f8 params survived — dequant failed"
     n_par = sum(p.numel() for p in model.parameters()) / 1e9
     print(f"loaded {model.config.model_type}: {n_par:.1f}B params, class {type(model).__name__}")
 
@@ -164,6 +169,26 @@ if TRAIN:
         os.makedirs(OUT, exist_ok=True)
         for p in prev: shutil.copytree(p, os.path.join(OUT, os.path.basename(p)))
         print("resuming from copied checkpoints:", [os.path.basename(p) for p in prev])
+    if not prev:
+        # PRE-FLIGHT BASE-HEALTH GATE (fresh runs only; lora_B=0 -> adapter is identity, so this
+        # measures the BASE). Runs 1-5 would have failed here at ~14.7. Never train a broken base.
+        model.train(False)
+        with torch.no_grad():
+            nlls = []
+            for r in val_rows[:2]:
+                feats, _ = encode_with_mask(proc, r["messages"], r["target"], TOOLS, MAX_LEN)
+                if "pixel_values" in feats: feats["pixel_values"] = feats["pixel_values"].to(torch.bfloat16)
+                labels = feats.pop("labels")
+                n_tgt = int((labels != -100).sum())
+                feats = {k: (v.to(model.device) if hasattr(v, "to") else v) for k, v in feats.items()}
+                out = model(**feats, logits_to_keep=n_tgt + 1, use_cache=False)
+                logits = out.logits[:, :-1, :]
+                tgt = labels[:, -n_tgt:].to(logits.device)
+                nlls.append(float(F.cross_entropy(logits.reshape(-1, logits.size(-1)).float(), tgt.reshape(-1))))
+        base_nll = sum(nlls) / len(nlls)
+        print(f"PRE-FLIGHT base per-token NLL (2 val rows): {base_nll:.3f}  {nlls}")
+        assert base_nll < 6.0, f"BASE MODEL BROKEN (NLL {base_nll:.2f}) — fix the load path, do not train"
+        model.train(True)
     args = TrainingArguments(
         output_dir=OUT, num_train_epochs=EPOCHS,
         per_device_train_batch_size=1, gradient_accumulation_steps=8,
@@ -240,9 +265,11 @@ meta = {
     "dataset_sources": ["ahmedmobasher86/arc3-sft-k3-corpus",
                         "driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot"],
     "competition_sources": ["arc-prize-2026-arc-agi-3"],
-    # self-mount: exposes the previous version's /kaggle/working (sft_out checkpoints) for 12h-cap resume
-    "kernel_sources": ["ahmedmobasher86/arc3-deps-prep",
-                       "ahmedmobasher86/arc-agi-3-sft-k3"],
+    # resume workflow: Kaggle REJECTS self-referencing kernel_sources (proven 07-26).
+    # To resume a cap-killed run: download its sft_out/checkpoint-* via the API file_pattern
+    # trick, push as a version of dataset ahmedmobasher86/arc3-sft-k3-ckpts, and add that
+    # dataset to dataset_sources — the /kaggle/input glob picks it up.
+    "kernel_sources": ["ahmedmobasher86/arc3-deps-prep"],
 }
 (HERE / "kernel-metadata.json").write_text(json.dumps(meta, indent=2))
 print("wrote sft-k3.ipynb + kernel-metadata.json")

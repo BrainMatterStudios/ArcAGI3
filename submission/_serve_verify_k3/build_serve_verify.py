@@ -56,7 +56,7 @@ GATE_MAX_TOKENS = int(os.environ.get("GATE_MAX_TOKENS", 6144))  # thinking is se
 C_INPUTS = """\
 CORPUS = os.path.dirname(sorted(glob.glob("/kaggle/input/**/train.jsonl", recursive=True))[0])
 sys.path.insert(0, CORPUS)
-from sft_common import strip_quantization_runtime
+from sft_common import dequantize_fp8_inplace, strip_quantization_runtime
 MODEL = next(os.path.dirname(p) for p in glob.glob("/kaggle/input/**/config.json", recursive=True)
              if "tokenizer_bundle" not in p and json.load(open(p)).get("model_type") == "qwen3_5")
 CKPT = next(p for p in sorted(glob.glob("/kaggle/input/**/sft_out/checkpoint-*", recursive=True))
@@ -90,7 +90,12 @@ if RUN:
             except Exception: pass
     model.is_quantized = False
     if hasattr(model, "hf_quantizer"): model.hf_quantizer = None
+    # 07-26 fix: apply FP8 scales BEFORE strip deletes them (v1 died in merge on f8 +=;
+    # same root cause invalidated training runs 1-5)
+    print("dequant:", dequantize_fp8_inplace(model))
     print("strip:", strip_quantization_runtime(model), f"| load {time.time()-t0:.0f}s")
+    dt = {str(p.dtype) for p in model.parameters()}
+    assert "torch.float8_e4m3fn" not in dt, dt
 
     # cache 3 targeted base weights for the post-merge delta assert
     acfg = json.load(open(os.path.join(CKPT, "adapter_config.json")))
