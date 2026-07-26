@@ -63,3 +63,31 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_scaled_forward():
+    from sft_common import fp8_scaled_linear_inplace
+    m = Toy()
+    ref = Toy.__new__(Toy)  # dequant twin for bit-identical comparison
+    import copy as _copy
+    torch.manual_seed(0)
+    m2 = Toy()
+    m2.load_state_dict(m.state_dict())
+    dequantize_fp8_inplace(m2)
+
+    stats = fp8_scaled_linear_inplace(m)
+    assert stats == {"fp8_scaled_linears": 2}, stats
+    assert m.q1.weight.dtype == torch.float8_e4m3fn  # storage stays 1 byte
+    # production dtype is bf16: scaled forward's (f8.float()*scale).to(bf16) must
+    # equal the dequant path's stored bf16 weight exactly
+    x = torch.randn(3, 4, dtype=torch.bfloat16, requires_grad=True)
+    y_scaled = m.q1(x)
+    y_dequant = torch.nn.functional.linear(x, m2.q1.weight)
+    assert torch.equal(y_scaled, y_dequant), \
+        "scaled forward must be bit-identical to the dequant path at bf16"
+    y_scaled.sum().backward()
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+    print("scaled-forward PASSED (bit-identical to dequant, backward OK)")
+
+
+test_scaled_forward()

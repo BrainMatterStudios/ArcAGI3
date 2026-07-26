@@ -21,6 +21,86 @@ ASSISTANT_MARK = "<|im_start|>assistant"
 IMAGE_PAD_ID = 248056  # <|image_pad|> in the Qwen3.6 tokenizer
 
 
+def dequantize_fp8_inplace(model) -> dict:
+    """Materialize TRUE bf16 weights from compressed-tensors FP8 storage: w_bf16 = w_f8 * weight_scale.
+
+    MUST run BEFORE strip_quantization_runtime, which deletes the scales without
+    applying them. 2026-07-26 root cause: on the VL snapshot, transformers keeps the
+    256 quantized Linears as f8e4m3 STORAGE (values = w_true/scale, per-tensor scale);
+    runs 1-5 stripped the scales unapplied and trained the LoRA against weights
+    inflated by 1/scale — base per-token NLL ~14.7 nats (above uniform ln(V)~12.4).
+    The July text-model recipe's "upcast on load" claim did not hold for this snapshot.
+    """
+    import torch
+    n, missing = 0, []
+    for name, mod in model.named_modules():
+        w = mod._parameters.get("weight")
+        if w is None or w.dtype != torch.float8_e4m3fn:
+            continue
+        scale = None
+        for store in (mod._parameters, mod._buffers):
+            if "weight_scale" in store:
+                scale = store["weight_scale"]
+        if scale is None:
+            missing.append(name)
+            continue
+        mod._parameters["weight"] = torch.nn.Parameter(
+            (w.float() * scale.float()).to(torch.bfloat16), requires_grad=False)
+        n += 1
+    assert not missing, f"f8 weights without a weight_scale: {missing[:5]}"
+    left = [n2 for n2, p in model.named_parameters() if p.dtype == torch.float8_e4m3fn]
+    assert not left, f"f8 params remain after dequant: {left[:5]}"
+    return {"dequantized": n}
+
+
+def fp8_scaled_linear_inplace(model) -> dict:
+    """TRAINING-path base prep: keep frozen f8 weight STORAGE (1 byte/param — bf16
+    materialization OOMs: +25GB pushed run 7 past 95GB) but make forward CORRECT:
+    w_bf16 = (w_f8.float() * weight_scale).to(x.dtype), computed per call.
+
+    Bit-identical math to dequantize_fp8_inplace (the merge/serve path) — same
+    float32 multiply then cast — so an adapter trained here merges consistently.
+    The transient dequant weight lives only inside the layer's forward (and its
+    gradient-checkpoint recompute segment): ~0.4GB peak, not +25GB resident.
+    Replaces BOTH dequantize_fp8_inplace and strip_quantization_runtime for the
+    trainer; do NOT call strip afterwards (it would delete weight_scale and
+    unwrap the corrected forward).
+    """
+    import torch
+    import torch.nn.functional as torch_F
+
+    def scaled_forward(self, x):
+        w = (self.weight.to(torch.float32) * self.weight_scale.to(torch.float32)).to(x.dtype)
+        return torch_F.linear(x, w, self.bias)
+
+    n, missing = 0, []
+    for name, mod in model.named_modules():
+        w = mod._parameters.get("weight")
+        if w is None or w.dtype != torch.float8_e4m3fn:
+            continue
+        scale = None
+        for store in (mod._parameters, mod._buffers):
+            if "weight_scale" in store:
+                scale = store["weight_scale"]
+        if scale is None:
+            missing.append(name)
+            continue
+        if "forward" in mod.__dict__:  # drop compressed-tensors' QDQ wrapper first
+            del mod.__dict__["forward"]
+        for store in (mod._parameters, mod._buffers):  # input_scale unused in bf16 forward
+            store.pop("input_scale", None)
+        del mod._parameters["weight_scale"]
+        mod.register_buffer("weight_scale", scale.detach().to(torch.float32), persistent=False)
+        mod.weight.requires_grad_(False)
+        mod.forward = scaled_forward.__get__(mod)
+        mod.quantization_enabled = False
+        for attr in ("quantization_scheme", "quantization_status"):
+            mod.__dict__.pop(attr, None)
+        n += 1
+    assert not missing, f"f8 weights without a weight_scale: {missing[:5]}"
+    return {"fp8_scaled_linears": n}
+
+
 def strip_quantization_runtime(model) -> dict:
     """Remove compressed-tensors' RUNTIME QDQ so forward is pure dense-bf16 matmul.
 

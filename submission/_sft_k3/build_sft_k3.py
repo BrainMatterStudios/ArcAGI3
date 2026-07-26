@@ -91,21 +91,19 @@ if TRAIN:
     model.is_quantized = False
     if hasattr(model, "hf_quantizer"): model.hf_quantizer = None
     model.config.use_cache = False
-    # 07-26 ROOT-CAUSE FIX (runs 1-5 invalid): the VL snapshot loads with 256 Linears kept as
-    # f8e4m3 STORAGE (w_true/scale). Scales MUST be applied before strip deletes them —
-    # runs 1-5 trained against scale-less casts (base NLL ~14.7 nats = worse than uniform).
-    from sft_common import dequantize_fp8_inplace, strip_quantization_runtime
-    dstats = dequantize_fp8_inplace(model)
-    print("dequantize_fp8_inplace:", dstats)
-    # 07-24 OOM fix: compressed-tensors also leaves instance-level QDQ forward wrappers.
-    qstats = strip_quantization_runtime(model)
-    print("strip_quantization_runtime:", qstats)
-    assert qstats["quantized_modules"] > 0, \\
-        "no quantized modules found — load path changed, verify forwards are clean before training"
+    # 07-26 ROOT-CAUSE FIX (runs 1-5 invalid): the VL snapshot keeps 256 Linears as f8e4m3
+    # STORAGE (w_true/scale); the old strip deleted the scales UNAPPLIED -> base NLL ~14.7.
+    # v7 proved full bf16 dequant fixes semantics (pre-flight NLL 0.911) but OOMs (+25GB
+    # resident) -> keep f8 storage, correct SCALED forward (bit-identical math, ~0.4GB
+    # transient inside each grad-ckpt segment). Replaces dequant+strip for training.
+    from sft_common import fp8_scaled_linear_inplace
+    qstats = fp8_scaled_linear_inplace(model)
+    print("fp8_scaled_linear_inplace:", qstats)
+    assert qstats["fp8_scaled_linears"] == 256, qstats
     from collections import Counter
     dtypes = Counter(str(p.dtype) for p in model.parameters())
     print("param dtypes:", dtypes)
-    assert "torch.float8_e4m3fn" not in dtypes, "f8 params survived — dequant failed"
+    assert dtypes.get("torch.float8_e4m3fn") == 256, "expected 256 f8-storage linears"
     n_par = sum(p.numel() for p in model.parameters()) / 1e9
     print(f"loaded {model.config.model_type}: {n_par:.1f}B params, class {type(model).__name__}")
 

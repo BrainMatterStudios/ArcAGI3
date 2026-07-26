@@ -53,6 +53,54 @@ def dequantize_fp8_inplace(model) -> dict:
     return {"dequantized": n}
 
 
+def fp8_scaled_linear_inplace(model) -> dict:
+    """TRAINING-path base prep: keep frozen f8 weight STORAGE (1 byte/param — bf16
+    materialization OOMs: +25GB pushed run 7 past 95GB) but make forward CORRECT:
+    w_bf16 = (w_f8.float() * weight_scale).to(x.dtype), computed per call.
+
+    Bit-identical math to dequantize_fp8_inplace (the merge/serve path) — same
+    float32 multiply then cast — so an adapter trained here merges consistently.
+    The transient dequant weight lives only inside the layer's forward (and its
+    gradient-checkpoint recompute segment): ~0.4GB peak, not +25GB resident.
+    Replaces BOTH dequantize_fp8_inplace and strip_quantization_runtime for the
+    trainer; do NOT call strip afterwards (it would delete weight_scale and
+    unwrap the corrected forward).
+    """
+    import torch
+    import torch.nn.functional as torch_F
+
+    def scaled_forward(self, x):
+        w = (self.weight.to(torch.float32) * self.weight_scale.to(torch.float32)).to(x.dtype)
+        return torch_F.linear(x, w, self.bias)
+
+    n, missing = 0, []
+    for name, mod in model.named_modules():
+        w = mod._parameters.get("weight")
+        if w is None or w.dtype != torch.float8_e4m3fn:
+            continue
+        scale = None
+        for store in (mod._parameters, mod._buffers):
+            if "weight_scale" in store:
+                scale = store["weight_scale"]
+        if scale is None:
+            missing.append(name)
+            continue
+        if "forward" in mod.__dict__:  # drop compressed-tensors' QDQ wrapper first
+            del mod.__dict__["forward"]
+        for store in (mod._parameters, mod._buffers):  # input_scale unused in bf16 forward
+            store.pop("input_scale", None)
+        del mod._parameters["weight_scale"]
+        mod.register_buffer("weight_scale", scale.detach().to(torch.float32), persistent=False)
+        mod.weight.requires_grad_(False)
+        mod.forward = scaled_forward.__get__(mod)
+        mod.quantization_enabled = False
+        for attr in ("quantization_scheme", "quantization_status"):
+            mod.__dict__.pop(attr, None)
+        n += 1
+    assert not missing, f"f8 weights without a weight_scale: {missing[:5]}"
+    return {"fp8_scaled_linears": n}
+
+
 def strip_quantization_runtime(model) -> dict:
     """Remove compressed-tensors' RUNTIME QDQ so forward is pure dense-bf16 matmul.
 
