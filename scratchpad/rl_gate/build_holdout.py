@@ -72,6 +72,7 @@ def main() -> int:
 
         # fix every version's metadata.json in the copy
         n_levels = probe_win_levels(args.src, stem)
+        fixed = None
         for meta_path in dest_game.glob("*/metadata.json"):
             meta = json.loads(meta_path.read_text())
             base = list(meta.get("baseline_actions") or [])
@@ -80,6 +81,9 @@ def main() -> int:
             fixed = (base + [base[-1]] * n_levels)[:n_levels]
             meta["baseline_actions"] = fixed
             meta_path.write_text(json.dumps(meta, indent=2))
+        if fixed is None:
+            sys.exit(f"{stem}: no */metadata.json under {dest_game} — cannot pad "
+                     f"baselines (audit fix: never inherit the previous stem's)")
 
         # smoke: the FIXED copy must load+reset through our engine
         probed = probe_win_levels(args.dest, stem)
@@ -91,6 +95,8 @@ def main() -> int:
     out = args.dest.parent / "holdout_manifest.json"
     existing = json.loads(out.read_text()) if out.exists() else {}
     existing.update(manifest)
+    # prune entries whose game dirs no longer exist in the holdout copy
+    existing = {k: v for k, v in existing.items() if (args.dest / k).is_dir()}
     out.write_text(json.dumps(existing, indent=2, sort_keys=True))
     print(f"[holdout] {len(stems)} games ready under {args.dest}")
     print(f"[holdout] manifest: {out}")

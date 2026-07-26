@@ -35,7 +35,7 @@ PY = HERE.parents[1] / ".venv" / "bin" / "python"
 
 UUID_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
-TS_RE = re.compile(r"\b17[0-9]{8}(?:\.[0-9]+)?\b")  # epoch seconds, this decade
+TS_RE = re.compile(r"\b1[6-9][0-9]{8}(?:\.[0-9]+)?\b")  # epoch seconds, 2020-2033
 # wall-clock fields the harness embeds in tool outputs — volatile by nature
 # (values live inside escaped JSON strings, hence the loose \\-and-quote glue)
 WALLCLOCK_RE = re.compile(
@@ -112,7 +112,18 @@ def main() -> int:
                (args.episode / "trace.jsonl").read_text().splitlines()]
     records.sort(key=lambda r: r["seq"])
     assert records, "empty recorded trace"
+    bad = [r["seq"] for r in records if r.get("response") is None]
+    assert not bad, (f"recorded trace has null responses at seq {bad} — "
+                     f"re-record; replaying null would corrupt the run")
     print(f"[replay] {len(records)} recorded requests from {args.episode}")
+
+    # a turn can execute MULTIPLE actions, so request count underestimates the
+    # action budget — take it from the recorded manifest when available
+    manifest_path = args.episode / "manifest.json"
+    recorded_actions = None
+    if manifest_path.exists():
+        m = json.loads(manifest_path.read_text())
+        recorded_actions = m.get("n_actions") or m.get("actions")
 
     state = ReplayState(records)
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
@@ -122,7 +133,7 @@ def main() -> int:
     workdir = HERE / "episodes" / f"replay_{args.game}_{time.strftime('%H%M%S')}"
     cmd = [str(PY), str(HERE / "run_rollout.py"), "--game", args.game,
            "--upstream", upstream, "--workdir", str(workdir),
-           "--max-actions", str(args.max_actions or len(records)),
+           "--max-actions", str(args.max_actions or recorded_actions or len(records)),
            "--max-runtime-s", "600", "--multimodal",
            "--rollout-id", "replay1"]
     if args.env_dir:

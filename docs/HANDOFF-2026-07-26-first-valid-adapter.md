@@ -1,5 +1,7 @@
 # HANDOFF — 2026-07-26 ~14:30 UTC — First VALID adapter trained; corrupted-base saga closed
 
+> **⚠️ 2026-07-26 EVENING AUDIT CORRECTIONS** (docs/REVIEW-2026-07-26-independent-audit.md, memory `arcagi3-audit-2026-07-26-corrections`): the §0 val-gate note is a conflation — the −12.5% gate ran **all 43 val rows** (the 2-row figure is the pre-flight base-health gate only), BUT the train/val split is per-turn with 100% episode overlap → it is fit evidence, not generalization. Also: RESET costs 1 scored action (not 0); final = separate 55-game private set (same-run scores, no rerun); per-game score capped at completed-level weight share; the §2.1 GATE_CKPT/glob edits are now DONE; the temp-0.3 defect never shipped and the local taaf-src tree has drifted from the scored dataset — audit against the dataset.
+
 **Start here.** Campaign memory: `~/.claude/projects/-Users-ahmed-Documents-ArcAGI3/memory/arcagi3-ewm-verdict-REVERSED.md`
 (the 07-26 sections at top are today's; read them). Deep-research validation of the plan:
 memory `arcagi3-deepresearch-2026-07-25-plan-validation.md`. Supersedes HANDOFF-2026-07-25 on all training state.

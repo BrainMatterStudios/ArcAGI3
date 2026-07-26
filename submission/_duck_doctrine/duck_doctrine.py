@@ -50,9 +50,10 @@ FIELD_GUIDE = (
     "- PHYSICS: things fall (gravity may be INVERTED - check which way loose objects"
     " drift); water and projectiles propagate.\n"
     "Universal: budgets are tight (a step counter usually shows remaining actions;"
-    " running out loses the level; the level restarts free). Wins are almost always"
-    " ALL-quantified - complete every subgoal, not one. The avatar may be an unusual"
-    " color or shape, may grow like a snake, or may not exist (click-only game).\n"
+    " running out loses the level; restarting costs one scored action). Wins are"
+    " almost always ALL-quantified - complete every subgoal, not one. The avatar may"
+    " be an unusual color or shape, may grow like a snake, or may not exist"
+    " (click-only game).\n"
 )
 
 PLAYBOOK = (
@@ -88,18 +89,37 @@ ACTION7_GUIDE = (
 
 
 def _enabled(name: str) -> bool:
-    return os.environ.get(name, "").strip() in ("1", "true", "yes")
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
+
+
+def _action7_mapping_applied() -> bool:
+    try:
+        from inference.agent import action_names as an
+        return an.to_engine_action("ACTION7") == "ACTION7"
+    except Exception:  # noqa: BLE001 — no mapping module = no fix = no D3
+        return False
 
 
 def doctrine_suffix() -> str:
-    """The blocks the current env toggles select, in fixed order."""
+    """The blocks the current env toggles select, in fixed order.
+
+    The ACTION7 guard runs HERE (build time), not only at patch time: toggles
+    are env-read per build, so a patch-time-only guard could be bypassed by
+    exporting DOCTRINE_ACTION7=1 after patching (TOCTOU, audit 2026-07-26) —
+    shipping the guidance without the mapping fix tells the model to use an
+    action the engine rejects.
+    """
     parts = []
     if _enabled("DOCTRINE_FIELDGUIDE"):
         parts.append(FIELD_GUIDE)
     if _enabled("DOCTRINE_PLAYBOOK"):
         parts.append(PLAYBOOK)
     if _enabled("DOCTRINE_ACTION7"):
-        parts.append(ACTION7_GUIDE)
+        if _action7_mapping_applied():
+            parts.append(ACTION7_GUIDE)
+        else:
+            print("[doctrine] DOCTRINE_ACTION7 set but ACTION7 mapping fix not "
+                  "applied - OMITTING the ACTION7 block", flush=True)
     return "".join(parts)
 
 

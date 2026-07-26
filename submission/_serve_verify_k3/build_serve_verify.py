@@ -49,7 +49,7 @@ RUN = "RTX PRO 6000" in DEV.upper() or os.environ.get("GATE_FORCE") == "1"
 print(f"device: {DEV} | RUN={RUN}")
 import transformers, peft
 print("transformers", transformers.__version__, "| peft", peft.__version__)
-GATE_CKPT = os.environ.get("GATE_CKPT", "checkpoint-16")
+GATE_CKPT = os.environ.get("GATE_CKPT", "checkpoint-8")  # run-8 ladder: checkpoint-8 or sft_adapter (step-15 final)
 GATE_MAX_TOKENS = int(os.environ.get("GATE_MAX_TOKENS", 6144))  # thinking is served-on; leave room before the tool_call
 """
 
@@ -59,8 +59,11 @@ sys.path.insert(0, CORPUS)
 from sft_common import dequantize_fp8_inplace, strip_quantization_runtime
 MODEL = next(os.path.dirname(p) for p in glob.glob("/kaggle/input/**/config.json", recursive=True)
              if "tokenizer_bundle" not in p and json.load(open(p)).get("model_type") == "qwen3_5")
-CKPT = next(p for p in sorted(glob.glob("/kaggle/input/**/sft_out/checkpoint-*", recursive=True))
-            if p.endswith(GATE_CKPT))
+# run-8 artifacts live in TWO shapes: sft_out/checkpoint-N (mid-run saves) and
+# sft_adapter/ (the step-15 final, NOT under sft_out/) — glob must cover both.
+_ckpt_candidates = sorted(glob.glob("/kaggle/input/**/sft_out/checkpoint-*", recursive=True)) \
+                 + sorted(os.path.dirname(p) for p in glob.glob("/kaggle/input/**/sft_adapter/adapter_config.json", recursive=True))
+CKPT = next(p for p in _ckpt_candidates if p.rstrip("/").endswith(GATE_CKPT))
 WHEELHOUSE = os.path.dirname(sorted(glob.glob("/kaggle/input/**/requirements.lock", recursive=True))[0])
 print("model:", MODEL, "\\nckpt:", CKPT, "\\nwheelhouse:", WHEELHOUSE, "\\ncorpus:", CORPUS)
 TOOLS = json.load(open(os.path.join(CORPUS, "tools.json")))
@@ -112,8 +115,16 @@ if RUN:
         checks.append((n, m.base_layer.weight.detach().clone(), BA.detach().clone()))
     merged = pmodel.merge_and_unload()
     ok = []
+    _named = dict(merged.named_modules())
+    def _resolve(name):
+        # peft's merge_and_unload strips the 'base_model.model.' prefix that
+        # pre-merge names carry (KeyError on raw lookup, peft 0.19.x) —
+        # audit fix 2026-07-26, mirrored in serving_assert._resolve_merged_module
+        for c in (name, name.removeprefix("base_model.model."), "base_model.model." + name):
+            if c in _named: return _named[c]
+        raise KeyError(f"module {name!r} not found post-merge (tried prefix variants)")
     for (n, w_pre, BA) in checks:
-        w_post = dict(merged.named_modules())[n].weight.detach()
+        w_post = _resolve(n).weight.detach()
         delta = (w_post - w_pre).float(); exp = BA.float()
         rel = (delta - exp).norm() / (exp.norm() + 1e-9)
         ok.append({"module": n, "delta_norm": float(exp.norm()), "rel_err": float(rel)})

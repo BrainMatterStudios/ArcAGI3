@@ -87,6 +87,36 @@ def test_action7_toggle_with_mapping_fix(fresh_tool_agent, monkeypatch):
     assert "ACTION7 protocol" in out and "AT MOST ONCE" in out
 
 
+def test_action7_toctou_bypass_closed(fresh_tool_agent, monkeypatch):
+    """Audit 2026-07-26: enabling DOCTRINE_ACTION7 AFTER patching (when the
+    patch-time guard can no longer see it) must NOT ship the guidance if the
+    mapping fix is absent — the guard now also runs at build time."""
+    ta = fresh_tool_agent
+    from inference.agent import action_names
+    importlib.reload(action_names)  # pristine = no ACTION7 mapping
+    assert "doctrine: OK" in duck_doctrine.patch_doctrine()  # env unset -> OK
+    monkeypatch.setenv("DOCTRINE_ACTION7", "1")              # the bypass attempt
+    assert "ACTION7 protocol" not in build(ta)
+    # and with the fix applied, the same env now ships the block
+    import duck_patches
+    duck_patches.patch_action7()
+    assert "ACTION7 protocol" in build(ta)
+
+
+def test_enabled_is_case_insensitive(fresh_tool_agent, monkeypatch):
+    ta = fresh_tool_agent
+    duck_doctrine.patch_doctrine()
+    monkeypatch.setenv("DOCTRINE_PLAYBOOK", "True")  # audit: 'True' was rejected
+    assert "Playbook" in build(ta)
+
+
+def test_field_guide_reset_cost_is_correct():
+    """RESET costs 1 scored action (scorecard.py:701-704) — the guide must not
+    call it free (audit 2026-07-26)."""
+    assert "restarts free" not in duck_doctrine.FIELD_GUIDE
+    assert "one scored action" in duck_doctrine.FIELD_GUIDE
+
+
 def test_idempotent(fresh_tool_agent, monkeypatch):
     ta = fresh_tool_agent
     monkeypatch.setenv("DOCTRINE_PLAYBOOK", "1")

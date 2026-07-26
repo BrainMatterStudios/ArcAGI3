@@ -60,7 +60,16 @@ class AssertReport:
     def all_ok(self) -> bool:
         return all(c["ok"] for c in self.checks)
 
-    def finish(self) -> bool:
+    def finish(self, min_checks: int = 5) -> bool:
+        """PASS requires every check green AND at least min_checks ran.
+
+        all([]) is True — without the count floor, a chain that crashed before
+        its first record() would report PASS (audit finding, 2026-07-26).
+        """
+        if len(self.checks) < min_checks:
+            self.record("chain_completeness", False,
+                        {"checks_ran": len(self.checks), "min": min_checks})
+            return False
         if self.all_ok:
             print(PASS_MARKER, flush=True)
             print(f"[serving-assert] {len(self.checks)} checks passed "
@@ -91,7 +100,12 @@ def target_nll(model, rows, device=None) -> float:
 
 
 def check_base_health(rep: AssertReport, model, rows, device=None) -> float:
-    nll = target_nll(model, rows, device)
+    try:
+        nll = target_nll(model, rows, device)
+    except Exception as e:  # noqa: BLE001 — SAFE mode must record, not crash
+        rep.record("base_health_nll", False,
+                   {"error": f"{type(e).__name__}: {e}"})
+        return float("nan")
     rep.record("base_health_nll", math.isfinite(nll) and nll < BASE_NLL_MAX,
                {"nll": round(nll, 4), "max": BASE_NLL_MAX})
     return nll
@@ -119,26 +133,60 @@ def sample_merge_checks(lora_mods, scaling: float, k: int = 3, seed: int = 0):
     return checks
 
 
+PEFT_PREFIX = "base_model.model."
+
+
+def _resolve_merged_module(named: dict, name: str):
+    """peft's merge_and_unload() strips the 'base_model.model.' prefix that
+    pre-merge module names carry — a raw lookup KeyErrors on real peft 0.19.x
+    (audit finding, 2026-07-26; toy tests missed it because they preserved
+    names). Try raw, then stripped, then prefixed."""
+    for candidate in (name,
+                      name.removeprefix(PEFT_PREFIX),
+                      PEFT_PREFIX + name):
+        if candidate in named:
+            return candidate, named[candidate]
+    return None, None
+
+
 def assert_merge_delta(rep: AssertReport, merged, checks,
                        rel_err_max: float = MERGE_REL_ERR_MAX) -> bool:
-    named = dict(merged.named_modules())
-    results, ok = [], True
-    for (n, w_pre, expected) in checks:
-        w_post = named[n].weight.detach()
-        delta = (w_post - w_pre).float()
-        exp = expected.float()
-        rel = float((delta - exp).norm() / (exp.norm() + 1e-9))
-        good = rel < rel_err_max and float(exp.norm()) > 0
-        results.append({"module": n, "delta_norm": round(float(exp.norm()), 5),
-                        "rel_err": round(rel, 5)})
-        ok = ok and good
-    return rep.record("merge_weight_delta", ok,
-                      {"rel_err_max": rel_err_max, "modules": results})
+    try:
+        named = dict(merged.named_modules())
+        results, ok = [], True
+        for (n, w_pre, expected) in checks:
+            resolved, mod = _resolve_merged_module(named, n)
+            if mod is None:
+                results.append({"module": n, "error": "not found post-merge"})
+                ok = False
+                continue
+            w_post = mod.weight.detach()
+            delta = (w_post - w_pre).float()
+            exp = expected.float()
+            rel = float((delta - exp).norm() / (exp.norm() + 1e-9))
+            good = rel < rel_err_max and float(exp.norm()) > 0
+            results.append({"module": resolved,
+                            "delta_norm": round(float(exp.norm()), 5),
+                            "rel_err": round(rel, 5)})
+            ok = ok and good
+        return rep.record("merge_weight_delta", ok,
+                          {"rel_err_max": rel_err_max, "modules": results})
+    except Exception as e:  # noqa: BLE001 — SAFE mode must record, not crash
+        return rep.record("merge_weight_delta", False,
+                          {"error": f"{type(e).__name__}: {e}"})
 
 
 def assert_nll_improves(rep: AssertReport, base_nll: float, merged, rows,
                         device=None, min_gain: float = MIN_NLL_GAIN) -> bool:
-    m_nll = target_nll(merged, rows, device)
+    try:
+        m_nll = target_nll(merged, rows, device)
+    except Exception as e:  # noqa: BLE001 — SAFE mode must record, not crash
+        return rep.record("merged_nll_improves", False,
+                          {"error": f"{type(e).__name__}: {e}"})
+    if not math.isfinite(base_nll):
+        return rep.record("merged_nll_improves", False,
+                          {"error": "base_nll not finite",
+                           "base_nll": str(base_nll)})
     gain = (base_nll - m_nll) / max(base_nll, 1e-9)
     return rep.record("merged_nll_improves", gain >= min_gain,
                       {"base_nll": round(base_nll, 4),
@@ -146,14 +194,44 @@ def assert_nll_improves(rep: AssertReport, base_nll: float, merged, rows,
                        "gain": round(gain, 4), "min_gain": min_gain})
 
 
-def assert_endpoint_serves(rep: AssertReport, base_url: str,
-                           expected_model_path: str, timeout: float = 30.0,
-                           _opener=None) -> bool:
-    """vLLM answers /models AND reports the merged dir as its model id.
+def assert_server_model_arg(rep: AssertReport, server_cmd: list,
+                            merged_dir: str) -> bool:
+    """The vLLM launch command's --model argument must be the merged dir.
 
-    vLLM's OpenAI server registers the --model path as the model id unless
-    --served-model-name overrides it; the scored kernel passes the merged dir
-    for both, so a base-path id here = the wrong model is live.
+    This is the identity check that actually works: the duck's serve line sets
+    --served-model-name to a FIXED name (e.g. 'vrfai/Qwen3.6-27B-FP8'), so a
+    /models id comparison against the merged dir is vacuous — it would always
+    fail and, in SAFE mode, auto-fall back to base at the debut (audit
+    finding, 2026-07-26). The --model arg is what vLLM loads; assert THAT.
+    """
+    import os
+    try:
+        cmd = [str(c) for c in server_cmd]
+        model_arg = None
+        for i, tok in enumerate(cmd):
+            if tok == "--model" and i + 1 < len(cmd):
+                model_arg = cmd[i + 1]
+            elif tok.startswith("--model="):
+                model_arg = tok.split("=", 1)[1]
+        ok = (model_arg is not None
+              and os.path.realpath(model_arg) == os.path.realpath(merged_dir))
+        return rep.record("server_model_arg", ok,
+                          {"model_arg": model_arg, "expected": merged_dir})
+    except Exception as e:  # noqa: BLE001 — SAFE mode must record, not crash
+        return rep.record("server_model_arg", False,
+                          {"error": f"{type(e).__name__}: {e}",
+                           "expected": merged_dir})
+
+
+def assert_endpoint_serves(rep: AssertReport, base_url: str,
+                           expected_served_name: str = "",
+                           timeout: float = 30.0, _opener=None) -> bool:
+    """Liveness: vLLM answers /models; optional exact served-name equality.
+
+    Pass expected_served_name ONLY if the kernel mints a versioned name (e.g.
+    'run8/checkpoint-8') and propagates it identically to --served-model-name
+    and the analyzer env. Never pass a filesystem path here — the served name
+    is whatever --served-model-name says, not the model path.
     """
     import urllib.request
     opener = _opener or urllib.request.urlopen
@@ -161,10 +239,11 @@ def assert_endpoint_serves(rep: AssertReport, base_url: str,
         with opener(base_url.rstrip("/") + "/models", timeout=timeout) as r:
             data = json.loads(r.read().decode())
         ids = [m.get("id", "") for m in data.get("data", [])]
-        ok = any(expected_model_path in i for i in ids)
-        return rep.record("endpoint_model_identity", ok,
-                          {"served_ids": ids, "expected": expected_model_path})
+        ok = bool(ids) and (not expected_served_name
+                            or expected_served_name in ids)
+        return rep.record("endpoint_alive", ok,
+                          {"served_ids": ids,
+                           "expected_name": expected_served_name or "(any)"})
     except Exception as e:  # noqa: BLE001 — any transport failure = check fails
-        return rep.record("endpoint_model_identity", False,
-                          {"error": f"{type(e).__name__}: {e}",
-                           "expected": expected_model_path})
+        return rep.record("endpoint_alive", False,
+                          {"error": f"{type(e).__name__}: {e}"})
