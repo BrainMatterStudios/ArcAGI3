@@ -21,21 +21,14 @@ unit-tested (`submission/_sft_k3/test_dequant.py`).
 
 ## 1. IN-FLIGHT / IMMEDIATE (check these FIRST)
 
-### a. ckpts-dataset v2 upload — VERIFY IT LANDED
-A background `kaggle datasets version` push of the VALID run-8 artifacts (1.8GB: full ckpt-8
-incl. optimizer.pt 934,676,291 B + final step-15 `sft_adapter/` + run log) was running at
-handoff time from staging dir
-`/private/tmp/claude-501/-Users-ahmed-Documents-ArcAGI3/38ec9bae-690c-4713-aa14-c3245497ca9e/scratchpad/sft_v8_valid/`
-(dataset-metadata.json already inside). Background tasks in the old session got KILLED twice —
-do not assume success. Verify:
-```sh
-kaggle datasets files ahmedmobasher86/arc3-sft-k3-ckpts --page-size 100   # want sft_adapter/* + checkpoint-8/* listed, optimizer.pt = 934676291
-```
-If v2 is absent: re-run from the staging dir (`cd <staging> && kaggle datasets version -p . --dir-mode zip -m "v2 VALID run-8"`);
-if the staging dir is gone, re-download from kernel output first (file_pattern trick, §5-laws) —
-**and do NOT push any new sft-k3 kernel version before this is banked** (`kernels_output` serves
-ONLY the latest version's output; a new push shadows v8 forever).
-⚠️ Dataset **v1 = the POISONED runs-1-5 ladder. Never mount/serve/sweep v1 values.** v2 supersedes it as the mounted version.
+### a. ckpts-dataset v2 — ✅ VERIFIED LANDED (2026-07-26 14:59 UTC; nothing to do)
+File listing confirmed: `sft_adapter/*` complete (adapter 467,062,560 B + tokenizer/processor/
+chat_template) and `sft_out/checkpoint-8/*` full incl. **optimizer.pt = 934,676,291 B**. The
+valid run-8 artifacts are banked off-kernel; new kernel pushes can no longer shadow them.
+⚠️ Dataset **v1 = the POISONED runs-1-5 ladder** (it ALSO contains a checkpoint-8 — the tell
+for v2 is the sft_adapter/ dir + the 934MB optimizer.pt). **Never mount/serve/sweep v1 values.**
+Local staging copy (if ever needed):
+`/private/tmp/claude-501/-Users-ahmed-Documents-ArcAGI3/38ec9bae-690c-4713-aa14-c3245497ca9e/scratchpad/sft_v8_valid/`.
 
 ### b. Tonight's farm slot (Jul 27 00:00 UTC) — **NOT ARMED, by Ahmed's explicit instruction.**
 Ahmed must decide/arm. Default candidate = 5th pinned duck-base v2 draw:
