@@ -46,6 +46,10 @@ def main() -> int:
     ap.add_argument("--analyzer-timeout", type=float, default=120.0)
     ap.add_argument("--multimodal", action="store_true",
                     help="set MULTIMODAL_CONTEXT=current_grid so requests carry grid images")
+    ap.add_argument("--env-dir", default=str(ENV_DIR),
+                    help="environment_files dir (default: repo dev games; point at "
+                         "scratchpad/arc_interactive_upstream/environment_files for the "
+                         "arc-interactive holdout)")
     args = ap.parse_args()
     if not args.upstream:
         ap.error("--upstream (or LOCAL_ANALYZER_BASE_URL) is required")
@@ -79,7 +83,7 @@ def main() -> int:
     # 3. real TAAF game, offline arcade
     session_res = RunSession()
     game = GameAPI(env_name=args.game,
-                   arcade_spec=ArcadeSpec(environments_dir=str(ENV_DIR)))
+                   arcade_spec=ArcadeSpec(environments_dir=args.env_dir))
     game.start_game(session_res)
     print(f"[rollout] game {game.game_id} started: {game.number_of_levels} levels", flush=True)
 

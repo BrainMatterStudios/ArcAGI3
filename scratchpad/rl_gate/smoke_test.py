@@ -63,6 +63,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--game", default="tu93")
     ap.add_argument("--max-actions", type=int, default=3)
+    ap.add_argument("--env-dir", default="", help="forwarded to run_rollout (arc-interactive dirs etc.)")
     args = ap.parse_args()
 
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MockBrain)
@@ -75,6 +76,8 @@ def main() -> int:
            "--upstream", upstream, "--workdir", str(workdir),
            "--max-actions", str(args.max_actions), "--max-runtime-s", "180",
            "--multimodal", "--rollout-id", "smoke1"]
+    if args.env_dir:
+        cmd += ["--env-dir", args.env_dir]
     print("[smoke] running:", " ".join(cmd))
     res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     sys.stdout.write(res.stdout)
