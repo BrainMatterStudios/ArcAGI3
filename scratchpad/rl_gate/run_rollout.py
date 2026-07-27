@@ -80,6 +80,12 @@ def main() -> int:
     from taaf.game_api import ArcadeSpec, GameAPI
     from inference.framework import solver as duck_solver
 
+    if os.environ.get("APPLY_LEDGER_PATCH") == "1":
+        sys.path.insert(0, str(REPO / "submission/_duck_fixes"))
+        import ledger_fixes
+        for line in ledger_fixes.apply_all():
+            print(f"[rollout] {line}", flush=True)
+
     # 3. real TAAF game, offline arcade
     session_res = RunSession()
     game = GameAPI(env_name=args.game,
