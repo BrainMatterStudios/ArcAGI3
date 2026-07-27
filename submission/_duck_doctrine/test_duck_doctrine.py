@@ -25,7 +25,8 @@ def fresh_tool_agent(monkeypatch):
     """Reload tool_agent so each test sees an unpatched _build_system_prompt."""
     from inference.agent import tool_agent
     ta = importlib.reload(tool_agent)
-    for var in ("DOCTRINE_FIELDGUIDE", "DOCTRINE_PLAYBOOK", "DOCTRINE_ACTION7"):
+    for var in ("DOCTRINE_FIELDGUIDE", "DOCTRINE_PLAYBOOK", "DOCTRINE_ACTION7",
+                "DOCTRINE_PHASEGATE"):
         monkeypatch.delenv(var, raising=False)
     return ta
 
@@ -52,6 +53,18 @@ def test_each_toggle_appends_its_block(fresh_tool_agent, monkeypatch):
     assert "Mechanic field guide" in out
     assert "Playbook" in out and "never the goal" in out
     assert "ACTION7 protocol" not in out
+    assert "Explore-then-commit" not in out
+
+
+def test_phasegate_toggle(fresh_tool_agent, monkeypatch):
+    ta = fresh_tool_agent
+    base = build(ta)
+    duck_doctrine.patch_doctrine()
+    assert build(ta) == base  # off by default
+    monkeypatch.setenv("DOCTRINE_PHASEGATE", "1")
+    out = build(ta)
+    assert out.startswith(base)
+    assert "Explore-then-commit" in out and "at most 2 remain" in out
 
 
 def test_toggles_read_at_build_time_not_patch_time(fresh_tool_agent, monkeypatch):
@@ -130,5 +143,5 @@ def test_idempotent(fresh_tool_agent, monkeypatch):
 def test_block_token_budget():
     """Keep the pack lean: every enabled block costs prompt tokens on EVERY turn."""
     approx_tokens = len(duck_doctrine.FIELD_GUIDE + duck_doctrine.PLAYBOOK
-                        + duck_doctrine.ACTION7_GUIDE) / 4
-    assert approx_tokens < 800, f"doctrine pack too fat: ~{approx_tokens:.0f} tokens"
+                        + duck_doctrine.ACTION7_GUIDE + duck_doctrine.PHASE_GATE) / 4
+    assert approx_tokens < 950, f"doctrine pack too fat: ~{approx_tokens:.0f} tokens"

@@ -111,6 +111,11 @@ def main() -> int:
         import duck_doctrine
         for line in duck_doctrine.apply_all():
             print(f"[rollout] {line}", flush=True)
+    if os.environ.get("APPLY_EFFECTS_PATCH") == "1":
+        sys.path.insert(0, str(REPO / "submission/_duck_effects"))
+        import effect_memory
+        for line in effect_memory.apply_all():
+            print(f"[rollout] {line}", flush=True)
 
     # 3. real TAAF game, offline arcade
     session_res = RunSession()

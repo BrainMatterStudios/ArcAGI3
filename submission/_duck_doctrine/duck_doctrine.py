@@ -8,6 +8,7 @@ Toggles (env vars, read at APPLY time, not import time):
     DOCTRINE_FIELDGUIDE=1  D1: mechanic field guide (engine priors, ~340 tok)
     DOCTRINE_PLAYBOOK=1    D2: K3 win-behavior playbook + anti-HUD (~230 tok)
     DOCTRINE_ACTION7=1     D3: guided probe-once ACTION7 protocol (~70 tok)
+    DOCTRINE_PHASEGATE=1   D4: explore-then-commit phase gate (~120 tok)
 
 D1 is the compendium's prompt-injectable field guide (mechanics_compendium.md
 section 4) — engine-level priors only, no dev-game names. D2 encodes the nine
@@ -17,7 +18,10 @@ the guidance half of the ACTION7 lesson: the mapping fix WITHOUT guidance
 scored 0.81/0.85 (probe spam against squared efficiency), and boristown
 independently rolled their guidance back for the same reason — so D3 must
 only ever ship TOGETHER WITH duck_patches.patch_action7(), and the probe-once
-budget is the load-bearing sentence.
+budget is the load-bearing sentence. D4 ports AERA's (arXiv 2605.25931)
+explore/plan phase gate as prompt text — planning is deferred until declared
+uncertainty is low; implemented as the paper advertises (uncertainty-count
+threshold), not as its code shipped (keyword match).
 
 Offline A/B contract (pre-registered, run via rl_gate/run_rollout.py):
     GO iff first_board_changing_action median <= 2, HUD-chasing game_overs
@@ -79,6 +83,15 @@ PLAYBOOK = (
     " and the rules to persist.\n"
 )
 
+PHASE_GATE = (
+    "\n\nExplore-then-commit protocol: keep an UNCERTAIN list in Open questions - what"
+    " actions do, what the goal is, what kills you. While more than 2 items are open,"
+    " probe with single cheap actions chosen to resolve them; no long plans. Once at"
+    " most 2 remain AND the win condition fits one sentence, commit: compute the full"
+    " solution and execute it in batched actions. If an observation contradicts your"
+    " model mid-plan, stop and return to probing.\n"
+)
+
 ACTION7_GUIDE = (
     "\n\nACTION7 protocol: ACTION7's meaning varies by game (often undo, phase-switch,"
     " or a special ability). If it is offered, test it AT MOST ONCE per game, early and"
@@ -114,6 +127,8 @@ def doctrine_suffix() -> str:
         parts.append(FIELD_GUIDE)
     if _enabled("DOCTRINE_PLAYBOOK"):
         parts.append(PLAYBOOK)
+    if _enabled("DOCTRINE_PHASEGATE"):
+        parts.append(PHASE_GATE)
     if _enabled("DOCTRINE_ACTION7"):
         if _action7_mapping_applied():
             parts.append(ACTION7_GUIDE)
@@ -147,7 +162,7 @@ def patch_doctrine() -> str:
     _build_system_prompt_doctrine._doctrine_patched = True  # type: ignore[attr-defined]
     ta._build_system_prompt = _build_system_prompt_doctrine
     enabled = [n for n in ("DOCTRINE_FIELDGUIDE", "DOCTRINE_PLAYBOOK",
-                           "DOCTRINE_ACTION7") if _enabled(n)]
+                           "DOCTRINE_PHASEGATE", "DOCTRINE_ACTION7") if _enabled(n)]
     return f"doctrine: OK (enabled: {', '.join(enabled) or 'none - inert'})"
 
 
