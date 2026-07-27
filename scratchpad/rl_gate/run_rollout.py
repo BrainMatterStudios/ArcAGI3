@@ -28,8 +28,18 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
-TAAF_INFERENCE = REPO / "submission/_adopt/taaf-src/src/ARC3-Inference"
-TAAF_SRC = REPO / "submission/_adopt/taaf-src/src/tufa-arc-agi-framework/src"
+# TAAF_ROOT selects which duck tree the A/B runs. AUDIT LAW (2026-07-26): the
+# local _adopt tree has DRIFTED from the scored dataset (~Jul-05 edits never
+# uploaded) — measurement runs must use the downloaded scored bundle at
+# scratchpad/taaf_scored_ref (kaggle dataset ahmedmobasher86/taaf-src-hybrid,
+# Jul-03). The drifted local tree remains the default only for back-compat
+# with old smoke recordings; export TAAF_ROOT=scratchpad/taaf_scored_ref for
+# every August gate/A-B run.
+TAAF_ROOT = Path(os.environ.get("TAAF_ROOT", str(REPO / "submission/_adopt/taaf-src")))
+if not TAAF_ROOT.is_absolute():
+    TAAF_ROOT = REPO / TAAF_ROOT
+TAAF_INFERENCE = TAAF_ROOT / "src/ARC3-Inference"
+TAAF_SRC = TAAF_ROOT / "src/tufa-arc-agi-framework/src"
 ENV_DIR = REPO / "environment_files"
 
 
@@ -80,10 +90,26 @@ def main() -> int:
     from taaf.game_api import ArcadeSpec, GameAPI
     from inference.framework import solver as duck_solver
 
+    # patch hooks — each family opt-in via env; all are call-time env-gated
+    # internally, so applied-but-disabled is behavior-identical (Stage-1 gated)
+    if os.environ.get("APPLY_DUCK_FIXES") == "1":
+        sys.path.insert(0, str(REPO / "submission/_duck_fixes"))
+        import duck_fixes
+        for line in duck_fixes.apply_all(verbose=False):
+            print(f"[rollout] {line}", flush=True)
     if os.environ.get("APPLY_LEDGER_PATCH") == "1":
         sys.path.insert(0, str(REPO / "submission/_duck_fixes"))
         import ledger_fixes
         for line in ledger_fixes.apply_all():
+            print(f"[rollout] {line}", flush=True)
+    if os.environ.get("APPLY_DOCTRINE_PATCH") == "1":
+        sys.path.insert(0, str(REPO / "submission/_duck_doctrine"))
+        sys.path.insert(0, str(REPO / "submission/_duck_patched"))
+        if os.environ.get("DOCTRINE_ACTION7", "").strip().lower() in ("1", "true", "yes"):
+            import duck_patches
+            print(f"[rollout] {duck_patches.patch_action7()}", flush=True)
+        import duck_doctrine
+        for line in duck_doctrine.apply_all():
             print(f"[rollout] {line}", flush=True)
 
     # 3. real TAAF game, offline arcade
