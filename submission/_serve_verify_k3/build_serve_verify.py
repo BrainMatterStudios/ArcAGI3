@@ -22,6 +22,7 @@ Push: cd submission/_serve_verify_k3 && kaggle kernels push -p . --accelerator N
 Env knobs: GATE_CKPT (default checkpoint-16), GATE_MAX_TOKENS (default 3072).
 """
 import json
+import os
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -52,6 +53,16 @@ print("transformers", transformers.__version__, "| peft", peft.__version__)
 GATE_CKPT = os.environ.get("GATE_CKPT", "checkpoint-8")  # run-8 ladder: checkpoint-8 or sft_adapter (step-15 final)
 GATE_MAX_TOKENS = int(os.environ.get("GATE_MAX_TOKENS", 6144))  # thinking is served-on; leave room before the tool_call
 """
+
+# Kaggle offers no way to set env vars on a kernel run, so GATE_CKPT's default must be
+# baked in at build time — A1 §1 requires a verdict for BOTH artifacts, which means two
+# builds and two pushes:
+#     GATE_CKPT=checkpoint-8 python build_serve_verify.py && kaggle kernels push ...
+#     GATE_CKPT=sft_adapter  python build_serve_verify.py && kaggle kernels push ...
+_BUILD_CKPT = os.environ.get("GATE_CKPT", "checkpoint-8")
+assert _BUILD_CKPT in ("checkpoint-8", "sft_adapter"), f"unknown GATE_CKPT {_BUILD_CKPT!r}"
+C_GUARD = C_GUARD.replace('os.environ.get("GATE_CKPT", "checkpoint-8")',
+                          f'os.environ.get("GATE_CKPT", "{_BUILD_CKPT}")')
 
 C_INPUTS = """\
 CORPUS = os.path.dirname(sorted(glob.glob("/kaggle/input/**/train.jsonl", recursive=True))[0])
@@ -289,6 +300,11 @@ meta = {
     "code_file": "serve-verify-k3.ipynb",
     "language": "python", "kernel_type": "notebook", "is_private": True,
     "enable_gpu": True, "enable_internet": False,
+    # REQUIRED. Cell 1 gates the whole notebook on RUN = "RTX PRO 6000" in DEV, and the
+    # 27B merge needs the 96GB card regardless. Without machine_shape Kaggle allocates a
+    # default accelerator, RUN is False, and the gate silently no-ops while reporting
+    # success — burning hours and, worse, looking like it passed.
+    "machine_shape": "NvidiaRtxPro6000",
     "dataset_sources": ["ahmedmobasher86/arc3-sft-k3-corpus",
                         "ahmedmobasher86/arc3-sft-k3-ckpts",
                         "driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot",
