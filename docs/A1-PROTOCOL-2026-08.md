@@ -87,4 +87,52 @@ Overflow rule: Gate 3 slides to week 2; never compress rollout counts to fit.
 
 ## 7. Amendments / frozen-panel record
 
-*(empty at pre-registration — append here only)*
+### 7.1 — A/A noise floor MEASURED; Gate 3 and B-track Gate B are under-powered (2026-07-31)
+
+The thresholds in §3/§4 were pre-registered **before** anyone measured the
+replicate-to-replicate variance they are supposed to exceed. That variance now
+exists, computed from four same-config replicate pairs already in
+`scratchpad/rl_gate/episodes` (`k3_sweep_<game>_a` vs `_a2`, `_b` vs `_b2`):
+
+| pair | Δ levels | Δ score |
+|---|---|---|
+| ar25 a | +1 | +13.89 |
+| bp35 b | 0 | −0.02 |
+| cn04 a | 0 | +1.08 |
+| g50t b | +1 | +1.73 |
+
+**RMS per game: 0.707 levels, 7.019 score points.** (The score figure reproduces
+the independent 2026-07-31 research sweep's ~7.0 estimate exactly, arrived at
+separately.)
+
+Propagated to a 13-game panel at §3's **2 paired rollouts per game**, the SD of
+the panel total is `0.707 × √13 / √2 = 1.80` levels:
+
+| gate | threshold | z | one-sided false-positive rate |
+|---|---|---|---|
+| Gate 2 (adapter) | +3 | 1.66 | **4.8%** — marginal but defensible |
+| Gate 3 (doctrine) | +2 | 1.11 | **13.4%** — fires on noise 1 in 7 |
+| B-track Gate B | +2 | 1.11 | **13.4%** — same |
+
+**Minimum detectable effect at 2σ with 2 rollouts/game is +3.6 total levels, not
++2.** For +2 to sit at 2σ requires **6 paired rollouts per game (84 per arm)** —
+three times the registered spend.
+
+**Consequence.** Gate 3 and Gate B as written cannot distinguish a real +2 from
+noise at any defensible confidence. Do not read a GO from either as evidence.
+Before they run, choose one and record it here: (a) raise both thresholds to
+**+4**, (b) raise to 6 paired rollouts/game and keep +2, or (c) declare both
+exploratory. Gate 2's +3 stands.
+
+**Caveats, stated so this is not over-read.**
+- n=4 pairs. The 95% CI on RMS_levels is **0.40 to 2.63** — the estimate is
+  directionally decisive but numerically loose. Widen it with every future
+  same-config pair; this is cheap data that accumulates for free.
+- These pairs are K3-teacher runs on **official dev games**, not the deployed
+  Qwen on the pinned holdout. Direction should carry; magnitude may not.
+- The A/A mean delta is **+0.50 levels / +4.17 score, not zero**. A true A/A
+  should centre on zero. With n=4 this is within noise, but it is equally
+  consistent with an order effect (every `_a2`/`_b2` ran after its partner).
+  **Check this before trusting any paired design** — a systematic
+  second-run advantage would bias every A/B that runs arms in a fixed order.
+  Cheap fix: randomise arm order per game and record the order.
