@@ -124,7 +124,59 @@ if RUN:
     for n, m in random.sample(lora_mods, 3):
         BA = (m.lora_B["default"].weight @ m.lora_A["default"].weight) * scaling
         checks.append((n, m.base_layer.weight.detach().clone(), BA.detach().clone()))
+    # ---- NLL: adapter-attached vs base vs merged -------------------------------
+    # The weight-level rel_err below is a proxy; THIS is the quantity that matters.
+    # 2026-07-31: the merge assert failed with rel_err 0.64-0.75 across modules
+    # spanning a 20x range of delta magnitudes. A synthetic reproduction showed
+    # that is exactly what bf16 STORAGE of a delta ~1.5e-3 the size of the weights
+    # produces (bf16 0.696 / fp16 0.138 / fp32 0.000) — and that accumulating the
+    # merge in fp32 does NOT help, because the final cast is what destroys it.
+    # So measure whether the merged model actually keeps the fine-tune's NLL gain,
+    # rather than inferring model quality from weight fidelity.
+    from sft_common import encode_with_mask
+    _nll_rows = val_rows[:4]
+
+    def _nll(mdl, tag):
+        tot, ntok = 0.0, 0
+        for r in _nll_rows:
+            feats, _info = encode_with_mask(proc_for_nll, r["messages"], r["target"],
+                                            TOOLS, 32768)
+            if feats is None:
+                continue
+            feats = {k: (v.to(0) if hasattr(v, "to") else v) for k, v in feats.items()}
+            with torch.no_grad():
+                out = mdl(**feats)
+            n = int((feats["labels"] != -100).sum())
+            tot += float(out.loss) * n
+            ntok += n
+        v = tot / max(ntok, 1)
+        print(f"[nll] {tag}: {v:.4f} over {ntok} target tokens", flush=True)
+        return v
+
+    from transformers import AutoProcessor as _AP
+    try:
+        proc_for_nll = _AP.from_pretrained(MODEL)
+    except Exception:
+        proc_for_nll = _AP.from_pretrained(os.path.join(CORPUS, "tokenizer_bundle"))
+
+    nll_adapter = _nll(pmodel, "adapter attached (unmerged)")
+    with pmodel.disable_adapter():
+        nll_base = _nll(pmodel, "base (adapter disabled)")
+
     merged = pmodel.merge_and_unload()
+    nll_merged = _nll(merged, "merged")
+
+    gain_attached = nll_base - nll_adapter
+    gain_merged = nll_base - nll_merged
+    retained = gain_merged / gain_attached if abs(gain_attached) > 1e-6 else 0.0
+    print(f"[nll] base={nll_base:.4f} attached={nll_adapter:.4f} merged={nll_merged:.4f}")
+    print(f"[nll] gain attached={gain_attached:+.4f} merged={gain_merged:+.4f} "
+          f"RETAINED={retained:.1%}", flush=True)
+    results_nll = {"base": nll_base, "attached": nll_adapter, "merged": nll_merged,
+                   "gain_attached": gain_attached, "gain_merged": gain_merged,
+                   "retained_fraction": retained}
+    # ----------------------------------------------------------------------------
+
     ok = []
     _named = dict(merged.named_modules())
     def _resolve(name):
@@ -140,8 +192,27 @@ if RUN:
         rel = (delta - exp).norm() / (exp.norm() + 1e-9)
         ok.append({"module": n, "delta_norm": float(exp.norm()), "rel_err": float(rel)})
         print(f"[delta] {n}: |BA|={exp.norm():.4f} rel_err={rel:.4f}")
-    assert all(c["rel_err"] < 0.05 and c["delta_norm"] > 0 for c in ok), ok
-    print("WEIGHT-LEVEL MERGE ASSERT: PASS")
+    # The weight-level delta is now DIAGNOSTIC, not pass/fail. A bf16 merge of a
+    # delta this small is provably lossy (see the note above), so a high rel_err
+    # here is expected and is not by itself evidence the adapter is broken — the
+    # NLL block already measures what actually matters. Kept because delta_norm==0
+    # would still mean the adapter never attached, which IS fatal.
+    assert all(c["delta_norm"] > 0 for c in ok), f"adapter contributed nothing: {ok}"
+    if any(c["rel_err"] >= 0.05 for c in ok):
+        print(f"[warn] weight deltas degraded by merge rounding (expected for bf16): {ok}",
+              flush=True)
+
+    # A1-PROTOCOL §1 pre-registers: merged target-NLL gain >= 2% on the val rows.
+    assert gain_attached > 0, (
+        f"adapter gives NO NLL gain even attached — the checkpoint, not the merge, "
+        f"is the problem: {results_nll}")
+    rel_gain_merged = gain_merged / nll_base if nll_base else 0.0
+    print(f"[nll] merged relative gain = {rel_gain_merged:.2%} (A1 §1 requires >= 2%)")
+    assert rel_gain_merged >= 0.02, (
+        f"MERGE GATE FAIL — merged model does not carry the fine-tune "
+        f"({rel_gain_merged:.2%} < 2%; {retained:.1%} of the attached gain survived). "
+        f"Serve the adapter unmerged via vLLM --enable-lora instead. {results_nll}")
+    print("MERGE GATE: PASS")
 
     merged.config.torch_dtype = torch.bfloat16
     merged.config.use_cache = True
