@@ -135,22 +135,56 @@ if RUN:
     # rather than inferring model quality from weight fidelity.
     from sft_common import encode_with_mask
     _nll_rows = val_rows[:4]
+    # Memory history, both real bugs found by running this gate:
+    #  v3: full forward at ctx 32768 OOM'd — HF materializes logits for EVERY position,
+    #      ~33k x ~152k vocab x 2B ~ 10GB (x2 more when upcast to fp32).
+    #  v4: capping ctx at 4096 made encode_with_mask drop ALL rows as untruncatable
+    #      (val rows average ~21k tokens and carry images), so every NLL came back
+    #      0.0 over 0 tokens and the gate then "diagnosed" a dead checkpoint from an
+    #      EMPTY measurement. A metric that cannot detect its own invalidity is worse
+    #      than no metric — hence the hard ntok assert below.
+    # Correct fix: keep the full context, but only compute logits for the scored
+    # suffix. The loss mask is the target only (~1.5k tokens), so logits_to_keep
+    # shrinks the hog by ~14x without touching what is measured.
+    NLL_MAX_LEN = int(os.environ.get("GATE_NLL_MAX_LEN", 32768))
+
+    def _row_nll(mdl, feats):
+        ids = feats["input_ids"][0]
+        n_tgt = int((feats["labels"][0] != -100).sum())
+        fwd = {k: v for k, v in feats.items() if k != "labels"}
+        with torch.no_grad():
+            try:
+                out = mdl(**fwd, logits_to_keep=n_tgt + 1)
+            except TypeError:  # older signature
+                out = mdl(**fwd, num_logits_to_keep=n_tgt + 1)
+            lg = out.logits[0, :-1].float()          # predicts the last n_tgt tokens
+            tgt = ids[-n_tgt:].to(lg.device)
+            loss = torch.nn.functional.cross_entropy(lg, tgt, reduction="mean")
+        return float(loss), n_tgt
 
     def _nll(mdl, tag):
-        tot, ntok = 0.0, 0
+        tot, ntok, used, skipped = 0.0, 0, 0, []
         for r in _nll_rows:
-            feats, _info = encode_with_mask(proc_for_nll, r["messages"], r["target"],
-                                            TOOLS, 32768)
+            feats, info = encode_with_mask(proc_for_nll, r["messages"], r["target"],
+                                           TOOLS, NLL_MAX_LEN)
             if feats is None:
+                skipped.append(info.get("error"))
                 continue
             feats = {k: (v.to(0) if hasattr(v, "to") else v) for k, v in feats.items()}
-            with torch.no_grad():
-                out = mdl(**feats)
-            n = int((feats["labels"] != -100).sum())
-            tot += float(out.loss) * n
+            v, n = _row_nll(mdl, feats)
+            tot += v * n
             ntok += n
-        v = tot / max(ntok, 1)
-        print(f"[nll] {tag}: {v:.4f} over {ntok} target tokens", flush=True)
+            used += 1
+            del feats
+            torch.cuda.empty_cache()
+        # NEVER return a number derived from zero rows — that is what made v4 lie.
+        assert ntok > 0, (
+            f"NLL probe measured NOTHING for {tag}: 0 of {len(_nll_rows)} rows encoded "
+            f"(errors={skipped}, ctx<={NLL_MAX_LEN}). Fix the probe before reading any "
+            f"verdict — a zero here is a broken instrument, not a dead adapter.")
+        v = tot / ntok
+        print(f"[nll] {tag}: {v:.4f} over {ntok} target tokens "
+              f"({used}/{len(_nll_rows)} rows, ctx<={NLL_MAX_LEN})", flush=True)
         return v
 
     from transformers import AutoProcessor as _AP
