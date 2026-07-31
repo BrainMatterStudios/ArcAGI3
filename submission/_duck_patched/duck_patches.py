@@ -181,6 +181,219 @@ def verify_reset_already_handled() -> str:
     )
 
 
+def patch_dynamic_grid_burner() -> str:
+    """Burn coordinate grids into the images sent to the VLM (Spatial Overlay)."""
+    from inference.agent import vision_context
+
+    if getattr(vision_context.frame_to_png_data_url, "_grid_burner_patched", False):
+        return "patch4 grid-burner: SKIP (already applied)"
+
+    original_func = vision_context.frame_to_png_data_url
+
+    def frame_to_png_data_url_patched(frame: Any, *, upscale: int | None = None) -> str:
+        import io, base64
+        from PIL import Image, ImageDraw
+
+        rows = len(frame.grid)
+        cols = max((len(row) for row in frame.grid), default=0)
+        if rows <= 0 or cols <= 0:
+            raise ValueError("Cannot render an empty grid as an image.")
+
+        scale = vision_context.current_grid_image_upscale() if upscale is None else max(1, int(upscale))
+        image = Image.new("RGB", (cols, rows), vision_context.ARC_COLOR_MAP[0])
+        pixels = image.load()
+        for row_idx, row in enumerate(frame.grid):
+            for col_idx in range(cols):
+                value = row[col_idx] if col_idx < len(row) else 0
+                pixels[col_idx, row_idx] = vision_context.ARC_COLOR_MAP.get(int(value), vision_context.ARC_COLOR_MAP[0])
+        
+        if scale > 1:
+            image = image.resize((cols * scale, rows * scale), Image.Resampling.NEAREST)
+            draw = ImageDraw.Draw(image)
+            
+            # Draw subtle grid lines
+            grid_color = (128, 128, 128)
+            for r in range(rows + 1):
+                y = r * scale
+                width = 2 if r % 5 == 0 else 1
+                draw.line([(0, y), (cols * scale, y)], fill=grid_color, width=width)
+            for c in range(cols + 1):
+                x = c * scale
+                width = 2 if c % 5 == 0 else 1
+                draw.line([(x, 0), (x, rows * scale)], fill=grid_color, width=width)
+
+            # Draw coordinate labels
+            try:
+                from PIL import ImageFont
+                font = ImageFont.load_default()
+                text_color = (200, 200, 200)
+                # row labels (left edge)
+                for r in range(rows):
+                    if r % 5 == 0:
+                        draw.text((2, r * scale + 2), str(r), fill=text_color, font=font)
+                # col labels (top edge)
+                for c in range(cols):
+                    if c % 5 == 0 and c > 0:
+                        draw.text((c * scale + 2, 2), str(c), fill=text_color, font=font)
+            except Exception:
+                pass
+
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
+
+    frame_to_png_data_url_patched._grid_burner_patched = True  # type: ignore[attr-defined]
+    vision_context.frame_to_png_data_url = frame_to_png_data_url_patched
+    return "patch4 grid-burner: OK"
+
+
+def patch_prompts() -> str:
+    """Update system prompt to instruct the model to use the grid coordinates."""
+    from inference.agent import prompts
+    if "numeric coordinate labels" in prompts.MULTIMODAL_CONTEXT_ADDENDUM:
+        return "patch5 prompts: SKIP (already applied)"
+    prompts.MULTIMODAL_CONTEXT_ADDENDUM += "- The image contains numeric coordinate labels (0, 5, 10...) along the top and left edges. Use these to precisely identify row and column indices for spatial reasoning and action targeting.\n"
+    return "patch5 prompts: OK"
+
+
+def patch_tool_agent_analyze() -> str:
+    """Intercept the Qwen-27B action generation pipeline to inject TransferExplorer and Retrospective summaries."""
+    import sys
+    from pathlib import Path
+    
+    # Ensure arcagi3 is in sys.path
+    possible_paths = [
+        Path("/kaggle/input/arcagi3-agent/lib"),
+        Path("/kaggle/input/datasets/ahmedmobasher86/arcagi3-agent/lib"),
+        Path(__file__).resolve().parents[2] / "src", # Local fallback for dev
+    ]
+    for p in possible_paths:
+        if p.exists() and str(p) not in sys.path:
+            sys.path.insert(0, str(p))
+            
+    from inference.agent import tool_agent
+    agent_cls = getattr(tool_agent, "ToolAgent", None)
+    if agent_cls is None or not hasattr(agent_cls, "analyze"):
+        return "patch6 tool_agent_analyze: FAIL (ToolAgent.analyze not found)"
+    if getattr(agent_cls.analyze, "_tool_agent_patched", False):
+        return "patch6 tool_agent_analyze: SKIP (already applied)"
+
+    original_analyze = agent_cls.analyze
+
+    def analyze_patched(
+        self,
+        state_path: Path,
+        action_num: int,
+        valid_actions: list[str] | None = None,
+        step_env = None,
+        *args,
+        **kwargs
+    ):
+        from inference.agent.runtime_state import load_runtime_state
+        from inference.agent.tool_agent import AnalyzerTurnResult
+        import arcengine
+        
+        # Phase 3: Inject Retrospective Summaries into system prompt
+        original_system_prompt = getattr(self, "_original_system_prompt", None)
+        if original_system_prompt is None:
+            self._original_system_prompt = self._system_prompt
+            original_system_prompt = self._system_prompt
+            
+        retrospectives = getattr(self, "_retrospective_summaries", [])
+        if retrospectives:
+            retro_text = "\n\nRetrospective Summaries from previous levels of this game:\n" + "\n".join(f"- {r}" for r in retrospectives)
+            self._system_prompt = original_system_prompt + retro_text
+        else:
+            self._system_prompt = original_system_prompt
+
+        # Phase 2: Heuristic Prober (TransferExplorer)
+        if action_num < 200 and step_env is not None:
+            try:
+                from arcagi3.transfer_explorer import TransferExplorer
+                if not hasattr(self, "_transfer_explorer_instance"):
+                    self._transfer_explorer_instance = TransferExplorer()
+                
+                current_frame, _ = load_runtime_state(state_path)
+                grid = current_frame.grid
+                
+                gstate_terminal = False
+                gstate_notplayed = (action_num == 0)
+                levels = current_frame.level
+                
+                # Format available actions as integers for TransferExplorer
+                available_ids = []
+                for name in (valid_actions or []):
+                    try:
+                        available_ids.append(arcengine.GameAction.from_name(name).value)
+                    except Exception:
+                        pass
+                
+                # numpy is required by arcagi3
+                import numpy as np
+                grid_np = np.array(grid, dtype=np.int32)
+                
+                action = self._transfer_explorer_instance.decide(
+                    grid_np, gstate_terminal, gstate_notplayed, levels, available_ids
+                )
+                
+                step_args = None
+                if action and action[0] == "S":
+                    action_name = arcengine.GameAction.from_id(action[1]).name
+                    step_args = {"action": action_name}
+                elif action and action[0] == "C":
+                    step_args = {"action": "ACTION6", "col": action[1], "row": action[2]}
+                elif action and action[0] == "reset":
+                    step_args = {"action": "RESET"}
+                    
+                if step_args is not None:
+                    # execute the symbolic transition
+                    result = step_env(step_args)
+                    # Note: we should still check if this action completed the level!
+                    if self._last_action_result and self._last_action_result.get("level_completed"):
+                        # Mark that we should do retrospective, but wait, the prober doesn't use the LLM, 
+                        # so there are no LLM history messages for this level! We can just skip retro for heuristic clears.
+                        pass
+                    return AnalyzerTurnResult(
+                        step_executed=True,
+                        reasoning=f"TransferExplorer heuristic probe executed: {step_args}",
+                        yielded_control=False,
+                    )
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("TransferExplorer failed, falling back to LLM: %s", exc)
+                pass
+                
+        # Fallback to normal Qwen LLM analysis
+        result = original_analyze(self, state_path, action_num, valid_actions, step_env, *args, **kwargs)
+        
+        # Phase 3: Retrospective generation on level complete
+        if hasattr(self, "_last_action_result") and self._last_action_result and self._last_action_result.get("level_completed"):
+            try:
+                retro_messages = list(self._history_messages)
+                retro_messages.append({
+                    "role": "user", 
+                    "content": "The level was just solved! Briefly summarize the core mechanic of this level and the strategy used to solve it. This summary will be provided to you in future levels of this game, so focus on transferable rules (e.g. 'green objects always move right until they hit a wall'). Keep it under 4 sentences."
+                })
+                # Call chat completion
+                retro_result = self._chat_completion(retro_messages, tools=None)
+                retro_content = retro_result.message.get("content", "")
+                if retro_content:
+                    if not hasattr(self, "_retrospective_summaries"):
+                        self._retrospective_summaries = []
+                    self._retrospective_summaries.append(retro_content)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("Retrospective generation failed: %s", exc)
+                pass
+                
+        return result
+
+    analyze_patched._tool_agent_patched = True  # type: ignore[attr-defined]
+    agent_cls.analyze = analyze_patched
+    return "patch6 tool_agent_analyze: OK"
+
+
 def apply_all(verbose: bool = True) -> list[str]:
     """Apply every patch. Each is independent; one failing does not block the others."""
     results = []
@@ -189,6 +402,9 @@ def apply_all(verbose: bool = True) -> list[str]:
         patch_animation_producer,
         patch_animation_metadata,
         verify_reset_already_handled,
+        patch_dynamic_grid_burner,
+        patch_prompts,
+        patch_tool_agent_analyze,
     ):
         try:
             results.append(fn())

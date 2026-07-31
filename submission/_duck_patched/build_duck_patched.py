@@ -111,6 +111,13 @@ def main() -> None:
             src = src.replace(CPU_SAFE_SETUP_OLD, CPU_SAFE_SETUP_NEW)
             seen["setup"] = True
 
+        elif cell["cell_type"] == "code" and "DATASET_SOURCES =" in src:
+            if "ahmedmobasher86/arcagi3-agent" not in src:
+                src = src.replace(
+                    'DATASET_SOURCES = [', 
+                    'DATASET_SOURCES = ["ahmedmobasher86/arcagi3-agent", '
+                )
+
         elif cell["cell_type"] == "code" and "await bm.run(" in src:
             if CPU_SAFE_RUN_OLD not in src:
                 raise SystemExit("run-cell block did not match — upstream notebook changed")

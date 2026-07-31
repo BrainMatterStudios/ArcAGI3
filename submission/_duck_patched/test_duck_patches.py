@@ -210,7 +210,7 @@ def test_animation_producer_never_breaks_an_action(monkeypatch):
 
 def test_apply_all_reports_every_patch():
     lines = duck_patches.apply_all(verbose=False)
-    assert len(lines) == 4
+    assert len(lines) == 7
     joined = " | ".join(lines)
     assert "FAIL" not in joined, joined
     assert "patch3 reset: NOT NEEDED" in joined, (

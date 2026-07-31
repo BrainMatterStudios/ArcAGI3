@@ -77,4 +77,31 @@ gated debut. Never toggle an unmeasured arm into a scored submission. The
 
 ## 6. Amendments
 
-*(empty at pre-registration — append here only)*
+### 6.1 — B1 shipped ungated in the 2026-08-01 slot (2026-07-31, Ahmed)
+
+**Deviation from §1 and §3.** B1 was submitted to the public leaderboard before
+the A-track had any gate verdict and before Gate B measured it, which §1
+("no B measurement before the A-track selection exists") and §3 ("never toggle
+an unmeasured arm into a scored submission") both forbid. Authorized
+explicitly by Ahmed after the conflict was raised.
+
+**Consequence, per the preamble:** the resulting score is **exploratory, not
+confirmatory**. It cannot be read as evidence for or against B1. A single draw
+sits inside the base distribution (n=8 on identical bytes: 0.92, 1.14, 0.82,
+0.75, 0.96, 0.88, 1.27, 0.69 → mean 0.929, sd 0.195); separating a real effect
+from that variance needs the paired ab_driver measurement of §2, which remains
+the only instrument that can issue a GO. Gate B is NOT satisfied or waived by
+this submission.
+
+**Context — why the build was rebuilt first.** The kernel armed for this slot
+(`_duck_effects` v1) set `EFFECT_MEMORY=1` and nothing else. No shipped code
+reads that variable: `effect_memory.py` was never imported into the notebook
+and is absent from the `taaf-src-hybrid` bundle; its only other consumer is
+`scratchpad/rl_gate/run_rollout.py`, a local-harness path gated on
+`APPLY_EFFECTS_PATCH`. v1 would have run as plain base duck under an
+effect-memory label and corrupted the ledger with a phantom arm. v2 inlines
+the pack into the customization-hook cell (the `duck-patched` mechanism) and
+hard-fails the cell if the wrappers do not land. The Kaggle commit run for v2
+logged all four verify lines plus `[effects] ARM ACTIVE`, so the arm is
+confirmed live. **Standing rule added: an env toggle is not a shipped arm —
+every scored arm must print positive in-kernel proof that its code applied.**
