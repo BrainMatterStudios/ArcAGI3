@@ -250,8 +250,38 @@ if RUN:
 
     merged.config.torch_dtype = torch.bfloat16
     merged.config.use_cache = True
+    # merge_and_unload() hands back a model that still carries the compressed-tensors
+    # plumbing (the "Compressing/Decompressing model" bars in the log). save_pretrained
+    # then routes through a quantizer whose compressor is None ->
+    # AttributeError: 'NoneType' object has no attribute 'convert'. The weights are
+    # already true bf16 at this point (dequant applied, 0 f8 params), so the right move
+    # is to detach the quantization path entirely before writing.
+    for _a in ("hf_quantizer", "_hf_peft_config_loaded"):
+        if hasattr(merged, _a):
+            try: setattr(merged, _a, None)
+            except Exception: pass
+    merged.is_quantized = False
+    for _a in ("quantization_config", "_pre_quantization_dtype", "compression_config"):
+        if hasattr(merged.config, _a):
+            try: delattr(merged.config, _a)
+            except Exception:
+                try: setattr(merged.config, _a, None)
+                except Exception: pass
+    _left = [n for n, p in merged.named_parameters() if p.dtype == torch.float8_e4m3fn]
+    assert not _left, f"f8 params present at save time: {_left[:5]}"
+    print(f"[save] quantization detached; dtypes={sorted({str(p.dtype) for p in merged.parameters()})}",
+          flush=True)
     t0 = time.time()
-    merged.save_pretrained(MERGED, safe_serialization=True, max_shard_size="4GB")
+    # save_original_format defaults True in transformers 5.14.0.dev0, which runs
+    # revert_weight_conversion() -> mapping.convert() where one op is None:
+    #   AttributeError: 'NoneType' object has no attribute 'convert'
+    # We are feeding vLLM, which reads HF format, so reverting to the original
+    # checkpoint layout is both broken here and not what we want.
+    try:
+        merged.save_pretrained(MERGED, safe_serialization=True, max_shard_size="4GB",
+                               save_original_format=False)
+    except TypeError:  # older transformers without the kwarg
+        merged.save_pretrained(MERGED, safe_serialization=True, max_shard_size="4GB")
     try:
         proc = AutoProcessor.from_pretrained(MODEL)
     except Exception as e:
