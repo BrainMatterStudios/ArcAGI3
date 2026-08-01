@@ -50,6 +50,7 @@ PACK = os.environ.get("RIG_PACK", "")
 LABEL = os.environ.get("RIG_LABEL", "base")
 BUDGET = float(os.environ.get("RIG_BUDGET", 7920))   # the real per-game box
 NGAMES = int(os.environ.get("RIG_GAMES", 28))        # ONE concurrency wave
+REPEATS = int(os.environ.get("RIG_REPEATS", 1))      # independent runs inside one kernel
 SLUG = f"arc-agi-3-rig-{LABEL}"
 # One directory per label. Sharing a directory means every build overwrites the
 # previous label's kernel-metadata.json, so `kaggle kernels push -p submission/_rig`
@@ -99,6 +100,7 @@ _stage = "init"
 _err = None
 _rows = []
 _rig = None
+_all_repeats = []
 
 def _dump(extra=None):
     _o = {{"label": "{LABEL}", "pack": "{PACK}", "per_game_budget": {BUDGET},
@@ -134,36 +136,59 @@ try:
 
     # ArcadeSpec(competition_sim=True) is NOT usable here: it lazily calls
     # CompetitionArcadeServer.official_110(), which calls official_game_ids(), which
-    # imports re_arc — the package that is absent from both the bundle and the Kaggle
-    # image. That is what killed rig run #2 at stage=run. Construct the server
-    # directly with explicit game_ids instead; verified locally to expose 110 unique
-    # clones in COMPETITION mode with no re_arc anywhere on the path.
-    _stage = "start_arcade_server"
-    _srv = _ca.CompetitionArcadeServer(
-        game_ids=tuple(_official), total_runs={NGAMES}, environments_dir=_env_dir,
-    ).start()
-    globals()["_rig_server"] = _srv          # keep it alive for the whole run
-    _spec = _srv.arcade_spec
-    _clones = _srv.exposed_game_ids
-    print(f"[rig] arcade at {{_srv.base_url}} exposing {{len(_clones)}} clones", flush=True)
-    if len(_clones) != {NGAMES}:
-        raise RuntimeError(f"expected {NGAMES} exposed clones, got {{len(_clones)}}")
+    # imports re_arc — absent from both the bundle and the Kaggle image. Construct the
+    # server directly with explicit game_ids instead.
+    #
+    # REPEATS give independent runs of the SAME config inside one kernel. Each repeat
+    # gets a fresh server and therefore a fresh scorecard, because competition mode
+    # permits exactly one run per game id. This is what makes rho estimable: split the
+    # games of each repeat into two disjoint halves and correlate the half-means ACROSS
+    # repeats, which separates run-level noise (shared by both halves) from game-level
+    # noise (independent) — exactly the decomposition that decides whether selecting on
+    # the public half tells you anything about the private half.
+    _all_repeats = []
+    for _rep in range({REPEATS}):
+        _stage = f"start_arcade_server[{{_rep}}]"
+        _srv = _ca.CompetitionArcadeServer(
+            game_ids=tuple(_official), total_runs={NGAMES}, environments_dir=_env_dir,
+        ).start()
+        globals()["_rig_server_%d" % _rep] = _srv
+        _spec = _srv.arcade_spec
+        _clones = _srv.exposed_game_ids
+        if len(_clones) != {NGAMES}:
+            raise RuntimeError(f"expected {NGAMES} clones, got {{len(_clones)}}")
 
-    _stage = "build_benchmark"
-    _games = [taaf.game_api.GameAPI(env_name=_g2, arcade_spec=_spec) for _g2 in _clones]
-    _rig = taaf.benchmark.Benchmark(label="rig_{LABEL}", games=_games, solver=bm.solver, n_passes=1)
+        _stage = f"build_benchmark[{{_rep}}]"
+        _games = [taaf.game_api.GameAPI(env_name=_g2, arcade_spec=_spec) for _g2 in _clones]
+        _rig = taaf.benchmark.Benchmark(label=f"rig_{LABEL}_{{_rep}}", games=_games,
+                                        solver=bm.solver, n_passes=1)
+        for _attr in ("max_runtime_s_per_game", "max_runtime_s"):
+            if hasattr(_rig.solver, _attr):
+                setattr(_rig.solver, _attr, {BUDGET})
+        print(f"[rig] repeat {{_rep}}: {{len(_rig.games)}} games @ {BUDGET}s "
+              f"arcade={{_srv.base_url}}", flush=True)
 
-    # Shorten the per-game box so a sweep fits the weekly quota. This changes the
-    # regime, so scores compare BETWEEN ARMS, never to real submissions.
-    for _attr in ("max_runtime_s_per_game", "max_runtime_s"):
-        if hasattr(_rig.solver, _attr):
-            setattr(_rig.solver, _attr, {BUDGET})
-    print(f"[rig] games={{len(_rig.games)}} budget={BUDGET}s "
-          f"concurrency={{getattr(_rig.solver, 'concurrency', '?')}}", flush=True)
-    _dump()
+        _stage = f"run[{{_rep}}]"
+        await _rig.run(soft_end_time=None, runtime_environment=target, minimal_diagnostics=False)
 
-    _stage = "run"
-    await _rig.run(soft_end_time=None, runtime_environment=target, minimal_diagnostics=False)
+        _stage = f"collect[{{_rep}}]"
+        _rrows = []
+        for _gr in (getattr(_rig, "game_runs", None) or []):
+            _rrows.append({{"game_id": getattr(_gr, "game_id", None),
+                           "score": getattr(_gr, "final_score", None),
+                           "levels_completed": getattr(_gr, "levels_completed", None),
+                           "levels_total": getattr(_gr, "number_of_levels", None),
+                           "actions": len(getattr(_gr, "history", []) or [])}})
+        _all_repeats.append(_rrows)
+        _rows = _rrows
+        _sc = [r["score"] for r in _rrows if isinstance(r.get("score"), (int, float))]
+        print(f"[rig] repeat {{_rep}} done: n={{len(_sc)}} "
+              f"mean={{(sum(_sc)/len(_sc)) if _sc else float('nan'):.4f}}", flush=True)
+        _dump({{"repeats": _all_repeats}})
+        try:
+            _srv.stop()
+        except Exception:
+            pass
     _stage = "collect"
 except Exception:
     _err = traceback.format_exc()
@@ -190,7 +215,7 @@ try:
         _probe = [a for a in dir(_first) if not a.startswith("__")][:60]
 except Exception:
     pass
-_dump({{"game_run_attrs": _probe}})
+_dump({{"game_run_attrs": _probe, "repeats": _all_repeats}})
 
 _scored = [r.get("score") for r in _rows if isinstance(r.get("score"), (int, float))]
 if _scored:
