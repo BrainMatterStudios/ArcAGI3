@@ -125,9 +125,24 @@ try:
     if len(_official) != 25:
         raise RuntimeError(f"expected 25 official environments, got {{len(_official)}}")
 
+    # ArcadeSpec(competition_sim=True) is NOT usable here: it lazily calls
+    # CompetitionArcadeServer.official_110(), which calls official_game_ids(), which
+    # imports re_arc — the package that is absent from both the bundle and the Kaggle
+    # image. That is what killed rig run #2 at stage=run. Construct the server
+    # directly with explicit game_ids instead; verified locally to expose 110 unique
+    # clones in COMPETITION mode with no re_arc anywhere on the path.
+    _stage = "start_arcade_server"
+    _srv = _ca.CompetitionArcadeServer(
+        game_ids=tuple(_official), total_runs=110, environments_dir=_env_dir,
+    ).start()
+    globals()["_rig_server"] = _srv          # keep it alive for the whole run
+    _spec = _srv.arcade_spec
+    _clones = _srv.exposed_game_ids
+    print(f"[rig] arcade at {{_srv.base_url}} exposing {{len(_clones)}} clones", flush=True)
+    if len(_clones) != 110:
+        raise RuntimeError(f"expected 110 exposed clones, got {{len(_clones)}}")
+
     _stage = "build_benchmark"
-    _clones = _ca.clone_game_ids(_official, total_runs=110)
-    _spec = taaf.game_api.ArcadeSpec(competition_sim=True)
     _games = [taaf.game_api.GameAPI(env_name=_g2, arcade_spec=_spec) for _g2 in _clones]
     _rig = taaf.benchmark.Benchmark(label="rig_{LABEL}", games=_games, solver=bm.solver, n_passes=1)
 
