@@ -137,15 +137,27 @@ scorecard, hidden baselines, clone IDs — so a commit kernel produces a real,
 submission-shaped score at zero submission cost, retrievable via `kaggle kernels output`.
 
 ```
-per-game box    wall (110 games, concurrency 28 = 4 waves)   sweeps / 30h week
-   7920s real            8.8h + load                              ~3
-    900s                 1.0h + load                             ~25
-    600s                 0.7h + load                             ~35
+CORRECTED BY MEASUREMENT (rig run #3, 2026-08-01). Shortening the per-game box does
+not shrink the regime, it eliminates it:
+
+  110 games @ 600s   ->  mean 8.8 ACTIONS/game (median 6), a level completed in only
+                         5 of 110 games. 28 games share one GPU, so a turn costs ~70s
+                         wall. Six actions is barely past the opening.
+  the real 7920s box ->  ~113 actions/game, consistent with the audit's measured
+                         median of 78 in real recorded episodes.
+
+Buy per-game realism by cutting GAME COUNT, not the box — one concurrency wave:
+
+  28 games @ 7920s (1 wave)  ->  ~2.2h + load  ->  ~11 sweeps / 30h week   REALISTIC
+  28 games @ 3600s (1 wave)  ->  ~1.0h + load  ->  ~23 sweeps, ~51 actions/game
+  110 games @ 600s (4 waves) ->  ~0.7h         ->  MEASURES ALMOST NOTHING
 ```
 
-A shortened box changes the regime, so absolute scores are not comparable to real
-submissions — but **arms are comparable to each other**, which is what an A/B needs.
-That is 25-35 paired comparisons per week against 7 submission slots.
+Power comes from 28 realistic games, not 110 truncated ones. The earlier claim of
+25-35 sweeps/week was wrong: it assumed a shortened box preserves the regime, and the
+measurement says it does not. The honest figure is **~11 realistic sweeps per week**,
+still a large gain over 7 submission slots, and the only instrument that can resolve
+effects the public leaderboard cannot.
 
 **G0. Measure rho(public, private). RUN THIS FIRST — it gates G1 and all of Tier 2.**
 

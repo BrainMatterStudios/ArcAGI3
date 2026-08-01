@@ -11,13 +11,19 @@ shared scorecard, hidden baselines, clone IDs, one make() per environment, level
 forced. A commit run therefore produces a real, submission-shaped score, and commit
 output IS retrievable (`kaggle kernels output`) where scored-rerun output is not.
 
-BUDGET. 110 games at concurrency 28 is 4 waves, so wall time is about 4x the per-game
-box plus ~10 min of model load:
-    7920s/game (the real box)  ->  8.8h  ->  ~3 sweeps per 30h week
-     900s/game                 ->  1.0h  ->  ~25 sweeps
-     600s/game                 ->  0.7h  ->  ~35 sweeps
-A shortened box changes the regime, so absolute scores are NOT comparable to real
-submissions -- but arms are comparable to each other, which is what an A/B needs.
+BUDGET — corrected by measurement, run #3. Shortening the per-game box does not
+shrink the regime, it eliminates it. At 600s/game the agent took a MEAN OF 8.8
+ACTIONS (median 6) and completed a level in only 5 of 110 games, because 28 games
+share one GPU and a turn costs ~70s wall. The real 7920s box yields ~113
+actions/game, consistent with the audit's measured median of 78 in real episodes.
+Six actions is barely past the opening; there is nothing there to compare.
+
+So buy per-game realism by cutting GAME COUNT, not the box. One concurrency wave
+at the full box:
+    28 games @ 7920s = 1 wave  ->  ~2.2h + load  ->  ~11 sweeps per 30h week
+    28 games @ 3600s = 1 wave  ->  ~1.0h + load  ->  ~23 sweeps, ~51 actions/game
+    110 games @ 600s = 4 waves ->  ~0.7h        ->  MEASURES ALMOST NOTHING
+Statistical power comes from 28 realistic games rather than 110 truncated ones.
 
 WHAT IS REWRITTEN relative to duck-base:
   cell 8   force the serve. duck-base skips setup_commands unless
@@ -30,7 +36,7 @@ WHAT IS REWRITTEN relative to duck-base:
 Usage:
     python3 submission/_rig/build_rig.py                          # baseline, no pack
     RIG_PACK=submission/_duck_boardfix/board_fix.py \
-    RIG_LABEL=boardfix RIG_BUDGET=600 python3 submission/_rig/build_rig.py
+    RIG_LABEL=boardfix RIG_BUDGET=7920 RIG_GAMES=28 python3 submission/_rig/build_rig.py
 """
 import json
 import os
@@ -42,7 +48,8 @@ OUT_DIR = Path(__file__).parent
 
 PACK = os.environ.get("RIG_PACK", "")
 LABEL = os.environ.get("RIG_LABEL", "base")
-BUDGET = float(os.environ.get("RIG_BUDGET", 600))
+BUDGET = float(os.environ.get("RIG_BUDGET", 7920))   # the real per-game box
+NGAMES = int(os.environ.get("RIG_GAMES", 28))        # ONE concurrency wave
 SLUG = f"arc-agi-3-rig-{LABEL}"
 # One directory per label. Sharing a directory means every build overwrites the
 # previous label's kernel-metadata.json, so `kaggle kernels push -p submission/_rig`
@@ -133,14 +140,14 @@ try:
     # clones in COMPETITION mode with no re_arc anywhere on the path.
     _stage = "start_arcade_server"
     _srv = _ca.CompetitionArcadeServer(
-        game_ids=tuple(_official), total_runs=110, environments_dir=_env_dir,
+        game_ids=tuple(_official), total_runs={NGAMES}, environments_dir=_env_dir,
     ).start()
     globals()["_rig_server"] = _srv          # keep it alive for the whole run
     _spec = _srv.arcade_spec
     _clones = _srv.exposed_game_ids
     print(f"[rig] arcade at {{_srv.base_url}} exposing {{len(_clones)}} clones", flush=True)
-    if len(_clones) != 110:
-        raise RuntimeError(f"expected 110 exposed clones, got {{len(_clones)}}")
+    if len(_clones) != {NGAMES}:
+        raise RuntimeError(f"expected {NGAMES} exposed clones, got {{len(_clones)}}")
 
     _stage = "build_benchmark"
     _games = [taaf.game_api.GameAPI(env_name=_g2, arcade_spec=_spec) for _g2 in _clones]
@@ -166,7 +173,9 @@ except Exception:
 try:
     for _gr in (getattr(_rig, "game_runs", None) or []):
         _rows.append({{"game_id": getattr(_gr, "game_id", None),
-                      "score": getattr(_gr, "score", None),
+                      "score": getattr(_gr, "final_score", None),
+                      "levels_total": getattr(_gr, "number_of_levels", None),
+                      "actions_per_level": getattr(_gr, "actions_per_level", None),
                       "levels_completed": getattr(_gr, "levels_completed", None),
                       "actions": len(getattr(_gr, "history", []) or [])}})
 except Exception as _e:
