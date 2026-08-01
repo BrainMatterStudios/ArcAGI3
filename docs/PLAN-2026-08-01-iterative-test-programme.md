@@ -147,10 +147,32 @@ A shortened box changes the regime, so absolute scores are not comparable to rea
 submissions — but **arms are comparable to each other**, which is what an A/B needs.
 That is 25-35 paired comparisons per week against 7 submission slots.
 
-**G1. Variance A/B.** temp 0.6/top_k 20 versus 0.9/50 — the max-over-draws bet, which
-currently rests on an untested assumption that wider sampling fattens the upper tail
-rather than lowering the mean. Paired sweeps give the distribution directly.
-*Allocation:* 8 sweeps (~6h).
+**G0. Measure rho(public, private). RUN THIS FIRST — it gates G1 and all of Tier 2.**
+
+The max-over-draws programme assumed the public half is a noisy proxy for the private
+half *of the same run*, so selecting the best public draw selects a good private score.
+**The public 55 and private 55 are different games.** If the noise is predominantly
+per-game rather than per-run, then rho(public, private) ~ 0, selecting on the public
+leaderboard returns a *random* private draw, and best-of-N yields the private MEAN, not
+the private max. That would remove the justification for both the variance arm and the
+farming programme.
+
+*Design:* run the 110-game competition-sim N times; split each run into two disjoint
+55-game halves; correlate half-A mean against half-B mean across runs. This decomposes
+run-level noise (serving throughput, scheduling — correlates the halves) from game-level
+noise (does not). It measures exactly the quantity the strategy depends on.
+
+*Read:* rho >= ~0.5 — selection works, farming and variance both stand. rho ~ 0 —
+selection buys nothing; stop spending effort on draw strategy and move it all to Tier 0
+capability work. Intermediate — compute the attenuated expected gain and decide on the
+number.
+
+*Allocation:* 8 sweeps (~6h). Cheapest possible answer to the most consequential open
+question in the campaign.
+
+**G1. Variance A/B — HELD until G0 reports.** temp 0.6/top_k 20 versus 0.9/50. The arm
+is built, pushed and verified, but its entire rationale is downstream of G0.
+*Allocation:* 8 sweeps (~6h), conditional.
 
 **G2. Best Tier-0 survivor, integrated.** Whichever of E3/E4/E6 clears its kill
 criterion, wired into the duck and measured end-to-end. *Allocation:* 8 sweeps.
@@ -164,22 +186,48 @@ Leaves ~10h/week headroom for reruns and failures.
 
 ## 4. Tier 2 — submission slots
 
-One per day. Every day used — an unused day is a discarded lottery ticket, and
-E[best of N] runs 1.21 at N=8 and 1.41 at N=90 on the measured base distribution.
-Slots go to arms that cleared Tier 1; otherwise farm draws from the best-known config.
-Freeze and farm exclusively for the final ~30 days.
+One per day; never leave a day unused, since a draw costs nothing beyond the day and
+the banked best is never lost. Slots go to arms that cleared Tier 1; otherwise draw
+from the best-known config.
+
+**The strength of the farming rationale is now conditional on G0.** E[best of N] runs
+1.21 at N=8 and 1.41 at N=90 on the measured base distribution — but that is the
+expected max of the *public* score. What is scored is the private half, on different
+games. If rho ~ 0 the realised private score is the mean regardless of how many draws
+we take, and farming is merely free rather than valuable. Do not restate the 1.41
+figure as a private-score expectation until G0 reports.
+
+Additional mechanics confirmed by the competitive lens and worth holding:
+- **Scoring counts all 110 environments whether or not the agent touches them.**
+  Abandoning a hopeless game costs nothing in the denominator, so early abandonment is
+  strictly free — this strengthens allocation work and closes the "skip games" idea.
+- **Max-over-plays is structurally unreachable**: competition mode forces level-resets
+  and permits one `make` per environment.
+- **Games are near-binary.** Hosts report Opus 4.6 at 0.0% *or* 97.1% on the same game
+  depending only on harness, and 0.0% under both on bp35. Persistence on a non-yielding
+  game has near-zero option value; abandon early and hard.
+- **Dead clicks count as scored actions** (host-confirmed, contradicting the technical
+  report), and there is an animation observation tax. Both are irrelevant at our current
+  depth and become significant at levels 4-7, where weights are 14-25% each.
+- Scorecards auto-publish after ~30-45 min of inactivity; keep it continuously active.
+- **Baselines verified current.** Local `metadata.json` is dated 2026-06-27/24, after
+  the 2026-04-14 scoring change (median-human baseline, 1.15x cap). tu93 reads
+  `[19, 16, 34, 42, 123, ...]`, matching the values reconstructed independently from 340
+  human sessions. Efficiency arithmetic in this plan is sound.
 
 ---
 
 ## 5. Order of work
 
 1. **E1 + E2** — masking, then re-measure everything built on broken frame identity.
-   Nothing else is trustworthy until this is done.
-2. **E3** — the defect-count goal detector, supervised against known predicates.
-3. **E4, E6** in parallel — opening book and controlled-object classifier.
-4. **G1** — variance sweeps, which run independently of all the above.
+   Nothing else is trustworthy until this is done. Offline, no GPU.
+2. **G0** — rho(public, private). Runs on GPU in parallel with the Tier-0 work and
+   decides whether the entire draw/variance programme has a rationale.
+3. **E3** — the defect-count goal detector, supervised against known predicates.
+4. **E4, E6** in parallel — opening book and controlled-object classifier.
 5. **E5, E7** — geodesic replay and undo, both cheap and both contingent on E2.
-6. Whatever clears Tier 1 goes to a slot.
+6. **G1** — variance sweeps, only if G0 justifies them.
+7. Whatever clears Tier 1 goes to a slot.
 
 ## 6. Standing risks
 

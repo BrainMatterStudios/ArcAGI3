@@ -87,7 +87,7 @@ def play(game_id: str, arcade: Arcade, seed: int, carry: bool) -> dict:
         return env.step(GameAction.from_id(aid))
 
     knowledge = Knowledge()
-    ex = GraphExplorer(knowledge, seed=seed)
+    ex = GraphExplorer(knowledge, seed=seed, game_id=game_id)
 
     actions = 0
     level = 1

@@ -29,6 +29,10 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy import ndimage
 
+import sys as _sys
+_sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'ideas'))
+import hud_mask as _hud
+
 _S4 = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=bool)
 _SALIENT_MIN = 6          # colours 6..15 read as chromatic/foreground
 _MEDIUM = (2, 32)         # a "button-like" component side length
@@ -109,7 +113,9 @@ class _Node:
 
 
 class GraphExplorer:
-    def __init__(self, knowledge: Knowledge, seed: int = 0, use_knowledge: bool = True):
+    def __init__(self, knowledge: Knowledge, seed: int = 0, use_knowledge: bool = True,
+                 game_id: str | None = None):
+        self.game_id = game_id
         self.k = knowledge
         self.use_knowledge = use_knowledge
         self.rng = random.Random(seed)
@@ -138,6 +144,12 @@ class GraphExplorer:
 
     def node_id(self, grid: np.ndarray) -> str:
         g = self._masked(grid)
+        # E1: strip the HUD before hashing. 18/25 games tick a step-budget bar into
+        # the frame before the legality check, so without this the node id changes on
+        # every action, the graph never merges, and the search degenerates to a tree.
+        # Measured collapse from masking on affected games: 16.14x (lf52 83.8x).
+        if self.game_id is not None:
+            g = _hud.mask_frame(g, self.game_id)
         return hashlib.blake2b(
             np.ascontiguousarray(g, dtype=np.int8).tobytes(),
             digest_size=16,
