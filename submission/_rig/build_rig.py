@@ -44,7 +44,13 @@ PACK = os.environ.get("RIG_PACK", "")
 LABEL = os.environ.get("RIG_LABEL", "base")
 BUDGET = float(os.environ.get("RIG_BUDGET", 600))
 SLUG = f"arc-agi-3-rig-{LABEL}"
-OUT = OUT_DIR / f"rig-{LABEL}.ipynb"
+# One directory per label. Sharing a directory means every build overwrites the
+# previous label's kernel-metadata.json, so `kaggle kernels push -p submission/_rig`
+# silently pushes whichever variant was built last — which is exactly what happened
+# on the first attempt.
+ARM_DIR = OUT_DIR / LABEL
+ARM_DIR.mkdir(parents=True, exist_ok=True)
+OUT = ARM_DIR / f"rig-{LABEL}.ipynb"
 
 HOOK_MARKER = "Make one-off changes to `bm`, `bm.games`, or `bm.solver` here"
 SERVE_GUARD = "if TRUE_SUBMISSION:  # serving Qwen needs the eval GPU; the CPU-safe commit skips it"
@@ -74,60 +80,102 @@ def hook_cell() -> str:
 def run_cell() -> str:
     return f'''# rig: competition-simulated run. Replaces duck-base's submission cell, whose
 # gateway poll cannot succeed in a commit run.
+#
+# EVERYTHING is wrapped and a diagnostic file is written unconditionally: an ERRORed
+# Kaggle kernel produces NO retrievable log (verified — a COMPLETE run yields a .log,
+# an ERROR run does not), so a rig that dies silently teaches us nothing and costs an
+# hour of quota. Files written to the working dir DO survive an error.
 import json, time, traceback
-import taaf.standard_benchmarks as _sb
-
-print((BUNDLE_DIR / "preamble.txt").read_text())
-os.environ.setdefault("RECORDINGS_DIR", str(WORKING_DIR / "server_recording"))
 
 _t0 = time.time()
-_rig = _sb.make_benchmark_kaggle_official_110(solver=bm.solver, competition_sim=True)
-
-# Shorten the per-game box so a sweep fits the weekly quota. This changes the regime,
-# so scores are comparable BETWEEN ARMS and not to real submissions.
-_budget = {BUDGET}
-for _attr in ("max_runtime_s_per_game", "max_runtime_s"):
-    if hasattr(_rig.solver, _attr):
-        setattr(_rig.solver, _attr, _budget)
-print(f"[rig] games={{len(_rig.games)}} per_game_budget={{_budget}}s "
-      f"concurrency={{getattr(_rig.solver, 'concurrency', '?')}}", flush=True)
-
+_stage = "init"
 _err = None
+_rows = []
+_rig = None
+
+def _dump(extra=None):
+    _o = {{"label": "{LABEL}", "pack": "{PACK}", "per_game_budget": {BUDGET},
+          "stage": _stage, "elapsed_s": round(time.time() - _t0, 1),
+          "error": _err, "n_games": len(_rows), "rows": _rows}}
+    if extra:
+        _o.update(extra)
+    (WORKING_DIR / "rig_result.json").write_text(json.dumps(_o, indent=1, default=str))
+
 try:
+    _stage = "preamble"
+    print((BUNDLE_DIR / "preamble.txt").read_text())
+    os.environ.setdefault("RECORDINGS_DIR", str(WORKING_DIR / "server_recording"))
+
+    # NOTE: taaf.standard_benchmarks.make_benchmark_kaggle_official_110 imports `re_arc`
+    # to list the 25 official ids. That package is NOT in the shipped bundle and not in
+    # the Kaggle image — it is what killed the first rig run. Build the same thing from
+    # the offline arcade instead, which the competition dataset already provides.
+    _stage = "official_ids"
+    import arc_agi, taaf.game_api, taaf.competition_arcade as _ca, taaf.benchmark
+    _env_dir = os.environ.get("ARC_ENVIRONMENTS_DIR", "/kaggle/input/arc-prize-2026-arc-agi-3/environment_files")
+    if not os.path.isdir(_env_dir):
+        import glob as _g
+        _cands = _g.glob("/kaggle/input/**/environment_files", recursive=True)
+        if not _cands:
+            raise RuntimeError("no environment_files directory found under /kaggle/input")
+        _env_dir = _cands[0]
+    _arc = arc_agi.Arcade(operation_mode=arc_agi.OperationMode.OFFLINE, environments_dir=_env_dir)
+    _official = sorted(e.game_id for e in _arc.available_environments)
+    print(f"[rig] env_dir={{_env_dir}} official={{len(_official)}}", flush=True)
+    if len(_official) != 25:
+        raise RuntimeError(f"expected 25 official environments, got {{len(_official)}}")
+
+    _stage = "build_benchmark"
+    _clones = _ca.clone_game_ids(_official, total_runs=110)
+    _spec = taaf.game_api.ArcadeSpec(competition_sim=True)
+    _games = [taaf.game_api.GameAPI(env_name=_g2, arcade_spec=_spec) for _g2 in _clones]
+    _rig = taaf.benchmark.Benchmark(label="rig_{LABEL}", games=_games, solver=bm.solver, n_passes=1)
+
+    # Shorten the per-game box so a sweep fits the weekly quota. This changes the
+    # regime, so scores compare BETWEEN ARMS, never to real submissions.
+    for _attr in ("max_runtime_s_per_game", "max_runtime_s"):
+        if hasattr(_rig.solver, _attr):
+            setattr(_rig.solver, _attr, {BUDGET})
+    print(f"[rig] games={{len(_rig.games)}} budget={BUDGET}s "
+          f"concurrency={{getattr(_rig.solver, 'concurrency', '?')}}", flush=True)
+    _dump()
+
+    _stage = "run"
     await _rig.run(soft_end_time=None, runtime_environment=target, minimal_diagnostics=False)
+    _stage = "collect"
 except Exception:
     _err = traceback.format_exc()
-    print("[rig] run raised:\\n" + _err, flush=True)
+    print(f"[rig] FAILED at stage={{_stage}}:\\n{{_err}}", flush=True)
 
-# Per-game scores are the deliverable. Dump whatever the benchmark exposes rather than
-# assuming a shape -- an unreadable measurement must not silently produce a verdict.
-_rows = []
-for _gr in (getattr(_rig, "game_runs", None) or []):
-    try:
-        _rows.append({{
-            "game_id": getattr(_gr, "game_id", None),
-            "score": getattr(_gr, "score", None),
-            "levels_completed": getattr(_gr, "levels_completed", None),
-            "actions": len(getattr(_gr, "history", []) or []),
-        }})
-    except Exception as _e:
-        _rows.append({{"error": repr(_e)}})
+# Collect whatever exists, whether or not the run completed.
+try:
+    for _gr in (getattr(_rig, "game_runs", None) or []):
+        _rows.append({{"game_id": getattr(_gr, "game_id", None),
+                      "score": getattr(_gr, "score", None),
+                      "levels_completed": getattr(_gr, "levels_completed", None),
+                      "actions": len(getattr(_gr, "history", []) or [])}})
+except Exception as _e:
+    _rows.append({{"collect_error": repr(_e)}})
 
-_out = {{
-    "label": "{LABEL}", "pack": "{PACK}", "per_game_budget": _budget,
-    "elapsed_s": round(time.time() - _t0, 1), "n_games": len(_rows),
-    "error": _err, "rows": _rows,
-}}
-(WORKING_DIR / "rig_result.json").write_text(json.dumps(_out, indent=1, default=str))
+# Shape probe: if .score is not where we expect, record what IS on the object so the
+# next build can fix the extraction without spending another hour of quota.
+_probe = None
+try:
+    _first = (getattr(_rig, "game_runs", None) or [None])[0]
+    if _first is not None:
+        _probe = [a for a in dir(_first) if not a.startswith("__")][:60]
+except Exception:
+    pass
+_dump({{"game_run_attrs": _probe}})
 
 _scored = [r.get("score") for r in _rows if isinstance(r.get("score"), (int, float))]
 if _scored:
     print(f"[rig] RESULT label={LABEL} n={{len(_scored)}} "
           f"mean={{sum(_scored)/len(_scored):.4f}} max={{max(_scored):.4f}}", flush=True)
 else:
-    print(f"[rig] RESULT label={LABEL} — NO SCORES PARSED ({{len(_rows)}} rows); "
-          "see rig_result.json", flush=True)
-print(f"[rig] DONE in {{_out['elapsed_s']}}s", flush=True)
+    print(f"[rig] RESULT label={LABEL} — NO SCORES PARSED ({{len(_rows)}} rows, "
+          f"stage={{_stage}}); see rig_result.json", flush=True)
+print(f"[rig] DONE stage={{_stage}} in {{round(time.time()-_t0,1)}}s", flush=True)
 '''
 
 
@@ -164,7 +212,7 @@ def main() -> None:
 
     nb["cells"] = cells
     OUT.write_text(json.dumps(nb, indent=1))
-    (OUT_DIR / "kernel-metadata.json").write_text(json.dumps({
+    (ARM_DIR / "kernel-metadata.json").write_text(json.dumps({
         "id": f"ahmedmobasher86/{SLUG}",
         "title": SLUG,
         "code_file": OUT.name,
@@ -183,6 +231,7 @@ def main() -> None:
         "kernel_sources": [],
         "model_sources": [],
     }, indent=2))
+    print(f"push with: kaggle kernels push -p {ARM_DIR}")
     print(f"wrote {OUT}  (label={LABEL} pack={PACK or 'none'} budget={BUDGET}s, anchors {sorted(seen)})")
 
 
