@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import signal
 import subprocess
 import sys
@@ -53,6 +54,8 @@ def main() -> int:
     ap.add_argument("--upstream", required=True)
     ap.add_argument("--rollouts", type=int, default=2)
     ap.add_argument("--tag", default="ab")
+    ap.add_argument("--seed", type=int, default=0,
+                    help="seeds the per-(rollout,game) arm-order shuffle")
     ap.add_argument("--env-dir", default="scratchpad/holdout_arcint/environment_files")
     ap.add_argument("--max-runtime-s", type=float, default=2400.0)
     ap.add_argument("--max-actions", type=int, default=400)
@@ -62,9 +65,25 @@ def main() -> int:
     arms = [parse_arm(s) for s in args.arms]
     results: dict = {}
 
+    # Arm ORDER is randomised per (rollout, game), seeded so a run is reproducible.
+    #
+    # Why: the measured A/A floor (A1-PROTOCOL 7.1, scratchpad/rl_gate/aa_noise_floor.py)
+    # is NOT centred on zero — +0.50 levels / +4.17 score over 4 same-config pairs in
+    # which replicate 2 always ran second. At n=4 that is within noise, but it is equally
+    # consistent with a systematic second-run advantage (endpoint warmup, prefix cache,
+    # anything order-dependent). With a FIXED arm order that bias lands entirely on one
+    # arm and masquerades as an effect. Randomising makes order noise rather than bias;
+    # order_log lets us test for it after the fact instead of assuming it away.
+    rng = random.Random(args.seed)
+    order_log = []
+
     for r in range(args.rollouts):
         for g in games:
-            for arm_name, arm_env in arms:
+            arms_this = list(arms)
+            rng.shuffle(arms_this)
+            order_log.append({"rollout": r, "game": g,
+                              "order": [a[0] for a in arms_this]})
+            for arm_name, arm_env in arms_this:
                 wd = HERE / "episodes" / f"ab_{args.tag}_{arm_name}_{g}_r{r}"
                 env = dict(os.environ,
                            TAAF_ROOT=SCORED_REF,
@@ -100,7 +119,8 @@ def main() -> int:
 
     # paired per-game summary vs the FIRST arm
     base_name = arms[0][0]
-    summary = {"tag": args.tag, "base_arm": base_name, "games": {}}
+    summary = {"tag": args.tag, "base_arm": base_name, "seed": args.seed,
+               "arm_order_log": order_log, "games": {}}
     for g, per_arm in results.items():
         base_runs = [v for v in per_arm.get(base_name, []) if v is not None]
         row = {"base_levels": base_runs}

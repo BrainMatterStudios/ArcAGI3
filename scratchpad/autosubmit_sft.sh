@@ -31,11 +31,27 @@ while true; do
 done
 echo "[sft] slot window reached at $(date -u '+%F %H:%M:%S UTC')"
 
-STATUS=$(kaggle kernels status ahmedmobasher86/arc-agi-3-duck-sft 2>/dev/null | tail -1)
-echo "[sft] kernel status: $STATUS"
+# Distinguish "cannot read the status" from "status is bad". The 2026-08-01 run lost
+# 11 hours because a transient empty reply from `kaggle kernels status` was treated as
+# not-COMPLETE and aborted on a single reading. An unknown is a retry; only a status
+# that positively reads as ERROR/CANCEL is a reason not to spend the slot.
+STATUS=""
+for attempt in $(seq 1 10); do
+  STATUS=$(kaggle kernels status ahmedmobasher86/arc-agi-3-duck-sft 2>/dev/null | tail -1)
+  echo "[sft] status attempt $attempt: '${STATUS:-<empty>}'"
+  case "$STATUS" in
+    *COMPLETE*) break;;
+    *ERROR*|*CANCEL*)
+      echo "[sft] ABORT — kernel reports a terminal failure, refusing to spend the slot"
+      exit 1;;
+  esac
+  sleep 60
+done
 case "$STATUS" in
-  *COMPLETE*) ;;
-  *) echo "[sft] ABORT — kernel not COMPLETE, refusing to spend the slot"; exit 1;;
+  *COMPLETE*) echo "[sft] kernel COMPLETE — proceeding";;
+  *) echo "[sft] status never readable after 10 attempts; submitting anyway —"
+     echo "[sft] an unconfirmed-but-committed kernel is worth more than a forfeited slot,"
+     echo "[sft] and the marker check below still verifies the submission landed.";;
 esac
 
 OK=0
