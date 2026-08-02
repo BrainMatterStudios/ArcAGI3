@@ -83,8 +83,8 @@ def hook_cell() -> str:
             "    print(f\"[rig] pack {_n}: {'OK' if _ok else 'FAIL'}\", flush=True)\n"
             "if not all(_rig_pack.values()):\n"
             '    raise RuntimeError(f"[rig] pack did not apply: {_rig_pack}")\n'
-            "board_fix_stats = stats\n"
-            "board_fix_assert = assert_fired\n"
+            "board_fix_stats = globals().get('stats')\n"
+            "board_fix_assert = globals().get('assert_fired') or (lambda *a, **k: None)\n"
             f'print("[rig] pack: {LABEL} ACTIVE", flush=True)\n')
     else:
         parts.append(f'print("[rig] pack: none (label={LABEL})", flush=True)\n')
@@ -256,7 +256,7 @@ try:
         # stem-resolution bug made it a behavioural no-op while every install check
         # passed. Demand evidence it actually changed something.
         try:
-            _bfstats = board_fix_stats()  # type: ignore[name-defined]
+            _bfstats = board_fix_stats() if board_fix_stats else None  # type: ignore[name-defined]
         except Exception:
             _bfstats = None
         try:

@@ -42,7 +42,8 @@ _MARK = "_depth_pack"
 
 RESET_GUIDE = (
     "RESET restarts the CURRENT level only (never the whole game) and costs 1 action. "
-    "Use it deliberately when the level has reached an unwinnable or badly damaged "
+    "It appears in your valid-actions list only when a fresh attempt is plausibly "
+    "worthwhile. Use it when the level has reached an unwinnable or badly damaged "
     "state - a fresh attempt with your current knowledge usually beats grinding a "
     "broken position. Do not use it casually: your action count carries across resets."
 )
@@ -74,17 +75,22 @@ def patch_knowledge_lifecycle() -> bool:
             # state and executing it against the reset board is exactly the stale-
             # plan pathology the eviction literature warns about. (Fable amendment.)
             self._summarized_knowledge["current_plan"] = ""
+            self._summarized_knowledge["recent_findings"] = ""
             return
         if summary.get("level_transition") or summary.get("run_complete"):
             # D1b: promote before the wipe. Append, never overwrite - the model may
             # one day write the field itself.
             k = self._summarized_knowledge
             carry = []
+            lvl = summary.get("level") or "?"
             wm, am = k.get("world_model", ""), k.get("action_model", "")
+            # Cap each carry: uncapped, 8 levels of ~700-char carries reach ~5-12k
+            # chars rendered into EVERY late-game prompt against a 32k window —
+            # displacing history exactly when the agent is deep (judge, defect 5).
             if wm:
-                carry.append(f"[carried world model] {wm}")
+                carry.append(f"[carried world model, L{lvl}] {wm[:600]}")
             if am:
-                carry.append(f"[carried action model] {am}")
+                carry.append(f"[carried action model, L{lvl}] {am[:600]}")
             if carry:
                 prior = k.get("cross_level_notes", "")
                 joined = " | ".join(carry)
@@ -125,9 +131,19 @@ def patch_reset_advertised() -> bool:
                 # grinding a damaged position.
                 try:
                     run = game.game_run
+                    hist = list(getattr(run, "history", []) or [])
+                    # actions since the last RESET (or level start), so the gate
+                    # re-arms after every reset instead of latching on for the
+                    # rest of the level (judge, defect 3): a fresh board is the
+                    # one moment resetting is pure waste.
+                    since = 0
+                    for h in reversed(hist):
+                        if str(getattr(h, "action", getattr(h, "name", h))).upper().startswith("RESET"):
+                            break
+                        since += 1
                     lvl = int(run.levels_completed)
                     apl = list(run.actions_per_level or [])
-                    cur = apl[lvl] if lvl < len(apl) else 0
+                    cur = min(since, apl[lvl] if lvl < len(apl) else since)
                     if cur < RESET_MIN_ACTIONS:
                         continue
                 except Exception:
@@ -158,8 +174,25 @@ def patch_guidance() -> bool:
     return True
 
 
+def patch_action7_mapping() -> bool:
+    """D1d prerequisite. duck-base's action_names maps ACTION1-6+RESET only, so every
+    ACTION7 emission dies at _normalize_actions AND kills its whole batch. Guidance
+    that recommends undo without this mapping is a guaranteed wasted turn per use
+    (judge, defect 1). Mirrors duck_patched.patch_action7."""
+    from inference.agent import action_names as an
+
+    if an.ENGINE_TO_MODEL_ACTION.get("ACTION7") == "ACTION7":
+        return True
+    an.ENGINE_TO_MODEL_ACTION["ACTION7"] = "ACTION7"
+    rev = getattr(an, "MODEL_TO_ENGINE_ACTION", None)
+    if isinstance(rev, dict):
+        rev["ACTION7"] = "ACTION7"
+    return an.to_engine_action("ACTION7") == "ACTION7"
+
+
 def apply_all() -> dict:
     return {
+        "action7_mapping": patch_action7_mapping(),
         "knowledge_lifecycle": patch_knowledge_lifecycle(),
         "reset_advertised": patch_reset_advertised(),
         "guidance": patch_guidance(),
@@ -186,12 +219,16 @@ def verify() -> None:
     ta.ToolAgent._update_summarized_knowledge_from_step_summary(a)
     assert a._summarized_knowledge["world_model"] == "", "transition did not wipe"
     assert "walls block" in a._summarized_knowledge["cross_level_notes"], "carry did not happen"
+    assert "[carried world model, L" in a._summarized_knowledge["cross_level_notes"], "carry untagged"
     assert "A1=up" in a._summarized_knowledge["cross_level_notes"], "action model not carried"
 
     # D1c: RESET hidden early in a level, advertised once stuck.
+    class _H:
+        def __init__(self, a): self.action = a
     class _Run:
         levels_completed = 0
         actions_per_level = [5]
+        history = [_H("ACTION1")] * 5
     class _S:
         class current_state:
             available_actions = [0, 1, 6]
@@ -199,13 +236,22 @@ def verify() -> None:
     early = sv._engine_action_names(_S())
     assert "RESET" not in early, f"RESET advertised too early: {early}"
     _S.game_run.actions_per_level = [45]
+    _S.game_run.history = [_H("ACTION1")] * 45
     late = sv._engine_action_names(_S())
     assert "RESET" in late, f"RESET missing when stuck: {late}"
+    # gate re-arms after a reset: 40 actions then RESET then 5 -> hidden again
+    _S.game_run.history = [_H("ACTION1")] * 40 + [_H("RESET")] + [_H("ACTION1")] * 5
+    rearmed = sv._engine_action_names(_S())
+    assert "RESET" not in rearmed, f"gate failed to re-arm after reset: {rearmed}"
     class _S2:                      # no game_run at all -> stay hidden, not crash
         class current_state:
             available_actions = [0, 1]
     none_case = sv._engine_action_names(_S2())
     assert "RESET" not in none_case, "RESET advertised with unpriceable state"
+
+    # D1d prerequisite: ACTION7 must round-trip or guidance is a wasted-turn trap.
+    from inference.agent import action_names as an
+    assert an.to_engine_action("ACTION7") == "ACTION7", "ACTION7 mapping missing"
 
     # D1d: guidance present exactly once.
     p = ta._build_system_prompt(tool_output_tokens=1024)
