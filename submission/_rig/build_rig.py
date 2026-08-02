@@ -104,6 +104,7 @@ _all_repeats = []
 
 def _dump(extra=None):
     _o = {{"label": "{LABEL}", "pack": "{PACK}", "per_game_budget": {BUDGET},
+          "config": globals().get("_cfg"), "clone_map": globals().get("_map"),
           "stage": _stage, "elapsed_s": round(time.time() - _t0, 1),
           "error": _err, "n_games": len(_rows), "rows": _rows}}
     if extra:
@@ -119,6 +120,21 @@ try:
     # to list the 25 official ids. That package is NOT in the shipped bundle and not in
     # the Kaggle image — it is what killed the first rig run. Build the same thing from
     # the offline arcade instead, which the competition dataset already provides.
+    # Proof of what actually ran. If sampling or context drifted, an arm comparison is
+    # meaningless — record it rather than trusting the build.
+    _stage = "config_snapshot"
+    from inference.agent import tool_agent as _ta_cfg
+    _cfg = {{
+        "temperature": float(_ta_cfg._LOCAL_ANALYZER_TEMPERATURE),
+        "top_k": int(_ta_cfg._LOCAL_ANALYZER_TOP_K),
+        "top_p": float(_ta_cfg._LOCAL_ANALYZER_TOP_P),
+        "seed": int(_ta_cfg._LOCAL_ANALYZER_SEED),
+        "context_window": int(_ta_cfg._LOCAL_ANALYZER_CONTEXT_WINDOW),
+        "estimator_chars_per_token": round(
+            len(__import__("json").dumps({{"a": "x" * 300}})) / _ta_cfg._estimate_tokens({{"a": "x" * 300}}), 2),
+    }}
+    print(f"[rig] config {{_cfg}}", flush=True)
+
     _stage = "official_ids"
     import arc_agi, taaf.game_api, taaf.competition_arcade as _ca, taaf.benchmark
     _env_dir = os.environ.get("ARC_ENVIRONMENTS_DIR", "/kaggle/input/arc-prize-2026-arc-agi-3/environment_files")
@@ -158,6 +174,23 @@ try:
         if len(_clones) != {NGAMES}:
             raise RuntimeError(f"expected {NGAMES} clones, got {{len(_clones)}}")
 
+        # AUTHORITATIVE clone->source mapping, read from the private tag the cloner
+        # writes, and cross-checked against the modulo reconstruction. Getting this
+        # join wrong would silently score every game against the wrong baselines.
+        _map = {{}}
+        for _ei in _srv._arcade.available_environments:
+            _src = None
+            for _t in (getattr(_ei, "private_tags", None) or []):
+                if str(_t).startswith("taaf_source_game:"):
+                    _src = str(_t).split(":", 1)[1]
+            _map[_ei.game_id] = _src
+        _recon = {{f"k{{i:03d}}": _official[i % len(_official)] for i in range(len(_clones))}}
+        _mismatch = {{k: (v, _recon.get(k)) for k, v in _map.items() if v != _recon.get(k)}}
+        if _mismatch:
+            raise RuntimeError(f"clone->source mapping disagrees with reconstruction: {{_mismatch}}")
+        if any(v is None for v in _map.values()):
+            raise RuntimeError(f"clone->source mapping incomplete: {{_map}}")
+
         _stage = f"build_benchmark[{{_rep}}]"
         _games = [taaf.game_api.GameAPI(env_name=_g2, arcade_spec=_spec) for _g2 in _clones]
         _rig = taaf.benchmark.Benchmark(label=f"rig_{LABEL}_{{_rep}}", games=_games,
@@ -178,13 +211,27 @@ try:
             # base_actions_per_level is None, and the competition arcade hides baselines
             # exactly as a real submission does. Record the RAW COMPONENTS and score
             # offline against environment_files/*/metadata.json, which we hold locally.
-            _rrows.append({{"game_id": getattr(_gr, "game_id", None),
-                           "score": getattr(_gr, "final_score", None),
-                           "levels_completed": getattr(_gr, "levels_completed", None),
-                           "levels_total": getattr(_gr, "number_of_levels", None),
-                           "actions_per_level": list(getattr(_gr, "actions_per_level", []) or []),
-                           "base_actions_per_level": getattr(_gr, "base_actions_per_level", None),
-                           "actions": len(getattr(_gr, "history", []) or [])}})
+            _cid = getattr(_gr, "game_id", None)
+            _apl = list(getattr(_gr, "actions_per_level", []) or [])
+            _hist = len(getattr(_gr, "history", []) or [])
+            _rrows.append({{
+                "clone_id": _cid,
+                "source_game": _map.get(_cid),
+                "levels_completed": getattr(_gr, "levels_completed", None),
+                "levels_total": getattr(_gr, "number_of_levels", None),
+                "actions_per_level": _apl,
+                "actions_total": _hist,
+                # Invariant the harness documents: sum(actions_per_level)==len(history).
+                # Logged rather than assumed so a violation is visible in the data.
+                "apl_sum_matches_history": (sum(_apl) == _hist),
+                "state": str(getattr(_gr, "state", None)),
+                "wallclock_s": getattr(_gr, "final_wallclock_seconds", None),
+                "gen_tokens": getattr(_gr, "final_generated_tokens", None),
+                # Expected None in competition mode (baselines hidden). Logged to PROVE
+                # that is why final_score is 0.0, rather than inferring it.
+                "base_actions_per_level": getattr(_gr, "base_actions_per_level", None),
+                "harness_final_score": getattr(_gr, "final_score", None),
+            }})
         _all_repeats.append(_rrows)
         _rows = list(_rrows)   # copy — sharing the object let the post-loop collector
                                # append into _all_repeats[-1] and report 56 games, not 28
