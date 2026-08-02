@@ -47,9 +47,10 @@ RESET_GUIDE = (
     "broken position. Do not use it casually: your action count carries across resets."
 )
 UNDO_GUIDE = (
-    "Where ACTION7 is listed it is UNDO: it rolls back exactly one action. That makes "
-    "cautious probing cheap - try an action, observe, undo if it hurt. Prefer one "
-    "probe+undo over repeating an action whose effect you do not understand."
+    "Where ACTION7 is listed it is UNDO: it rolls back exactly one action. UNDO "
+    "itself costs 1 scored action (a probe+undo pair costs 2), which is still far "
+    "cheaper than restarting a level. Use it to cheaply test an uncertain action - "
+    "act, observe, undo if it hurt - not as a routine move."
 )
 
 
@@ -68,7 +69,11 @@ def patch_knowledge_lifecycle() -> bool:
         if summary.get("game_over") and not (
             summary.get("level_transition") or summary.get("run_complete")
         ):
-            # D1a: death auto-resets the SAME level; the model is still valid.
+            # D1a: death auto-resets the SAME level; world/goal/action models are
+            # still valid. current_plan is NOT: it references the pre-death board
+            # state and executing it against the reset board is exactly the stale-
+            # plan pathology the eviction literature warns about. (Fable amendment.)
+            self._summarized_knowledge["current_plan"] = ""
             return
         if summary.get("level_transition") or summary.get("run_complete"):
             # D1b: promote before the wipe. Append, never overwrite - the model may
@@ -101,6 +106,8 @@ def patch_reset_advertised() -> bool:
     if getattr(original, _MARK, False):
         return True
 
+    RESET_MIN_ACTIONS = 30   # never advertise RESET early in a level
+
     def _engine_action_names(game):
         names = []
         for action_id in game.current_state.available_actions:
@@ -108,6 +115,23 @@ def patch_reset_advertised() -> bool:
                 name = sv.arcengine.GameAction.from_id(int(action_id)).name
             except Exception:
                 continue
+            if name == "RESET":
+                # Rate-limited advertisement (Fable amendment): the harness already
+                # auto-resets on death, and a perseverating model with an always-
+                # legal escape hatch risks reset-spam livelock — each reset costs a
+                # scored action AND wipes within-level progress. Advertise RESET
+                # only once the current level has consumed >= RESET_MIN_ACTIONS,
+                # i.e. when "restart with current knowledge" plausibly beats
+                # grinding a damaged position.
+                try:
+                    run = game.game_run
+                    lvl = int(run.levels_completed)
+                    apl = list(run.actions_per_level or [])
+                    cur = apl[lvl] if lvl < len(apl) else 0
+                    if cur < RESET_MIN_ACTIONS:
+                        continue
+                except Exception:
+                    continue          # cannot price it -> keep it hidden
             if name not in names:
                 names.append(name)
         return names
@@ -151,23 +175,37 @@ def verify() -> None:
     class _A:
         _summarized_knowledge = {"world_model": "walls block", "action_model": "A1=up",
                                  "cross_level_notes": "", "goal_model": "",
-                                 "recent_findings": "", "open_questions": "", "current_plan": ""}
+                                 "recent_findings": "", "open_questions": "",
+                                 "current_plan": "walk to (3,4)"}
         _last_step_summary = {"game_over": True}
     a = _A()
     ta.ToolAgent._update_summarized_knowledge_from_step_summary(a)
     assert a._summarized_knowledge["world_model"] == "walls block", "death wiped the model"
+    assert a._summarized_knowledge["current_plan"] == "", "stale pre-death plan survived"
     a._last_step_summary = {"level_transition": True}
     ta.ToolAgent._update_summarized_knowledge_from_step_summary(a)
     assert a._summarized_knowledge["world_model"] == "", "transition did not wipe"
     assert "walls block" in a._summarized_knowledge["cross_level_notes"], "carry did not happen"
     assert "A1=up" in a._summarized_knowledge["cross_level_notes"], "action model not carried"
 
-    # D1c: RESET must survive the name filter.
+    # D1c: RESET hidden early in a level, advertised once stuck.
+    class _Run:
+        levels_completed = 0
+        actions_per_level = [5]
     class _S:
         class current_state:
             available_actions = [0, 1, 6]
-    names = sv._engine_action_names(_S())
-    assert "RESET" in names, f"RESET still stripped: {names}"
+        game_run = _Run()
+    early = sv._engine_action_names(_S())
+    assert "RESET" not in early, f"RESET advertised too early: {early}"
+    _S.game_run.actions_per_level = [45]
+    late = sv._engine_action_names(_S())
+    assert "RESET" in late, f"RESET missing when stuck: {late}"
+    class _S2:                      # no game_run at all -> stay hidden, not crash
+        class current_state:
+            available_actions = [0, 1]
+    none_case = sv._engine_action_names(_S2())
+    assert "RESET" not in none_case, "RESET advertised with unpriceable state"
 
     # D1d: guidance present exactly once.
     p = ta._build_system_prompt(tool_output_tokens=1024)
