@@ -174,13 +174,20 @@ try:
         _stage = f"collect[{{_rep}}]"
         _rrows = []
         for _gr in (getattr(_rig, "game_runs", None) or []):
+            # final_score is 0.0 BY DESIGN here: _compute_final_score returns 0.0 when
+            # base_actions_per_level is None, and the competition arcade hides baselines
+            # exactly as a real submission does. Record the RAW COMPONENTS and score
+            # offline against environment_files/*/metadata.json, which we hold locally.
             _rrows.append({{"game_id": getattr(_gr, "game_id", None),
                            "score": getattr(_gr, "final_score", None),
                            "levels_completed": getattr(_gr, "levels_completed", None),
                            "levels_total": getattr(_gr, "number_of_levels", None),
+                           "actions_per_level": list(getattr(_gr, "actions_per_level", []) or []),
+                           "base_actions_per_level": getattr(_gr, "base_actions_per_level", None),
                            "actions": len(getattr(_gr, "history", []) or [])}})
         _all_repeats.append(_rrows)
-        _rows = _rrows
+        _rows = list(_rrows)   # copy — sharing the object let the post-loop collector
+                               # append into _all_repeats[-1] and report 56 games, not 28
         _sc = [r["score"] for r in _rrows if isinstance(r.get("score"), (int, float))]
         print(f"[rig] repeat {{_rep}} done: n={{len(_sc)}} "
               f"mean={{(sum(_sc)/len(_sc)) if _sc else float('nan'):.4f}}", flush=True)
