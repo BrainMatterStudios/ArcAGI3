@@ -1,0 +1,310 @@
+{
+ "card_id": "978d83af-3a09-4a8c-afe3-7689009c999e",
+ "results": [
+  {
+   "assert": "open scorecard",
+   "ok": true,
+   "detail": {
+    "status": 200,
+    "card_id": "978d83af-3a09-4a8c-afe3-7689009c999e"
+   }
+  },
+  {
+   "assert": "initial RESET starts game",
+   "ok": true,
+   "detail": {
+    "status": 200,
+    "state": "NOT_FINISHED",
+    "levels": 0
+   }
+  },
+  {
+   "assert": "200 wasted clicks in level 8, no level progress",
+   "ok": true,
+   "detail": {
+    "n_waste": 200,
+    "level_advances": 0,
+    "level_during_waste": 7
+   }
+  },
+  {
+   "assert": "play 1 reaches WIN (sloppy, 142+200 actions)",
+   "ok": true,
+   "detail": {
+    "state": "WIN",
+    "levels": 8
+   }
+  },
+  {
+   "assert": "mid-run GET scorecard blocked (competition mode)",
+   "ok": true,
+   "detail": {
+    "status": 403,
+    "out": {
+     "error": "SERVER_ERROR",
+     "message": "cannot get scorecard that is in competition mode"
+    }
+   }
+  },
+  {
+   "assert": "RESET at WIN accepted",
+   "ok": true,
+   "detail": {
+    "status": 200,
+    "state": "NOT_FINISHED",
+    "levels": 0
+   }
+  },
+  {
+   "assert": "second play opened with actions=0",
+   "ok": true,
+   "detail": {
+    "total_plays": 2,
+    "actions": [
+     342,
+     0
+    ],
+    "resets": [
+     0,
+     0
+    ],
+    "states": [
+     "WIN",
+     "NOT_FINISHED"
+    ],
+    "levels_completed": [
+     8,
+     0
+    ]
+   }
+  },
+  {
+   "assert": "post-reset frame is a fresh game",
+   "ok": true,
+   "detail": {
+    "state": "NOT_FINISHED",
+    "levels": 0
+   }
+  },
+  {
+   "assert": "play 2 reaches WIN (clean, 142 actions)",
+   "ok": true,
+   "detail": {
+    "state": "WIN",
+    "levels": 8
+   }
+  },
+  {
+   "assert": "play accounting after clean replay",
+   "ok": true,
+   "detail": {
+    "total_plays": 2,
+    "actions": [
+     342,
+     142
+    ],
+    "resets": [
+     0,
+     0
+    ],
+    "states": [
+     "WIN",
+     "WIN"
+    ],
+    "levels_completed": [
+     8,
+     8
+    ]
+   }
+  },
+  {
+   "assert": "close scorecard",
+   "ok": true,
+   "detail": {
+    "status": 200
+   }
+  },
+  {
+   "assert": "closed scorecard shows 2 runs",
+   "ok": true,
+   "detail": [
+    {
+     "score": 87.20804938555884,
+     "actions": 342,
+     "state": "WIN",
+     "levels_completed": 8
+    },
+    {
+     "score": 100.0,
+     "actions": 142,
+     "state": "WIN",
+     "levels_completed": 8
+    }
+   ]
+  },
+  {
+   "assert": "game score == max over plays",
+   "ok": true,
+   "detail": {
+    "game_score": 100.0,
+    "run_scores": [
+     87.20804938555884,
+     100.0
+    ]
+   }
+  },
+  {
+   "assert": "clean replay strictly beats sloppy play",
+   "ok": true,
+   "detail": {
+    "sloppy": 87.20804938555884,
+    "clean": 100.0
+   }
+  }
+ ],
+ "closed_sb26": {
+  "actions": 484,
+  "completed": true,
+  "id": "sb26-7fbdac44",
+  "level_count": 8,
+  "levels_completed": 8,
+  "resets": 0,
+  "runs": [
+   {
+    "actions": 342,
+    "completed": true,
+    "guid": "4853ff02-156b-41f1-8d82-54b1978f971c",
+    "level_actions": [
+     9,
+     33,
+     15,
+     15,
+     17,
+     19,
+     17,
+     217
+    ],
+    "level_baseline_actions": [
+     18,
+     28,
+     18,
+     19,
+     31,
+     23,
+     58,
+     18
+    ],
+    "level_scores": [
+     115.0,
+     71.99265381083563,
+     115.0,
+     115.0,
+     115.0,
+     115.0,
+     115.0,
+     0.6880587823058464
+    ],
+    "levels_completed": 8,
+    "resets": 0,
+    "score": 87.20804938555884,
+    "state": "WIN"
+   },
+   {
+    "actions": 142,
+    "completed": true,
+    "guid": "4853ff02-156b-41f1-8d82-54b1978f971c",
+    "level_actions": [
+     9,
+     33,
+     15,
+     15,
+     17,
+     19,
+     17,
+     17
+    ],
+    "level_baseline_actions": [
+     18,
+     28,
+     18,
+     19,
+     31,
+     23,
+     58,
+     18
+    ],
+    "level_scores": [
+     115.0,
+     71.99265381083563,
+     115.0,
+     115.0,
+     115.0,
+     115.0,
+     115.0,
+     112.11072664359862
+    ],
+    "levels_completed": 8,
+    "resets": 0,
+    "score": 100.0,
+    "state": "WIN"
+   }
+  ],
+  "score": 100.0
+ },
+ "closed_score": 100.0,
+ "snapshots": {
+  "after_play1": {
+   "total_plays": 1,
+   "actions": [
+    342
+   ],
+   "resets": [
+    0
+   ],
+   "states": [
+    "WIN"
+   ],
+   "levels_completed": [
+    8
+   ]
+  },
+  "after_reset_at_win": {
+   "total_plays": 2,
+   "actions": [
+    342,
+    0
+   ],
+   "resets": [
+    0,
+    0
+   ],
+   "states": [
+    "WIN",
+    "NOT_FINISHED"
+   ],
+   "levels_completed": [
+    8,
+    0
+   ]
+  },
+  "after_play2": {
+   "total_plays": 2,
+   "actions": [
+    342,
+    142
+   ],
+   "resets": [
+    0,
+    0
+   ],
+   "states": [
+    "WIN",
+    "WIN"
+   ],
+   "levels_completed": [
+    8,
+    8
+   ]
+  }
+ }
+}

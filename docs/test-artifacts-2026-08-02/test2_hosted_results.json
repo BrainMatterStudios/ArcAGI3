@@ -1,0 +1,298 @@
+{
+ "card_id": "b9946ee3-b06d-4a4e-86c7-a449344f2ba2",
+ "base": "https://three.arcprize.org",
+ "results": [
+  {
+   "assert": "hosted /api/games lists sb26-7fbdac44",
+   "ok": true,
+   "detail": {
+    "status": 200,
+    "n_games": 25
+   }
+  },
+  {
+   "assert": "open competition-mode scorecard",
+   "ok": true,
+   "detail": {
+    "status": 200,
+    "card_id": "b9946ee3-b06d-4a4e-86c7-a449344f2ba2"
+   }
+  },
+  {
+   "assert": "initial RESET starts game",
+   "ok": true,
+   "detail": {
+    "status": 200,
+    "state": "NOT_FINISHED",
+    "levels": 0
+   }
+  },
+  {
+   "assert": "mid-run GET scorecard status (parity: local returns 403)",
+   "ok": true,
+   "detail": {
+    "status": 403,
+    "body": {
+     "error": "SERVER_ERROR",
+     "message": "cannot get scorecard that is in competition mode"
+    }
+   }
+  },
+  {
+   "assert": "waste clicks caused no level progress",
+   "ok": true,
+   "detail": {
+    "levels": 7,
+    "expected": 7
+   }
+  },
+  {
+   "assert": "play 1 reaches WIN on hosted API",
+   "ok": true,
+   "detail": {
+    "state": "WIN",
+    "levels": 8
+   }
+  },
+  {
+   "assert": "RESET at WIN accepted by hosted API",
+   "ok": true,
+   "detail": {
+    "status": 200,
+    "state": "NOT_FINISHED",
+    "levels": 0,
+    "body_keys": [
+     "action_input",
+     "available_actions",
+     "frame",
+     "full_reset",
+     "game_id",
+     "guid",
+     "levels_completed",
+     "state",
+     "win_levels"
+    ]
+   }
+  },
+  {
+   "assert": "post-reset frame is a fresh game (full reset, not level reset)",
+   "ok": true,
+   "detail": {
+    "state": "NOT_FINISHED",
+    "levels": 0
+   }
+  },
+  {
+   "assert": "mid-run GET scorecard after WIN-reset (informational)",
+   "ok": true,
+   "detail": {
+    "status": 403,
+    "body": {
+     "error": "SERVER_ERROR",
+     "message": "cannot get scorecard that is in competition mode"
+    }
+   }
+  },
+  {
+   "assert": "play 2 (clean replay) reaches WIN",
+   "ok": true,
+   "detail": {
+    "state": "WIN",
+    "levels": 8
+   }
+  },
+  {
+   "assert": "close scorecard",
+   "ok": true,
+   "detail": {
+    "status": 200
+   }
+  },
+  {
+   "assert": "closed scorecard shows 2 runs for sb26",
+   "ok": true,
+   "detail": [
+    {
+     "score": 88.26951747947419,
+     "actions": 202,
+     "state": "WIN",
+     "levels_completed": 8,
+     "level_actions": [
+      9,
+      33,
+      15,
+      15,
+      17,
+      19,
+      17,
+      77
+     ]
+    },
+    {
+     "score": 100.0,
+     "actions": 142,
+     "state": "WIN",
+     "levels_completed": 8,
+     "level_actions": [
+      9,
+      33,
+      15,
+      15,
+      17,
+      19,
+      17,
+      17
+     ]
+    }
+   ]
+  },
+  {
+   "assert": "second play opened at actions=0 (run 2 actions == 142, RESET un-billed)",
+   "ok": true,
+   "detail": [
+    {
+     "score": 88.26951747947419,
+     "actions": 202,
+     "state": "WIN",
+     "levels_completed": 8,
+     "level_actions": [
+      9,
+      33,
+      15,
+      15,
+      17,
+      19,
+      17,
+      77
+     ]
+    },
+    {
+     "score": 100.0,
+     "actions": 142,
+     "state": "WIN",
+     "levels_completed": 8,
+     "level_actions": [
+      9,
+      33,
+      15,
+      15,
+      17,
+      19,
+      17,
+      17
+     ]
+    }
+   ]
+  },
+  {
+   "assert": "game score == max over plays",
+   "ok": true,
+   "detail": {
+    "game_score": 100.0,
+    "run_scores": [
+     88.26951747947419,
+     100.0
+    ]
+   }
+  },
+  {
+   "assert": "clean replay strictly beats sloppy play",
+   "ok": true,
+   "detail": {
+    "sloppy": 88.26951747947419,
+    "clean": 100.0
+   }
+  }
+ ],
+ "midrun_get_status_before_win": 403,
+ "closed_sb26": {
+  "actions": 344,
+  "completed": true,
+  "id": "sb26-7fbdac44",
+  "level_count": 8,
+  "levels_completed": 8,
+  "resets": 0,
+  "runs": [
+   {
+    "actions": 202,
+    "completed": true,
+    "guid": "3ce91547-8880-42f3-8470-17a632433cf2",
+    "level_actions": [
+     9,
+     33,
+     15,
+     15,
+     17,
+     19,
+     17,
+     77
+    ],
+    "level_baseline_actions": [
+     18,
+     28,
+     18,
+     19,
+     31,
+     23,
+     58,
+     18
+    ],
+    "level_scores": [
+     115.0,
+     71.99265381083563,
+     115.0,
+     115.0,
+     115.0,
+     115.0,
+     115.0,
+     5.464665204924945
+    ],
+    "levels_completed": 8,
+    "resets": 0,
+    "score": 88.26951747947419,
+    "state": "WIN"
+   },
+   {
+    "actions": 142,
+    "completed": true,
+    "guid": "3ce91547-8880-42f3-8470-17a632433cf2",
+    "level_actions": [
+     9,
+     33,
+     15,
+     15,
+     17,
+     19,
+     17,
+     17
+    ],
+    "level_baseline_actions": [
+     18,
+     28,
+     18,
+     19,
+     31,
+     23,
+     58,
+     18
+    ],
+    "level_scores": [
+     115.0,
+     71.99265381083563,
+     115.0,
+     115.0,
+     115.0,
+     115.0,
+     115.0,
+     112.11072664359862
+    ],
+    "levels_completed": 8,
+    "resets": 0,
+    "score": 100.0,
+    "state": "WIN"
+   }
+  ],
+  "score": 100.0
+ },
+ "closed_score": 4.0
+}
