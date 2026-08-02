@@ -517,3 +517,39 @@ def test_sandbox_wrapper_injects_live_mask():
         assert out["result"] is True
     finally:
         _HUD_TLS.mask_cells = []
+
+
+def test_sandbox_patch_declines_on_scored_bundle_shape():
+    """patch9 must SKIP (not break) a bundle whose bootstrap lacks the helpers.
+
+    The scored bundle (taaf_scored_ref) ships a _SANDBOX_BOOTSTRAP with no
+    state_hash/diff_frames; injecting the HUD aliases there raised NameError in
+    every sandbox process and the duck executed zero actions.
+    """
+    from inference.agent import python_tool_sandbox as sandbox_mod
+
+    original = sandbox_mod._SANDBOX_BOOTSTRAP
+    stripped_run = sandbox_mod.run_sandboxed_python
+    try:
+        scored_like = (
+            "import json\n"
+            + duck_patches._HUD_REFRESH_ANCHOR
+            + "\ndef main():\n    pass\n"
+        )
+        assert "def state_hash" not in scored_like
+        sandbox_mod._SANDBOX_BOOTSTRAP = scored_like
+        if getattr(sandbox_mod.run_sandboxed_python, "_hud_patched", False):
+            sandbox_mod.run_sandboxed_python = (
+                sandbox_mod.run_sandboxed_python.__wrapped__
+                if hasattr(sandbox_mod.run_sandboxed_python, "__wrapped__")
+                else sandbox_mod.run_sandboxed_python
+            )
+        msg = duck_patches.patch_hud_sandbox()
+        assert "SKIP (bundle sandbox lacks state_hash/diff_frames)" in msg, msg
+        assert sandbox_mod._SANDBOX_BOOTSTRAP == scored_like, (
+            "bootstrap must be left untouched when declining"
+        )
+        assert "_hud_raw_state_hash" not in sandbox_mod._SANDBOX_BOOTSTRAP
+    finally:
+        sandbox_mod._SANDBOX_BOOTSTRAP = original
+        sandbox_mod.run_sandboxed_python = stripped_run

@@ -922,6 +922,11 @@ def patch_hud_sandbox() -> str:
     bootstrap = getattr(sandbox_mod, "_SANDBOX_BOOTSTRAP", None)
     if not isinstance(bootstrap, str):
         return "patch9 hud-sandbox: FAIL (_SANDBOX_BOOTSTRAP not found)"
+    if "def state_hash" not in bootstrap or "def diff_frames" not in bootstrap:
+        # The scored bundle's bootstrap ships neither helper (only the drifted
+        # _adopt tree has them); injecting the aliases there raises NameError in
+        # every sandbox process and the duck executes zero actions.
+        return "patch9 hud-sandbox: SKIP (bundle sandbox lacks state_hash/diff_frames)"
     if "HUD_MASK_CELLS" not in bootstrap:
         if _HUD_REFRESH_ANCHOR not in bootstrap or _HUD_MAIN_ANCHOR not in bootstrap:
             return "patch9 hud-sandbox: FAIL (bootstrap anchors moved upstream)"
