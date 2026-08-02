@@ -394,6 +394,176 @@ def patch_tool_agent_analyze() -> str:
     return "patch6 tool_agent_analyze: OK"
 
 
+# --- PATCH 7: run watchdog -------------------------------------------------------
+#
+# Detects stalled games in the harness loop and stops them so one wedged game
+# cannot silently eat the submission's wall-clock budget (the host reported ~1/3
+# of failed submissions "stuck silently"). Three mechanisms, all cooperative:
+#
+#   1. STALL DETECTION — progress is (scored action count, levels completed). If
+#      neither moves for TAAF_WATCHDOG_STALL_S seconds (default 900) the game is
+#      stalled: the analyzer is wedged in a retry/parse loop, the endpoint died,
+#      or the model deliberates forever without acting.
+#   2. RESET-AND-CONTINUE — the first TAAF_WATCHDOG_MAX_RESETS stalls (default 1)
+#      are answered with one engine RESET (level reset under ONLY_RESET_LEVELS;
+#      costs 1 scored action) and a fresh timer, which un-wedges games stuck in a
+#      degenerate board state. The RESET is only issued from the session's own
+#      worker thread — `should_stop` is also polled by analyzer-side threads, and
+#      those must never touch the engine.
+#   3. KILL + WALL CAP — further stalls stop the game cleanly (`should_stop`
+#      returns True, the play loop exits, `finish_game` banks whatever levels are
+#      already completed — nothing earned is lost). Independently, a per-game
+#      wall-clock cap (TAAF_WATCHDOG_WALL_CAP_S, default 7200; 0 disables) stops
+#      any game the solver did not already bound via `max_runtime_s_per_game`.
+#
+# TAAF_WATCHDOG=0 disables the whole patch at call time.
+
+
+def _watchdog_env_float(name: str, default: float) -> float:
+    import os
+
+    try:
+        return float(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _watchdog_enabled() -> bool:
+    import os
+
+    return os.environ.get("TAAF_WATCHDOG", "1").strip() not in {"0", "false", "False"}
+
+
+def _watchdog_state(session: Any) -> dict[str, Any]:
+    import time
+
+    wd = getattr(session, "_watchdog_state", None)
+    if wd is None:
+        wd = {
+            "stall_s": max(1.0, _watchdog_env_float("TAAF_WATCHDOG_STALL_S", 900.0)),
+            "wall_cap_s": _watchdog_env_float("TAAF_WATCHDOG_WALL_CAP_S", 7200.0),
+            "max_resets": int(_watchdog_env_float("TAAF_WATCHDOG_MAX_RESETS", 1.0)),
+            "progress": None,
+            "t_progress": time.monotonic(),
+            "resets_done": 0,
+            "in_reset": False,
+            "killed": None,  # None | "stall" | "wall_cap"
+            "thread_id": None,
+        }
+        session._watchdog_state = wd
+    return wd
+
+
+def patch_watchdog() -> str:
+    """Install the stall watchdog on the harness game session."""
+    import threading
+    import time
+
+    from inference.framework import solver
+
+    session_cls = getattr(solver, "_HarnessGameSession", None)
+    if session_cls is None or not hasattr(session_cls, "should_stop"):
+        return "patch7 watchdog: FAIL (_HarnessGameSession.should_stop not found)"
+    if getattr(session_cls.should_stop, "_watchdog_patched", False):
+        return "patch7 watchdog: SKIP (already applied)"
+
+    original_should_stop = session_cls.should_stop
+    original_play = session_cls.play
+
+    def _log(session: Any, message: str) -> None:
+        run = getattr(session.game, "game_run", None)
+        game_id = getattr(run, "game_id", "?") if run is not None else "?"
+        print(f"[watchdog] {game_id}: {message}", flush=True)
+
+    def play(self: Any) -> None:
+        wd = _watchdog_state(self)
+        wd["thread_id"] = threading.get_ident()
+        wd["t_progress"] = time.monotonic()
+        return original_play(self)
+
+    def should_stop(self: Any) -> bool:
+        if original_should_stop(self):
+            return True
+        if not _watchdog_enabled():
+            return False
+        try:
+            wd = _watchdog_state(self)
+            now = time.monotonic()
+
+            run = self.game.game_run
+            levels = int(run.levels_completed) if run is not None else 0
+            progress = (self.action_count, levels)
+            if progress != wd["progress"]:
+                wd["progress"] = progress
+                wd["t_progress"] = now
+
+            # Per-game wall cap, only where the solver has no cap of its own
+            # (`runtime_limit_reached` already fires inside original_should_stop
+            # when max_runtime_s_per_game is set).
+            if (
+                self.solver.max_runtime_s_per_game is None
+                and wd["wall_cap_s"] > 0
+                and (now - self.started_at) >= wd["wall_cap_s"]
+            ):
+                if wd["killed"] is None:
+                    wd["killed"] = "wall_cap"
+                    _log(
+                        self,
+                        f"wall cap {wd['wall_cap_s']:.0f}s reached at "
+                        f"{self.action_count} actions, {levels} levels — stopping game",
+                    )
+                return True
+
+            stalled_for = now - wd["t_progress"]
+            if stalled_for < wd["stall_s"]:
+                return False
+
+            if wd["resets_done"] < wd["max_resets"]:
+                # Recovery: one RESET, only ever from the session's own thread.
+                if threading.get_ident() == wd["thread_id"] and not wd["in_reset"]:
+                    wd["in_reset"] = True
+                    try:
+                        _log(
+                            self,
+                            f"no progress for {stalled_for:.0f}s — issuing recovery RESET "
+                            f"({wd['resets_done'] + 1}/{wd['max_resets']})",
+                        )
+                        self._execute_auto_reset()
+                        wd["resets_done"] += 1
+                        wd["t_progress"] = time.monotonic()
+                        wd["progress"] = None
+                    except Exception as exc:  # noqa: BLE001 - failed recovery -> kill path
+                        _log(self, f"recovery RESET failed ({exc!r}) — will stop instead")
+                        wd["resets_done"] = wd["max_resets"]
+                    finally:
+                        wd["in_reset"] = False
+                    return original_should_stop(self)
+                # Wrong thread: wait for the session thread, but never forever.
+                if stalled_for >= 2 * wd["stall_s"]:
+                    if wd["killed"] is None:
+                        wd["killed"] = "stall"
+                        _log(self, f"stalled {stalled_for:.0f}s (recovery unavailable) — stopping game")
+                    return True
+                return False
+
+            if wd["killed"] is None:
+                wd["killed"] = "stall"
+                _log(
+                    self,
+                    f"stalled {stalled_for:.0f}s after {wd['resets_done']} recovery reset(s) "
+                    f"— stopping game at {self.action_count} actions, {levels} levels",
+                )
+            return True
+        except Exception:  # noqa: BLE001 - the watchdog must never wedge the loop itself
+            return False
+
+    should_stop._watchdog_patched = True  # type: ignore[attr-defined]
+    play._watchdog_play_patched = True  # type: ignore[attr-defined]
+    session_cls.should_stop = should_stop
+    session_cls.play = play
+    return "patch7 watchdog: OK"
+
+
 def apply_all(verbose: bool = True) -> list[str]:
     """Apply every patch. Each is independent; one failing does not block the others."""
     results = []
@@ -405,6 +575,7 @@ def apply_all(verbose: bool = True) -> list[str]:
         patch_dynamic_grid_burner,
         patch_prompts,
         patch_tool_agent_analyze,
+        patch_watchdog,
     ):
         try:
             results.append(fn())
