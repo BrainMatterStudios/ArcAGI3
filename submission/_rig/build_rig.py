@@ -66,25 +66,37 @@ RUN_MARKER = "# Build the live competition game list from the gateway's availabl
 
 
 def hook_cell() -> str:
-    if not PACK:
-        return (
-            "# rig: baseline arm, no pack injected.\n"
-            f'print("[rig] pack: none (label={LABEL})", flush=True)\n'
-        )
-    body = Path(PACK).read_text()
-    return (
-        f"# rig: arm under test, inlined from {PACK}.\n"
-        f"{body}\n"
-        "\n"
-        "_rig_pack = apply_all()\n"
-        "board_fix_stats = stats\n"
-        "assert_fired = assert_fired\n"
-        "for _n, _ok in _rig_pack.items():\n"
-        "    print(f\"[rig] pack {_n}: {'OK' if _ok else 'FAIL'}\", flush=True)\n"
-        "if not all(_rig_pack.values()):\n"
-        '    raise RuntimeError(f"[rig] pack did not apply: {_rig_pack}")\n'
-        f'print("[rig] pack: {LABEL} ACTIVE", flush=True)\n'
-    )
+    """Arm pack (optional) + behavioural probe (ALWAYS, identically in both arms).
+
+    The probe is what makes a GPU run worth its minutes: scoring 28 near-binary games
+    is at the noise floor (17 of 28 flip between identical repeats, measured), while
+    the per-action mechanism has ~1,600 samples per run. It is injected in BOTH arms
+    and observes only, so it cannot become the difference between them.
+    """
+    probe = (Path(__file__).parent / "behav_probe.py").read_text()
+    parts = []
+    if PACK:
+        parts.append(f"# rig: arm under test, inlined from {PACK}.\n{Path(PACK).read_text()}\n")
+        parts.append(
+            "_rig_pack = apply_all()\n"
+            "for _n, _ok in _rig_pack.items():\n"
+            "    print(f\"[rig] pack {_n}: {'OK' if _ok else 'FAIL'}\", flush=True)\n"
+            "if not all(_rig_pack.values()):\n"
+            '    raise RuntimeError(f"[rig] pack did not apply: {_rig_pack}")\n'
+            "board_fix_stats = stats\n"
+            "board_fix_assert = assert_fired\n"
+            f'print("[rig] pack: {LABEL} ACTIVE", flush=True)\n')
+    else:
+        parts.append(f'print("[rig] pack: none (label={LABEL})", flush=True)\n')
+    parts.append("\n# --- behavioural probe: identical in every arm, observes only ---\n")
+    parts.append(probe + "\n")
+    parts.append(
+        "if not install():\n"
+        '    raise RuntimeError("[rig] behavioural probe failed to install")\n'
+        "behav_report = report\n"
+        "behav_assert = assert_observed\n"
+        'print("[rig] behavioural probe ACTIVE", flush=True)\n')
+    return "".join(parts)
 
 
 def run_cell() -> str:
@@ -247,11 +259,19 @@ try:
             _bfstats = board_fix_stats()  # type: ignore[name-defined]
         except Exception:
             _bfstats = None
+        try:
+            _behav = behav_report()  # type: ignore[name-defined]
+            print(f"[rig] behav after repeat {{_rep}}: {{_behav['corpus']}}", flush=True)
+            globals()["_behav_last"] = _behav
+            if _rep == 0:
+                behav_assert()  # type: ignore[name-defined]
+        except Exception as _e:
+            print(f"[rig] behav report unavailable: {{_e!r}}", flush=True)
         if _bfstats is not None:
             print(f"[rig] boardfix stats after repeat {{_rep}}: {{_bfstats}}", flush=True)
             globals()["_bf_stats_last"] = _bfstats
             if _rep == 0:
-                assert_fired()  # type: ignore[name-defined]
+                board_fix_assert()  # type: ignore[name-defined]
         _all_repeats.append(_rrows)
         _rows = list(_rrows)   # copy — sharing the object let the post-loop collector
                                # append into _all_repeats[-1] and report 56 games, not 28
@@ -279,7 +299,8 @@ try:
 except Exception:
     pass
 _dump({{"game_run_attrs": _probe, "repeats": _all_repeats,
-       "boardfix_stats": globals().get("_bf_stats_last")}})
+       "boardfix_stats": globals().get("_bf_stats_last"),
+       "behav": globals().get("_behav_last")}})
 
 # NOTE: harness_final_score is 0.0 by design here (baselines hidden), so progress is
 # reported as levels completed. Real scores are computed offline by score_rig.py.
