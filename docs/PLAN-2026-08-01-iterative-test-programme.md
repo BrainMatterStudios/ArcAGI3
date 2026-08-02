@@ -253,3 +253,37 @@ Additional mechanics confirmed by the competitive lens and worth holding:
 - **Roughly half the sweep's headline claims did not survive checking.** Verify each
   load-bearing claim before building on it. Two of today's refutations were of my own
   conclusions, and one refutation of mine was itself wrong.
+
+---
+
+## REORDERED 2026-08-02 — depth is the entire objective
+
+Two independent judges, working from disjoint samples (10 rig-completed levels; 66
+episode-completed levels), converged: **efficiency headroom is exhausted and 100% of
+remaining score is depth.** Corroborated on the hidden set: 0.36 levels/game x 3.52%
+mean cap = 1.27 = our exact leaderboard score.
+
+DECISIONS:
+- **G0 CANCELLED.** The decision it gates is invariant to its answer: E[best of 90
+  public draws] = 1.41 < rank-16 at 1.50, so farming cannot reach the target even at
+  rho=1. Frees ~16 GPU-h.
+- **Efficiency track KILLED**: E5 geodesic replay, cycle elimination, token diets,
+  boardfix-as-arm (also directionally negative per-turn). Ceiling ~+8% relative
+  against a binding cap.
+- **Exploration REPRICED as nearly free**: 1.28x action slack before any loss; a level
+  completed at 2x baseline still yields 25% of its weight vs 0% for not completing.
+  E4 (opening book) and E7 (ACTION7 probing) move UP.
+- **Extreme-value framing**: one game taken 0->6 = +0.673 > the whole 0.59 gap to the
+  leader. Objective is max P(some game goes deep).
+
+BUILD QUEUE (this file's E-numbers superseded where they conflict):
+- D1 defect pack: game_over world-model wipe (36/44 episodes), RESET un-strip
+  (solver.py:116-117 strips unconditionally; humans rollback-replay 35.8%), ACTION7
+  guidance (mapping fix alone measured inert).
+- D2 HUD-masked stall detector (zero-level vs completer separation: distinct-boards
+  0.672 vs 0.940, dead-reissue 15.6% vs 1.3%) + deep-first allocator. Allocator must
+  be deadline-aware or freed slots refill with depth-0 games.
+- D3 rig: action-denominated per-game budget (max_actions_per_game exists at
+  solver.py:745; wall-clock budgets caused the boardfix confound).
+
+Validation ladder unchanged: offline vs 44 recorded episodes -> one rig sweep -> slot.
