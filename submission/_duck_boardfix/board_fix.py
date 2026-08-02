@@ -49,11 +49,57 @@ HUD_REGIONS: dict[str, tuple] = {
 }
 
 _mask_cache: dict[tuple, np.ndarray | None] = {}
-_stats = {"calls": 0, "raw_changed": 0, "masked_changed": 0, "corrected": 0}
+_stats = {"calls": 0, "raw_changed": 0, "masked_changed": 0, "corrected": 0,
+          "unresolved": 0, "masked_games": set(), "unmasked_games": set()}
 
 
 def _stem(game_id: str) -> str:
     return str(game_id).split("-")[0][:4].lower()
+
+
+_stem_cache: dict[int, str] = {}
+_CLONE_RE = __import__("re").compile(r"^k\d{3}$")
+
+
+def _resolve_stem(game) -> str:
+    """Map a running game to its official stem, and make failure countable.
+
+    THE TRAP THIS EXISTS FOR. Under the competition arcade every game is a CLONE with
+    id 'k000'..'k109'; `env_name` is that clone id, not 'tu93'. A naive lookup finds
+    nothing in HUD_REGIONS, the mask is empty, and `boards_equal` degrades to plain
+    array equality -- the arm becomes byte-identical to baseline and the experiment
+    measures nothing while every install check still passes.
+
+    The clone's `private_tags` (carrying `taaf_source_game:`) are stripped client-side,
+    but `title` survives and equals the stem uppercased -- verified against a live
+    competition arcade, 28/28 clones, zero mismatches.
+
+    Resolution is attempted for EVERY clone id, not only ones whose title happens to be
+    in HUD_REGIONS. Otherwise "this game has no HUD" and "stem resolution is broken"
+    would be indistinguishable -- both yield no mask -- and a total resolution failure
+    would look exactly like a corpus of HUD-free games. `_stats["unresolved"]` counts
+    the difference so `assert_fired` can refuse to report on it.
+    """
+    key = id(game)
+    hit = _stem_cache.get(key)
+    if hit is not None:
+        return hit
+    cand = str(getattr(game, "env_name", "") or getattr(game, "game_id", "") or "")
+    if _CLONE_RE.match(cand):
+        resolved = ""
+        for path in ("env", "_env"):
+            env = getattr(game, path, None)
+            info = getattr(env, "environment_info", None) if env is not None else None
+            title = str(getattr(info, "title", "") or "")
+            if title:
+                resolved = title
+                break
+        if resolved:
+            cand = resolved
+        else:
+            _stats["unresolved"] += 1
+    _stem_cache[key] = cand
+    return cand
 
 
 def hud_mask(game_id: str, shape) -> np.ndarray | None:
@@ -97,10 +143,12 @@ def patch_board_changed() -> bool:
         prev = sv._grid_from_state(self.game.current_state)
         payload = original(self, action, **kwargs)
         try:
-            gid = getattr(self.game, "env_name", None) or getattr(self.game, "game_id", "") or ""
+            gid = _resolve_stem(self.game)
             cur = sv._grid_from_state(self.game.current_state)
             raw = bool(payload.get("board_changed"))
             fixed = not boards_equal(prev, cur, gid)
+            (_stats["masked_games"] if hud_mask(gid, np.asarray(prev).shape) is not None
+             else _stats["unmasked_games"]).add(_stem(gid))
             _stats["calls"] += 1
             _stats["raw_changed"] += raw
             _stats["masked_changed"] += fixed
@@ -120,11 +168,37 @@ def patch_board_changed() -> bool:
 
 def stats() -> dict:
     d = dict(_stats)
+    d["masked_games"] = sorted(d["masked_games"])
+    d["unmasked_games"] = sorted(d["unmasked_games"])
     if d["calls"]:
         d["corrected_frac"] = round(d["corrected"] / d["calls"], 4)
         d["raw_changed_frac"] = round(d["raw_changed"] / d["calls"], 4)
         d["masked_changed_frac"] = round(d["masked_changed"] / d["calls"], 4)
     return d
+
+
+def assert_fired(min_corrections: int = 1) -> None:
+    """Fail loudly if the arm installed but never actually changed anything.
+
+    Checking that the monkeypatch installed proves nothing -- this campaign has already
+    shipped an arm whose toggle was read by no code, and this arm's own stem-resolution
+    bug made it a no-op while every install check passed. The only honest evidence is a
+    non-zero correction count.
+    """
+    st = stats()
+    if st.get("unresolved", 0):
+        raise RuntimeError(
+            f"[boardfix] failed to resolve the official stem for {st['unresolved']} clone "
+            "games — the HUD table cannot be applied and the arm would silently be "
+            "baseline. Refusing to proceed.")
+    if st.get("calls", 0) == 0:
+        raise RuntimeError("[boardfix] patch never ran — no actions were executed through it")
+    if st.get("corrected", 0) < min_corrections:
+        raise RuntimeError(
+            f"[boardfix] patch ran {st['calls']} times and corrected NOTHING ({st}). "
+            "The arm is behaviourally identical to baseline — refusing to report an A/A "
+            "run as an A/B."
+        )
 
 
 def apply_all() -> dict:

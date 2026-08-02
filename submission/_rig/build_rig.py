@@ -77,6 +77,8 @@ def hook_cell() -> str:
         f"{body}\n"
         "\n"
         "_rig_pack = apply_all()\n"
+        "board_fix_stats = stats\n"
+        "assert_fired = assert_fired\n"
         "for _n, _ok in _rig_pack.items():\n"
         "    print(f\"[rig] pack {_n}: {'OK' if _ok else 'FAIL'}\", flush=True)\n"
         "if not all(_rig_pack.values()):\n"
@@ -130,6 +132,12 @@ try:
         "top_p": float(_ta_cfg._LOCAL_ANALYZER_TOP_P),
         "seed": int(_ta_cfg._LOCAL_ANALYZER_SEED),
         "context_window": int(_ta_cfg._LOCAL_ANALYZER_CONTEXT_WINDOW),
+        "concurrency": getattr(bm.solver, "concurrency", None),
+        "per_game_budget": {BUDGET},
+        "n_games": {NGAMES},
+        "n_repeats": {REPEATS},
+        "model": str(getattr(getattr(bm.solver, "analyzer_model", None), "model_id", "")) or None,
+        "bundle_dir": str(BUNDLE_DIR),
         "estimator_chars_per_token": round(
             len(__import__("json").dumps({{"a": "x" * 300}})) / _ta_cfg._estimate_tokens({{"a": "x" * 300}}), 2),
     }}
@@ -232,6 +240,18 @@ try:
                 "base_actions_per_level": getattr(_gr, "base_actions_per_level", None),
                 "harness_final_score": getattr(_gr, "final_score", None),
             }})
+        # EFFECT GATE. Verifying that a patch installed proves nothing — this arm's
+        # stem-resolution bug made it a behavioural no-op while every install check
+        # passed. Demand evidence it actually changed something.
+        try:
+            _bfstats = board_fix_stats()  # type: ignore[name-defined]
+        except Exception:
+            _bfstats = None
+        if _bfstats is not None:
+            print(f"[rig] boardfix stats after repeat {{_rep}}: {{_bfstats}}", flush=True)
+            globals()["_bf_stats_last"] = _bfstats
+            if _rep == 0:
+                assert_fired()  # type: ignore[name-defined]
         _all_repeats.append(_rrows)
         _rows = list(_rrows)   # copy — sharing the object let the post-loop collector
                                # append into _all_repeats[-1] and report 56 games, not 28
@@ -248,20 +268,9 @@ except Exception:
     _err = traceback.format_exc()
     print(f"[rig] FAILED at stage={{_stage}}:\\n{{_err}}", flush=True)
 
-# Collect whatever exists, whether or not the run completed.
-try:
-    for _gr in (getattr(_rig, "game_runs", None) or []):
-        _rows.append({{"game_id": getattr(_gr, "game_id", None),
-                      "score": getattr(_gr, "final_score", None),
-                      "levels_total": getattr(_gr, "number_of_levels", None),
-                      "actions_per_level": getattr(_gr, "actions_per_level", None),
-                      "levels_completed": getattr(_gr, "levels_completed", None),
-                      "actions": len(getattr(_gr, "history", []) or [])}})
-except Exception as _e:
-    _rows.append({{"collect_error": repr(_e)}})
-
-# Shape probe: if .score is not where we expect, record what IS on the object so the
-# next build can fix the extraction without spending another hour of quota.
+# Shape probe only — the per-repeat collector above is authoritative. An earlier
+# version re-collected here into the same list object and reported 56 games for a
+# 28-game repeat, mixing two row schemas.
 _probe = None
 try:
     _first = (getattr(_rig, "game_runs", None) or [None])[0]
@@ -269,15 +278,19 @@ try:
         _probe = [a for a in dir(_first) if not a.startswith("__")][:60]
 except Exception:
     pass
-_dump({{"game_run_attrs": _probe, "repeats": _all_repeats}})
+_dump({{"game_run_attrs": _probe, "repeats": _all_repeats,
+       "boardfix_stats": globals().get("_bf_stats_last")}})
 
-_scored = [r.get("score") for r in _rows if isinstance(r.get("score"), (int, float))]
-if _scored:
-    print(f"[rig] RESULT label={LABEL} n={{len(_scored)}} "
-          f"mean={{sum(_scored)/len(_scored):.4f}} max={{max(_scored):.4f}}", flush=True)
+# NOTE: harness_final_score is 0.0 by design here (baselines hidden), so progress is
+# reported as levels completed. Real scores are computed offline by score_rig.py.
+_lvl = [r.get("levels_completed") or 0 for rr in _all_repeats for r in rr]
+_act = [r.get("actions_total") or 0 for rr in _all_repeats for r in rr]
+if _lvl:
+    print(f"[rig] RESULT label={LABEL} repeats={{len(_all_repeats)}} games={{len(_lvl)}} "
+          f"mean_levels={{sum(_lvl)/len(_lvl):.3f}} games_with_level={{sum(1 for x in _lvl if x>0)}} "
+          f"mean_actions={{sum(_act)/max(len(_act),1):.1f}}", flush=True)
 else:
-    print(f"[rig] RESULT label={LABEL} — NO SCORES PARSED ({{len(_rows)}} rows, "
-          f"stage={{_stage}}); see rig_result.json", flush=True)
+    print(f"[rig] RESULT label={LABEL} — NO ROWS (stage={{_stage}})", flush=True)
 print(f"[rig] DONE stage={{_stage}} in {{round(time.time()-_t0,1)}}s", flush=True)
 '''
 
