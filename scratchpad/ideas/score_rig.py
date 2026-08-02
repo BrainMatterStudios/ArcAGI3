@@ -94,8 +94,12 @@ def score_run(path: Path, baselines: dict[str, list[int]], strict: bool = True):
             # and would score a clean 0.0 -- indistinguishable from a game that was
             # played and lost. Three dead games in 28 is a ~10% arm-level deficit with
             # no warning, so refuse rather than average them in.
-            st = str(r.get("state") or "")
-            if strict and st and not any(k in st.lower() for k in ("win", "not_finished", "game_over", "none")):
+            # `gave_up` is the NORMAL terminal state when a wall-clock budget expires --
+            # an earlier version of this guard rejected it and thereby blocked scoring
+            # every budgeted run, i.e. exactly the runs this scorer exists for. Only
+            # genuinely anomalous states are refused.
+            st = str(r.get("state") or "").lower()
+            if strict and st and any(k in st for k in ("error", "fail", "crash", "abort")):
                 raise RuntimeError(f"{path.name}: {r.get('clone_id')} ended in state {st!r} — "
                                    "refusing to score a dead game as 0.0")
             if strict and (r.get("actions_total") or 0) == 0:

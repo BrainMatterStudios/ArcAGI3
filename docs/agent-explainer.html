@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How Our ARC-AGI-3 Agent Works — a plain-English deep dive</title>
+<style>
+  :root{
+    --bg:#0f1220; --panel:#171b2e; --panel2:#1e2440; --ink:#e8ebf7; --muted:#a3abce;
+    --line:#2c3358; --accent:#6ea8fe; --accent2:#8bd17c; --warn:#f0b24b; --pink:#e77afb;
+    --c0:#1a1d2e;--c1:#2f6df6;--c2:#e3413a;--c3:#4bbe5b;--c4:#f5d03b;--c5:#8b93b5;--c6:#e05fb0;--c7:#f08a3c;
+    --c8:#5fd0e0;--c9:#8a5cf6;--c10:#b06d3a;--c11:#c9d24a;--c12:#3aa0a8;--c13:#d94f7a;--c14:#7de08a;--c15:#c0c6e6;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:linear-gradient(180deg,#0c0f1a,#12162a);color:var(--ink);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+  header.hero{padding:64px 0 30px;border-bottom:1px solid var(--line);
+    background:radial-gradient(1200px 400px at 70% -10%,rgba(110,168,254,.18),transparent)}
+  h1{font-size:2.5rem;line-height:1.15;margin:.1em 0 .2em;letter-spacing:-.5px}
+  h1 .sub{display:block;font-size:1.05rem;color:var(--muted);font-weight:500;margin-top:.6em;letter-spacing:0}
+  .tag{display:inline-block;font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);
+    border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--panel)}
+  h2{font-size:1.7rem;margin:1.6em 0 .5em;letter-spacing:-.3px}
+  h2 .n{color:var(--accent);font-variant-numeric:tabular-nums;margin-right:.35em}
+  h3{font-size:1.18rem;margin:1.4em 0 .3em}
+  p{color:#dfe3f4}
+  section{padding:14px 0 6px;border-bottom:1px solid var(--line)}
+  a{color:var(--accent)}
+  .lede{font-size:1.12rem;color:#eef1fb}
+  .toc{position:sticky;top:0;z-index:10;background:rgba(12,15,26,.86);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);padding:10px 0;font-size:.86rem}
+  .toc a{color:var(--muted);text-decoration:none;margin-right:16px;white-space:nowrap}
+  .toc a:hover{color:var(--accent)}
+  .toc .row{display:flex;overflow-x:auto;gap:2px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:16px 0}
+  .analogy{background:linear-gradient(180deg,#1a2136,#161c30);border:1px solid #33407a;border-left:4px solid var(--accent);
+    border-radius:12px;padding:14px 18px;margin:16px 0}
+  .analogy b{color:var(--accent)}
+  .example{background:#141a2c;border:1px dashed #39406e;border-radius:12px;padding:14px 18px;margin:14px 0}
+  .example .h{font-size:.74rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent2);margin-bottom:6px}
+  .key{background:#20182e;border:1px solid #4a2f63;border-left:4px solid var(--pink);border-radius:12px;padding:14px 18px;margin:16px 0}
+  .grid-demo{display:flex;gap:26px;flex-wrap:wrap;align-items:center;margin:12px 0}
+  .g{display:grid;gap:2px;background:#0a0d18;padding:6px;border-radius:8px;border:1px solid var(--line)}
+  .g div{width:20px;height:20px;border-radius:3px}
+  .cap{color:var(--muted);font-size:.85rem;max-width:320px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.cols{grid-template-columns:1fr}.g div{width:16px;height:16px}}
+  .strat{border:1px solid var(--line);border-radius:14px;padding:0;margin:14px 0;overflow:hidden;background:var(--panel)}
+  .strat .top{display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--panel2);border-bottom:1px solid var(--line)}
+  .strat .num{flex:0 0 34px;height:34px;border-radius:9px;display:grid;place-items:center;font-weight:700;background:#0d1120;border:1px solid var(--line);color:var(--accent)}
+  .strat .name{font-weight:700;font-size:1.05rem}
+  .strat .role{margin-left:auto;font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);padding:3px 9px;border-radius:999px}
+  .strat .body{padding:14px 18px}
+  .strat .body .plain{color:#e6e9f7}
+  .strat .body .ex{color:var(--muted);font-size:.92rem;margin-top:8px;border-top:1px dashed var(--line);padding-top:8px}
+  .pill{display:inline-block;font-size:.74rem;padding:2px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted);margin:2px 3px}
+  .flow{display:flex;flex-direction:column;gap:8px;margin:14px 0}
+  .flow .step{display:flex;gap:12px;align-items:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+  .flow .step .b{flex:0 0 30px;height:30px;border-radius:8px;background:#0d1120;border:1px solid var(--line);display:grid;place-items:center;color:var(--accent);font-weight:700}
+  .arrow{color:var(--muted);text-align:center;font-size:1.2rem;line-height:1}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:.94rem}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left}
+  th{background:var(--panel2);color:var(--muted);font-weight:600}
+  .good{color:var(--accent2)} .bad{color:#f28b82} .amber{color:var(--warn)}
+  code{background:#0c1020;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:.9em;color:#cdd6ff}
+  .foot{color:var(--muted);font-size:.85rem;padding:26px 0 60px}
+  .big{font-size:1.28rem;font-weight:600;color:#fff}
+  .kbd{display:inline-block;background:#0c1020;border:1px solid var(--line);border-bottom-width:3px;border-radius:7px;padding:2px 9px;font-weight:600}
+  ul.clean{list-style:none;padding-left:0}
+  ul.clean li{padding:6px 0 6px 26px;position:relative}
+  ul.clean li:before{content:"\25B8";position:absolute;left:6px;color:var(--accent)}
+</style>
+</head>
+<body>
+
+<header class="hero"><div class="wrap">
+  <span class="tag">Plain-English deep dive &middot; 2026-07-02</span>
+  <h1>How our ARC-AGI-3 game-playing agent works
+    <span class="sub">Every model, trick and algorithm inside it &mdash; explained with pictures and everyday analogies, no AI background needed.</span></h1>
+</div></header>
+
+<nav class="toc"><div class="wrap"><div class="row">
+  <a href="#challenge">1 &middot; The challenge</a>
+  <a href="#see">2 &middot; What it sees &amp; does</a>
+  <a href="#score">3 &middot; Scoring</a>
+  <a href="#bigidea">4 &middot; The big idea</a>
+  <a href="#team">5 &middot; The team</a>
+  <a href="#players">6 &middot; Every specialist</a>
+  <a href="#eyes">7 &middot; Its "eyes"</a>
+  <a href="#tricks">8 &middot; Two clever tricks</a>
+  <a href="#flow">9 &middot; Full walkthrough</a>
+  <a href="#limits">10 &middot; Strengths &amp; limits</a>
+</div></div></nav>
+
+<div class="wrap">
+
+<section id="challenge">
+  <h2><span class="n">1</span>The challenge: video games with the instruction manual torn out</h2>
+  <p class="lede">ARC-AGI-3 is a set of small puzzle video games. A human can pick one up and figure out the
+  rules in a minute. The catch for a computer: <b>there are no instructions, no score labels, no hints</b> &mdash;
+  just a picture on screen and a handful of buttons. The agent has to <b>discover the rules by experimenting</b>,
+  then solve the puzzle, the way a curious child pokes at a new toy until it "gets it."</p>
+  <div class="analogy"><b>Analogy.</b> Imagine being dropped in front of an arcade cabinet in a country whose language
+  you can't read. The screen shows colored blocks; there are five buttons and a touch-screen. Nobody tells you the
+  goal. You press things, watch what changes, form a theory ("ah, this button moves the little guy"), and keep
+  going until the screen flashes "level complete." That is exactly the agent's situation &mdash; thousands of times, fast.</div>
+  <p>Each game has several <b>levels</b> that get harder. Winning a game means clearing <b>all</b> its levels.
+  The real test uses <b>hidden games the agent has never seen</b> &mdash; so it cannot memorize answers; it must have
+  genuinely general skills.</p>
+</section>
+
+<section id="see">
+  <h2><span class="n">2</span>What the agent sees, and what it can do</h2>
+  <h3>It sees a grid of colored squares</h3>
+  <p>Every moment, the game hands the agent one <b>frame</b>: a 64&times;64 grid where each square is one of 16 colors.
+  That's it &mdash; the same thing you'd see on screen, just as numbers. Here's a tiny made-up frame: a "player" (blue),
+  two "walls" (grey), a "goal" (green), and a background (dark).</p>
+  <div class="grid-demo">
+    <div class="g" style="grid-template-columns:repeat(6,20px)" id="frameDemo"></div>
+    <div class="cap">The agent is never told "blue = player" or "green = goal." It has to work that out by moving
+    and noticing <i>which colored blob moves when I press a button.</i></div>
+  </div>
+  <h3>It has a tiny set of buttons</h3>
+  <ul class="clean">
+    <li><span class="kbd">1</span> <span class="kbd">2</span> <span class="kbd">3</span> <span class="kbd">4</span>
+       &mdash; usually <b>move</b> up / down / left / right (but in some games they do other things).</li>
+    <li><span class="kbd">5</span> &mdash; a "context" button: in different games it might <b>submit</b> an answer, <b>select</b>, or <b>fire</b>.</li>
+    <li><span class="kbd">click</span> &mdash; tap a specific square by its (x, y) position. Many games are click-based
+       (press a button, place a tile, toggle a switch).</li>
+    <li><span class="kbd">reset</span> &mdash; start the current game over from the beginning.</li>
+  </ul>
+  <div class="key"><b>The single most important quirk:</b> the agent can hit <b>reset</b> as often as it likes, and
+  the games are <b>perfectly predictable</b> (do the same thing &rarr; get the same result). This turns out to be a
+  superpower &mdash; it means the agent can <i>rehearse</i>. More on that in section 4.</div>
+</section>
+
+<section id="score">
+  <h2><span class="n">3</span>How points work &mdash; and why "fast &amp; clean" beats "eventually"</h2>
+  <p>You'd think the score is just "how many levels did you clear." It's subtler, and understanding it is the key
+  to everything the agent does. Three rules:</p>
+
+  <div class="cols">
+    <div class="card"><h3>&#9312; Efficiency, squared</h3>
+      <p>Each level's score compares <b>your moves</b> to a <b>human's moves</b>. Using the same or fewer moves
+      than a human &asymp; full marks. Using twice as many &asymp; a <b>quarter</b> of the marks (it's the ratio
+      <i>squared</i>). Sloppy wins are punished hard.</p></div>
+    <div class="card"><h3>&#9313; Deep levels count more</h3>
+      <p>Later levels are weighted more heavily than early ones. Clearing level 6 efficiently is worth far more
+      than clearing level 1 efficiently.</p></div>
+  </div>
+  <div class="card"><h3>&#9314; The game ends the instant you fully win &mdash; and you keep your best attempt</h3>
+    <p>The moment one run clears every level, the game <b>stops</b>. But along the way the agent can make several
+    separate <b>attempts</b> (it resets between them), and only your <b>best-scoring attempt counts</b>.</p></div>
+
+  <div class="analogy"><b>Analogy &mdash; a diving competition.</b> You get several dives; only your best dive scores
+  (rule &#9314;, "keep your best attempt"). A clean, precise dive scores far more than a splashy one that <i>technically</i>
+  reached the water (rule &#9312;, efficiency-squared). And harder dives carry a bigger difficulty multiplier (rule &#9313;,
+  deep levels count more). A messy belly-flop that happens to finish first can actually <b>end your session with a
+  low score</b> before you get to show a clean dive &mdash; that exact trap shaped our biggest design decision (section 8).</div>
+
+  <div class="example"><div class="h">Why this matters &mdash; a real number</div>
+  On one game (codename <code>tu93</code>), clearing all 9 levels by <i>wandering around</i> scored <b>0.3 out of 100</b>.
+  Clearing the same levels <i>efficiently</i> scored <b>~54 out of 100</b> &mdash; same levels, ~170&times; the score.
+  Efficiency is not a nice-to-have; it's almost the whole game.</div>
+</section>
+
+<section id="bigidea">
+  <h2><span class="n">4</span>The big idea: "rehearse messily, then perform cleanly" (search-replay)</h2>
+  <p>Because the games are predictable and resettable (section 2), the agent doesn't need a crystal ball. It uses
+  a two-phase trick called <b>search-replay</b>:</p>
+  <div class="flow">
+    <div class="step"><div class="b">A</div><div><b>Search (the messy rehearsal).</b> Poke around, reset, try things,
+      reset again &mdash; a chaotic exploration whose <i>only</i> job is to <b>find</b> a sequence of moves that reaches
+      the win. This attempt scores terribly (lots of wasted moves), and that's fine &mdash; we'll throw it away.</div></div>
+    <div class="arrow">&darr;</div>
+    <div class="step"><div class="b">B</div><div><b>Replay (the clean performance).</b> Start a fresh attempt and
+      play back the <b>shortest version</b> of the solution it found &mdash; no wandering. Because the game is
+      predictable, the clean replay is guaranteed to work, and it scores high.</div></div>
+  </div>
+  <div class="analogy"><b>Analogy.</b> A stunt driver walks the course on foot first, trying routes and hitting cones
+  (rehearsal &mdash; nobody's timing it). Then, for the <b>filmed take</b>, they drive the one clean line they found,
+  fast and flawless. The agent's "filmed take" is the replay; the reset button is what lets it walk the course as many
+  times as it needs.</div>
+  <p>This sidesteps the hardest problem in AI &mdash; building an accurate mental model of a world you don't
+  understand. The agent doesn't need to <i>understand</i> the game; it just needs to <b>find</b> a path in the real
+  game and then retrace it. The real game <i>is</i> the model.</p>
+</section>
+
+<section id="team">
+  <h2><span class="n">5</span>Not one brain &mdash; a team of 14 specialists</h2>
+  <p>There is no single algorithm. The agent is a <b>portfolio</b>: a line-up of 14 different strategies (we call each
+  a "play"). On a given game they take turns. Each one is its own <b>attempt</b>, and &mdash; remember rule &#9314; &mdash;
+  the <b>best-scoring attempt wins</b>. Two principles hold the team together:</p>
+  <div class="cols">
+    <div class="card"><h3>Keep-the-best ("max-over-plays")</h3>
+      <p>Since only your best attempt counts, adding a new specialist can <b>only help</b>: if it does better on some
+      game, great; if it does worse, its attempt is simply ignored.</p></div>
+    <div class="card"><h3>Never-make-it-worse ("floor-safety")</h3>
+      <p>Every specialist is designed to <b>bow out gracefully</b> ("abstain") on games it doesn't understand, doing
+      nothing harmful. So the team's known abilities are a protected floor that new additions can't break.</p></div>
+  </div>
+  <div class="analogy"><b>Analogy.</b> A pub-quiz team. You bring a history buff, a sports nut, a movie geek&hellip; For
+  each question, whoever knows it answers; the others stay quiet. Adding another specialist never lowers your score
+  &mdash; it only adds questions you might now get right. Our agent is that team, and the "questions" are different
+  puzzle games.</div>
+</section>
+
+<section id="players">
+  <h2><span class="n">6</span>Meet every specialist (in the order they play)</h2>
+  <p>They run roughly from "sharp, specific solvers" first to "broad, brute-force searchers" and finally the
+  "catch-all wanderer" last. Here's each one in plain terms, with an example of the kind of game it handles.</p>
+
+  <div class="strat"><div class="top"><div class="num">1</div><div class="name">Cheap "shape" solvers &mdash; peg / centroid-drag / pull-drag</div><div class="role">quick specialists</div></div>
+    <div class="body"><div class="plain">Three classic puzzle patterns it can recognise instantly from the picture,
+      with zero guessing. <b>Peg-solitaire:</b> jump pieces over each other to remove them until one remains.
+      <b>Centroid-drag / pull-drag:</b> grab a piece and drag it to a target spot. If the current game doesn't look
+      like any of these, this play gives up in a single step (so it costs almost nothing).</div>
+      <div class="ex"><b>Example:</b> a board of evenly-spaced dots &mdash; it recognises "peg-solitaire," works out the
+      legal jumps, and clears the board directly, no exploration needed.</div></div></div>
+
+  <div class="strat"><div class="top"><div class="num">2</div><div class="name">Geodesic replay &mdash; the efficiency engine</div><div class="role">the score-maker</div></div>
+    <div class="body"><div class="plain">This is the star player for points. It explores to find the rewards, then
+      computes the <b>shortest possible path</b> to each reward (a "geodesic" = the straight-line route through the maze
+      of game states) and replays <i>that</i> in a clean run. This is the search-replay idea (section 4) turned into a
+      reliable machine. It's why efficiency-squared scoring works in our favour.</div>
+      <div class="ex"><b>Example:</b> the wandering rehearsal took 431 moves to clear a level; the geodesic replay does
+      the same level in <b>18</b> &mdash; a 24&times; cut that the squared scoring turns into a huge point gain.</div></div></div>
+
+  <div class="strat"><div class="top"><div class="num">3</div><div class="name">Transfer explorers (several variants)</div><div class="role">learn once, reuse</div></div>
+    <div class="body"><div class="plain">Levels of one game share an escalating mechanic. When a level is solved, the
+      winning action is a genuine <b>labelled example</b> of "what works here." These plays <b>carry that lesson forward</b>
+      to later levels instead of rediscovering it from scratch &mdash; and some variants use a more <b>abstract</b> view of
+      the board (relationships between objects, not exact pixels) to push into deeper levels with huge, confusing screens.</div>
+      <div class="ex"><b>Example:</b> level 1 taught "step onto the yellow tile to score." Level 4's screen looks
+      different, but the transfer play already suspects yellow tiles matter &mdash; so it heads there first.</div></div></div>
+
+  <div class="strat"><div class="top"><div class="num">4</div><div class="name">Chain-macro replay</div><div class="role">reuse the whole recipe</div></div>
+    <div class="body"><div class="plain">Where the transfer plays carry a <i>hint</i>, this one remembers the entire
+      <b>sequence of clicks</b> that solved the last level and tries replaying the recipe on the next one &mdash; since
+      later levels are often "the same trick, bigger."</div>
+      <div class="ex"><b>Example:</b> a game where each level is "click the buttons in this pattern" &mdash; once learned,
+      the pattern replays with tiny tweaks rather than being re-searched.</div></div></div>
+
+  <div class="strat"><div class="top"><div class="num">5</div><div class="name">Archetype solvers &mdash; mechanic / grab-drag / paint / glyph</div><div class="role">named-trick experts</div></div>
+    <div class="body"><div class="plain">Four hand-crafted experts for recognisable game "archetypes," each written to
+      solve its trick <b>directly and efficiently</b> (no wandering) &mdash; and to <b>abstain</b> on anything else:
+      <span class="pill">mechanic</span> pattern-match / arrangement puzzles;
+      <span class="pill">grab-drag</span> steer an avatar that drags a block onto a target;
+      <span class="pill">paint</span> drag a "brush" so its trail fills a stencil to match a template;
+      <span class="pill">glyph</span> read a symbol, toggle matching switches, then walk to the goal.</div>
+      <div class="ex"><b>Example (paint):</b> the target is an outlined shape; the expert picks the right-colored piece,
+      then drags its cursor so the trail colors exactly that shape &mdash; like coloring inside the lines.</div></div></div>
+
+  <div class="strat"><div class="top"><div class="num">6</div><div class="name">General agent &mdash; the universal searcher</div><div class="role">works on anything</div></div>
+    <div class="body"><div class="plain">The game-agnostic fallback searcher. It first <b>probes</b> what actions even
+      do something ("does clicking here change anything? does clicking A then B do something new?"), then runs a smart
+      <b>exploration</b> that prefers unvisited situations, until it stumbles into a win &mdash; then replays it cleanly.
+      It needs no knowledge of the specific game, so it can crack <b>brand-new hidden games</b>.</div>
+      <div class="ex"><b>Example:</b> a game none of the specialists recognise &mdash; the general agent still finds
+      <i>a</i> path to the first reward by systematic trial-and-reset, and banks it.</div></div></div>
+
+  <div class="strat"><div class="top"><div class="num">7</div><div class="name">Object-centric search (<code>oc_search</code>) &mdash; added this project</div><div class="role">smarter clicking</div></div>
+    <div class="body"><div class="plain">A twin of the general searcher with two upgrades: it aims clicks at the
+      <b>centres of actual objects</b> (not random pixels), and it recognises two screens as "the same" based on the
+      <b>objects present</b> rather than exact pixels &mdash; which stops flickering animations from exploding its search.
+      This cracked several games the plain searcher missed.</div>
+      <div class="ex"><b>Example (ka59):</b> the winning move is clicking the exact centre of a small block. Random-pixel
+      clicking never hits it; object-centre clicking solves the level in ~11 moves.</div></div></div>
+
+  <div class="strat"><div class="top"><div class="num">8</div><div class="name">Coverage anchor (moved to LAST this project)</div><div class="role">safety net</div></div>
+    <div class="body"><div class="plain">A patient, general "wanderer" that will eventually clear many games by brute
+      persistence &mdash; but <b>sloppily</b>. It's the <b>last</b> resort: it guarantees the team still <i>solves</i> a
+      game nothing else could, banking coverage as a floor. Why last? See section 8 &mdash; putting it first was quietly
+      costing us most of our points.</div>
+      <div class="ex"><b>Example:</b> a game with an unfamiliar mechanic that only yields to stubborn trial-and-error
+      &mdash; the anchor gets it done so we score <i>something</i>, even if not efficiently.</div></div></div>
+</section>
+
+<section id="eyes">
+  <h2><span class="n">7</span>Giving the agent "eyes": turning pixels into objects</h2>
+  <p>Most specialists don't reason over raw squares &mdash; that's like reading a book one ink-dot at a time. A
+  <b>perception</b> layer first turns the 64&times;64 grid into <b>objects</b>: it groups touching squares of the same
+  color into blobs, and notes each blob's size, shape and centre.</p>
+  <div class="grid-demo">
+    <div class="g" style="grid-template-columns:repeat(6,20px)" id="objDemoA"></div>
+    <div class="arrow" style="font-size:1.6rem">&rarr;</div>
+    <div class="g" style="grid-template-columns:repeat(6,20px)" id="objDemoB"></div>
+    <div class="cap">Left: raw colored squares. Right: the agent's view &mdash; a handful of labelled objects
+    ("a 1-square player here, an L-shaped wall there, a goal blob there"). Far easier to reason about.</div>
+  </div>
+  <p>It also spots the <b>agent</b> (the object that <i>moves</i> when you press a move button) and <b>masks the HUD</b>
+  &mdash; flickering score-bars or timers at the screen edge that change constantly but don't matter. Ignoring that
+  flicker keeps the agent from thinking every frame is a brand-new situation.</p>
+  <div class="analogy"><b>Analogy.</b> When you watch a game you don't consciously track pixels &mdash; you see "my
+  guy," "a wall," "the exit," and you tune out the timer ticking in the corner. The perception layer gives the agent
+  that same at-a-glance understanding.</div>
+</section>
+
+<section id="tricks">
+  <h2><span class="n">8</span>Two clever tricks that unlocked most of the points</h2>
+
+  <h3>Trick 1 &mdash; put the sloppy wanderer <b>last</b> (efficiency-first)</h3>
+  <p>Recall rule &#9314;: the game <b>ends the instant any attempt fully wins</b>. Our patient wanderer used to go
+  <b>first</b>. On games it could solve, it would grind out a win &mdash; <b>sloppily</b> &mdash; which <b>ended the
+  game</b> before the efficient specialists ever got their turn. We were, in effect, always submitting the belly-flop.</p>
+  <div class="key"><b>The fix (this project):</b> move the wanderer to <b>last</b>. Now the sharp, efficient specialists
+  play first and produce the winning run; the wanderer only steps in for games nothing else can solve. Measured across
+  25 practice games, this <b>nearly doubled our efficiency score (+81%) with zero games getting worse.</b> The
+  efficiency was always there &mdash; it was just being cut off before it could show.</div>
+
+  <h3>Trick 2 &mdash; reset <b>twice</b> (the "double-reset")</h3>
+  <p>We discovered the game engine has a subtle quirk: after you clear a <b>deep</b> level, a <b>single</b> reset
+  cleans up the picture but leaves a hidden "you already finished a level" flag stuck on. The next run then reports
+  phantom wins that aren't real. Pressing reset <b>twice</b> fully wipes the slate.</p>
+  <div class="analogy"><b>Analogy.</b> Like a stopwatch that clears its display on one press but keeps a lap stored in
+  memory &mdash; you have to press twice to truly zero it. Every clean "performance" run in the agent starts with a
+  double-reset so it's genuinely starting fresh.</div>
+  <p class="cap">(This one mattered for honesty as much as points: a single reset produced fake "wins" during testing
+  that would have fooled us &mdash; catching it kept our results real.)</p>
+</section>
+
+<section id="flow">
+  <h2><span class="n">9</span>Putting it together: one game, start to finish</h2>
+  <div class="flow">
+    <div class="step"><div class="b">1</div><div>The game hands over the first <b>frame</b>. Perception turns it into
+      objects; the agent notes what's on screen.</div></div>
+    <div class="arrow">&darr;</div>
+    <div class="step"><div class="b">2</div><div><b>Specialist #1</b> looks: "Is this a peg / drag puzzle I recognise?"
+      If yes, it solves it efficiently and we're likely done. If no, it abstains in a single step.</div></div>
+    <div class="arrow">&darr;</div>
+    <div class="step"><div class="b">3</div><div>The turn passes down the line &mdash; <b>geodesic</b> (find rewards,
+      replay the shortest path), then <b>transfer / chain-macro</b> (reuse lessons), then the <b>archetype experts</b>,
+      then the <b>general &amp; object-centric searchers</b>. Each is a fresh attempt begun with a double-reset.</div></div>
+    <div class="arrow">&darr;</div>
+    <div class="step"><div class="b">4</div><div>Whenever an attempt clears every level, the game <b>ends</b>. Across all
+      attempts, the <b>best-scoring one</b> is what counts &mdash; so the sharp specialists' clean runs are what get
+      recorded.</div></div>
+    <div class="arrow">&darr;</div>
+    <div class="step"><div class="b">5</div><div>If nothing efficient cracked it, the <b>coverage anchor</b> (last) grinds
+      out a win so we still score. And through all of this, a fail-safe wrapper guarantees the agent <b>always makes a
+      legal move</b> &mdash; even if something crashes, it falls back to random rather than freezing.</div></div>
+  </div>
+  <p>All of this runs <b>offline</b> on the competition's computers, with a generous time budget per game (about 8
+  hours each, run in parallel), talking to the game through a simple request-response channel.</p>
+</section>
+
+<section id="limits">
+  <h2><span class="n">10</span>What it's good at &mdash; and where it still struggles (honestly)</h2>
+  <div class="cols">
+    <div class="card"><h3 class="good">Strong at</h3>
+      <ul class="clean">
+        <li>Games that are <b>predictable and resettable</b> &mdash; its whole rehearse-then-perform trick relies on this.</li>
+        <li><b>Efficiency</b> on levels it can find a path to (the geodesic engine).</li>
+        <li>Recognisable <b>archetypes</b> (peg, drag, paint, glyph, pattern-match) &mdash; solved directly.</li>
+        <li><b>Not breaking</b>: new abilities can only add; a fail-safe guarantees it always acts.</li>
+      </ul></div>
+    <div class="card"><h3 class="bad">Still hard</h3>
+      <ul class="clean">
+        <li><b>Deep efficiency:</b> it clears early levels efficiently but often clears the deepest levels sloppily
+          &mdash; the next big lever we're chasing.</li>
+        <li><b>Truly novel mechanics</b> in hidden games: if a game's trick is unlike anything the specialists know,
+          only the slow searcher can attempt it, and sometimes it can't.</li>
+        <li><b>Games with hidden state</b> (things you can't see on screen) &mdash; you can't rehearse what you can't observe.</li>
+      </ul></div>
+  </div>
+  <div class="analogy"><b>The one-sentence summary.</b> The agent is a <b>team of puzzle specialists</b> that
+  <b>rehearses in a resettable game until it finds a clean solution</b>, keeps only its best attempt, and &mdash; after
+  a fix we made this project &mdash; lets its <b>most efficient specialists go first</b> so the score reflects clean
+  solutions, not lucky messy ones.</div>
+</section>
+
+<div class="foot">
+  Built for the ARC-Prize-2026 / ARC-AGI-3 challenge. This page describes the agent as submitted in version 25
+  (efficiency-first portfolio of 14 plays). It's a conceptual explainer &mdash; simplified in places for clarity, but
+  faithful to how the system actually behaves.
+</div>
+</div>
+
+<script>
+  var css = getComputedStyle(document.documentElement);
+  var PAL = ['--c0','--c1','--c2','--c3','--c4','--c5','--c6','--c7','--c8','--c9','--c10','--c11','--c12','--c13','--c14','--c15']
+    .map(function(v){return css.getPropertyValue(v).trim();});
+  function draw(id, cells){
+    var el = document.getElementById(id); if(!el) return;
+    cells.forEach(function(c){
+      var d = document.createElement('div');
+      d.style.background = PAL[c] || PAL[0];
+      el.appendChild(d);
+    });
+  }
+  // 6x6 demo frame: 0 background, 5 wall, 1 player, 3 goal
+  var F = [
+    0,0,0,0,0,0,
+    0,5,5,0,0,0,
+    0,0,0,0,3,0,
+    0,1,0,0,0,0,
+    0,0,0,5,5,0,
+    0,0,0,0,0,0];
+  draw('frameDemo', F);
+  draw('objDemoA', F);
+  draw('objDemoB', F);
+</script>
+</body>
+</html>

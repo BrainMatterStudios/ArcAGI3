@@ -108,6 +108,7 @@ def _slot(stem: str) -> dict:
     return _G.setdefault(stem, {
         "actions": 0, "noop_raw": 0, "noop_masked": 0,
         "dead_reissue": 0, "reissue_opportunities": 0,
+        "turns": 0,
         "immediate_repeat": 0, "key_actions": 0, "key_repeat": 0,
         "click_actions": 0, "click_repeat": 0,
         "_seen": {}, "_states": set(), "_last": None,
@@ -136,6 +137,13 @@ def install() -> bool:
             akey = (name, data.get("x"), data.get("y")) if name == "ACTION6" else (name,)
 
             s["actions"] += 1
+            # Turns, not actions, are what a wall-clock budget rations: the solver
+            # executes a BATCH per model turn (solver.py:589-660). Reporting only
+            # per-action rates mechanically flatters an arm that emits smaller
+            # batches -- which is exactly how a 45% action gap was nearly read as a
+            # large improvement. batch_index==1 marks the first action of a batch.
+            if int(kwargs.get("batch_index", 1) or 1) == 1:
+                s["turns"] += 1
             s["noop_raw"] += int(np.array_equal(pa, ca))
             changed = pk != ck
             s["noop_masked"] += int(not changed)
@@ -170,7 +178,7 @@ def install() -> bool:
 
 def report() -> dict:
     per = {}
-    tot = {k: 0 for k in ("actions", "noop_raw", "noop_masked", "dead_reissue",
+    tot = {k: 0 for k in ("actions", "turns", "noop_raw", "noop_masked", "dead_reissue",
                           "reissue_opportunities", "immediate_repeat",
                           "key_actions", "key_repeat", "click_actions", "click_repeat")}
     states = 0
@@ -195,6 +203,9 @@ def report() -> dict:
         "n_games": len(_G),
         "corpus": {
             "actions": tot["actions"],
+            "turns": tot["turns"],
+            # THE BINDING-RESOURCE VIEW. A wall-clock budget buys turns, not actions.
+            "actions_per_turn": round(tot["actions"] / max(tot["turns"], 1), 4),
             "noop_raw": round(tot["noop_raw"] / n, 4),
             "noop_masked": round(tot["noop_masked"] / n, 4),
             # The headline. Humans 3.4%; our agent 27.1% unconditioned.
@@ -205,6 +216,9 @@ def report() -> dict:
             "key_repeat": round(tot["key_repeat"] / max(tot["key_actions"], 1), 4),
             "click_repeat": round(tot["click_repeat"] / max(tot["click_actions"], 1), 4),
             "distinct_states_per_action": round(states / n, 4),
+            "distinct_states_per_turn": round(states / max(tot["turns"], 1), 4),
+            "productive_actions_per_turn": round(
+                (tot["actions"] - tot["noop_masked"]) / max(tot["turns"], 1), 4),
         },
         "per_game": per,
     }
