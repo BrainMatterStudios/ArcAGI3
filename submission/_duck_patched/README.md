@@ -51,10 +51,35 @@ choices unconditionally (solver.py:116-117), and `_execute_auto_reset()` fires a
 GAME_OVER (solver.py:278-282). `verify_reset_already_handled()` asserts both still hold, so if
 upstream ever changes we find out in the log instead of silently regressing.
 
+## Patch 11 — frontier-graph substrate + no-op veto + stall grinder (`TAAF_GRAPH`, default on)
+
+Research idea 2 part 2 / plan item B6 (docs/RESEARCH-2026-08-02-unbiased-deep-research.md).
+Composes with the shipped patches: node identity = patch 8's HUD-masked grid hash; the stall
+signal is read off patch 7's `_watchdog_state` (no second stall detector).
+
+* **Graph substrate** — every executed action records `(level, masked-hash) --action-->
+  (level, masked-hash)` with tested/untested plan bookkeeping; click plans are
+  connected-component centroids in poby's benchmarked *flat* button-likeness order (its hard
+  salience tiers regressed and are deliberately not ported), plus a coarse sweep.
+* **No-op edge veto** — a single proposed action that is a known no-op edge from the exact
+  current node (>= 2 observations, all pure self-loops) is answered with a zero-cost synthetic
+  result (`vetoed_noop: true`). Never RESET, never batches, never in the first
+  `TAAF_GRAPH_VETO_MIN_LEVEL_ACTIONS` (10) actions of a level, at most `TAAF_GRAPH_VETO_CAP`
+  (25) per level.
+* **Stall grinder (grind-to-UNLOCK only)** — on a watchdog stall on a level with 0 completions
+  this run, a scripted frontier walk runs at engine speed (BFS to nearest node with untested
+  plans) and stops on level transition / GAME_OVER / `TAAF_GRAPH_GRIND_BUDGET` (2000) actions.
+  Verified economics: free on never-completed levels; **permanently disengages for any level
+  completed this run** (grinding a completed level's counter destroys its score), and engages
+  at most `TAAF_GRAPH_GRIND_MAX_PER_LEVEL` (2) times per level so the watchdog RESET/kill path
+  stays reachable.
+* **Diagnostics** — `graph_diagnostics(session)`: `{nodes, edges, vetoes_issued,
+  vetoes_capped, grinder_engagements, grinder_actions, levels_unlocked_by_grinder}`.
+
 ## Verification
 
 ```
-.venv/bin/python -m pytest submission/_duck_patched/test_duck_patches.py -q     # 13 passed
+.venv/bin/python -m pytest submission/_duck_patched/ -q                         # 87 passed
 .venv/bin/python submission/_duck_patched/build_duck_patched.py                 # rebuild notebook
 ```
 

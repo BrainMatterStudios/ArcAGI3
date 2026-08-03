@@ -33,6 +33,19 @@ from typing import Any
 _ACTION7 = "ACTION7"
 
 
+def _forward_patch_markers(wrapper: Any, original: Any) -> None:
+    """Copy every ``*_patched`` marker from a wrapped callable onto its wrapper.
+
+    The patches stack (7 -> 8 -> 10 -> 11 all wrap the same methods); each one's
+    idempotency check and the A/B kernel's patch proof read the markers off the
+    OUTERMOST callable, so a wrapper that hides its predecessors' markers makes
+    a second ``apply_all()`` re-wrap them (double bookkeeping).
+    """
+    for attr, value in vars(original).items():
+        if attr.endswith("_patched") and value:
+            setattr(wrapper, attr, value)
+
+
 def patch_action7() -> str:
     """Make ACTION7 survive the model<->engine name round trip. Returns a status line."""
     from inference.agent import action_names as an
@@ -838,6 +851,7 @@ def patch_hud_board_identity() -> str:
                 pass  # masking must never break an action
         return payload
 
+    _forward_patch_markers(_execute_action, original)
     _execute_action._hud_patched = True  # type: ignore[attr-defined]
     session_cls._execute_action = _execute_action
     return "patch8 hud-mask: OK"
@@ -1144,6 +1158,8 @@ def patch_watchdog() -> str:
         except Exception:  # noqa: BLE001 - the watchdog must never wedge the loop itself
             return False
 
+    _forward_patch_markers(should_stop, original_should_stop)
+    _forward_patch_markers(play, original_play)
     should_stop._watchdog_patched = True  # type: ignore[attr-defined]
     play._watchdog_play_patched = True  # type: ignore[attr-defined]
     session_cls.should_stop = should_stop
@@ -1417,11 +1433,807 @@ def patch_win_replay() -> str:
                 except Exception:  # noqa: BLE001
                     pass
 
+    _forward_patch_markers(_execute_action, original_execute)
+    _forward_patch_markers(play, original_play)
     _execute_action._win_replay_patched = True  # type: ignore[attr-defined]
     play._win_replay_patched = True  # type: ignore[attr-defined]
     session_cls._execute_action = _execute_action
     session_cls.play = play
     return "patch10 win-replay: OK"
+
+
+# --- PATCH 11: frontier-graph substrate + no-op edge veto + stall grinder ---------
+#
+# Persistent per-game transition graph over HUD-masked frame hashes (research idea 2
+# part 2, plan item B6). Three cooperating mechanisms, all strictly bounded:
+#
+#   1. GRAPH SUBSTRATE — every executed engine action records an edge
+#      (node, action) -> node' where a node is (level, crc32 of the HUD-masked
+#      grid). Node identity reuses patch 8's HudMaskTracker mask, so ticking
+#      budget bars do not explode the state space (the poby/explore2 kernels
+#      showed a raw-hash graph degenerates exactly this way). Click plans per
+#      node are connected-component centroids ordered by "button-likeness"
+#      (compact + small first — poby's benchmarked FLAT ordering; its hard
+#      salience *tiers* regressed tn36 112->30 states and are deliberately not
+#      ported), then a coarse grid sweep for coverage.
+#
+#   2. NO-OP EDGE VETO — when the model proposes a single action that is a KNOWN
+#      no-op edge from the current node (>= NOOP_MIN_OBS observations, every one
+#      a self-loop with no masked board change), return the cached outcome as a
+#      zero-cost synthetic tool result instead of spending a scored action.
+#      Guards (the trace audit measured 18% false-block for signature-level
+#      blocking; edge-level blocking at the exact masked state is much safer but
+#      still guarded): never veto RESET, never veto batches, never veto in the
+#      first TAAF_GRAPH_VETO_MIN_LEVEL_ACTIONS actions of a level (state-gated
+#      buttons), and at most TAAF_GRAPH_VETO_CAP vetoes per level.
+#
+#   3. STALL GRINDER (grind-to-UNLOCK only) — when patch 7's watchdog machinery
+#      shows a stall (no progress for stall_s, read from the SAME _watchdog_state
+#      the recovery RESET uses — no second stall detector) on a level with zero
+#      completions this run, hand control to a scripted frontier walk at engine
+#      speed: execute untested plans at the current node, else BFS through known
+#      edges to the nearest node with untested plans. Stops immediately on level
+#      transition (unlock achieved), GAME_OVER (existing recovery handles it), or
+#      TAAF_GRAPH_GRIND_BUDGET actions. Verified economics: burned actions on a
+#      never-completed level cost exactly 0 score (RESET does not clear per-level
+#      counters, so grinding a level that later completes would destroy its score
+#      -> the grinder PERMANENTLY disengages for any level completed this run,
+#      and engages at most TAAF_GRAPH_GRIND_MAX_PER_LEVEL times per level so the
+#      watchdog's RESET/kill path stays reachable behind it).
+#
+# Diagnostics: session._graph_state["diag"] + graph_diagnostics(session) expose
+# {nodes, edges, vetoes_issued, vetoes_capped, grinder_engagements,
+#  grinder_actions, levels_unlocked_by_grinder} the way patches 7/8/10 expose
+# theirs (read by the A/B kernel's per-session collector).
+#
+# TAAF_GRAPH=0 disables everything at call time (recording included).
+
+
+def _graph_enabled() -> bool:
+    import os
+
+    return os.environ.get("TAAF_GRAPH", "1").strip() not in {"0", "false", "False"}
+
+
+def _graph_env_int(name: str, default: int) -> int:
+    import os
+
+    try:
+        return int(float(os.environ.get(name, "") or default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _graph_background_color(rows: list) -> int:
+    counts: dict[int, int] = {}
+    for row in rows:
+        for value in row:
+            counts[value] = counts.get(value, 0) + 1
+    return max(counts, key=counts.get) if counts else 0
+
+
+def _graph_components(rows: list) -> list[dict[str, Any]]:
+    """4-connectivity same-color components (poby port): color/size/bbox/centroid."""
+    from collections import deque
+
+    h = len(rows)
+    w = len(rows[0]) if h else 0
+    seen = [[False] * w for _ in range(h)]
+    comps: list[dict[str, Any]] = []
+    for sr in range(h):
+        for sc in range(w):
+            if seen[sr][sc]:
+                continue
+            color = rows[sr][sc]
+            queue = deque([(sr, sc)])
+            seen[sr][sc] = True
+            cells = []
+            while queue:
+                r, c = queue.popleft()
+                cells.append((r, c))
+                for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < h and 0 <= nc < w and not seen[nr][nc] and rows[nr][nc] == color:
+                        seen[nr][nc] = True
+                        queue.append((nr, nc))
+            rs = [cell[0] for cell in cells]
+            cs = [cell[1] for cell in cells]
+            comps.append(
+                {
+                    "color": color,
+                    "size": len(cells),
+                    "bbox": (min(rs), min(cs), max(rs), max(cs)),
+                    "centroid": (sum(cs) // len(cells), sum(rs) // len(cells)),
+                }
+            )
+    return comps
+
+
+def graph_click_candidates(rows: list, limit: int = 64, step: int = 8) -> list[tuple[int, int]]:
+    """(x, y) click points for ACTION6, salience-ordered (poby's verified config).
+
+    Non-background component centroids sorted by button-likeness
+    (fill / (1 + size): compact + small ranks first), then a coarse grid sweep
+    offset by half a step for coverage, capped at `limit`.
+    """
+    if not rows:
+        return []
+    h = len(rows)
+    w = len(rows[0]) if h else 0
+    background = _graph_background_color(rows)
+
+    scored = []
+    for comp in _graph_components(rows):
+        if comp["color"] == background:
+            continue
+        r0, c0, r1, c1 = comp["bbox"]
+        bbox_area = max(1, (r1 - r0 + 1) * (c1 - c0 + 1))
+        fill = comp["size"] / bbox_area
+        likeness = fill / (1.0 + comp["size"])
+        scored.append((likeness, comp["centroid"]))
+    scored.sort(key=lambda item: item[0], reverse=True)
+
+    out: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+    for _, point in scored:
+        if point not in seen:
+            seen.add(point)
+            out.append(point)
+    half = max(1, step // 2)
+    for y in range(half, h, step):
+        for x in range(half, w, step):
+            point = (x, y)
+            if point not in seen:
+                seen.add(point)
+                out.append(point)
+    return out[:limit]
+
+
+class FrontierGraph:
+    """Transition graph over (level, masked-grid-hash) nodes with edge bookkeeping.
+
+    Pure data structure — no engine, no session; fully unit-testable. Plans and
+    edge keys are tuples: ("ACTION1",) ... or ("ACTION6", x, y).
+    """
+
+    NOOP_MIN_OBS = 2
+
+    def __init__(self, click_limit: int = 64, click_step: int = 8, max_nodes: int = 60000):
+        self.click_limit = int(click_limit)
+        self.click_step = int(click_step)
+        self.max_nodes = int(max_nodes)
+        # key -> {"plans": [plan, ...], "dead": set()}
+        self.nodes: dict[tuple, dict[str, Any]] = {}
+        # key -> {plan: {"dest", "count", "noop", "level_up", "danger", "consistent"}}
+        self.edges: dict[tuple, dict[tuple, dict[str, Any]]] = {}
+
+    # -- identity ------------------------------------------------------------
+
+    @staticmethod
+    def masked_rows(grid: Any, mask_cells: Any) -> list[list[int]]:
+        rows = [list(row) for row in grid]
+        for cell in mask_cells or []:
+            y, x = int(cell[0]), int(cell[1])
+            if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
+                rows[y][x] = 0
+        return rows
+
+    def node_key(self, level: int, grid: Any, mask_cells: Any) -> tuple:
+        import zlib
+
+        rows = self.masked_rows(grid, mask_cells)
+        h = len(rows)
+        w = len(rows[0]) if h else 0
+        payload = bytearray()
+        for row in rows:
+            for value in row:
+                payload.append(int(value) & 0xFF)
+        return (int(level), h, w, zlib.crc32(bytes(payload)))
+
+    # -- nodes / plans -------------------------------------------------------
+
+    def ensure_node(self, key: tuple, action_names: list[str], masked_rows: list) -> None:
+        if key in self.nodes or len(self.nodes) >= self.max_nodes:
+            return
+        plans: list[tuple] = [
+            (name,) for name in action_names if name not in ("RESET", "ACTION6")
+        ]
+        if "ACTION6" in action_names:
+            plans.extend(
+                ("ACTION6", x, y)
+                for x, y in graph_click_candidates(
+                    masked_rows, limit=self.click_limit, step=self.click_step
+                )
+            )
+        self.nodes[key] = {"plans": plans, "dead": set()}
+        self.edges.setdefault(key, {})
+
+    def untested_plans(self, key: tuple) -> list[tuple]:
+        node = self.nodes.get(key)
+        if not node:
+            return []
+        tested = self.edges.get(key, {})
+        dead = node["dead"]
+        return [plan for plan in node["plans"] if plan not in tested and plan not in dead]
+
+    def pop_untested(self, key: tuple) -> tuple | None:
+        plans = self.untested_plans(key)
+        return plans[0] if plans else None
+
+    def mark_dead(self, key: tuple, plan: tuple) -> None:
+        node = self.nodes.get(key)
+        if node is not None:
+            node["dead"].add(plan)
+
+    # -- edges ---------------------------------------------------------------
+
+    def record(
+        self,
+        prev_key: tuple,
+        plan: tuple,
+        next_key: tuple,
+        *,
+        changed: bool,
+        level_up: bool,
+        game_over: bool,
+    ) -> None:
+        edges = self.edges.setdefault(prev_key, {})
+        edge = edges.get(plan)
+        if edge is None:
+            edge = {
+                "dest": next_key,
+                "count": 0,
+                "noop": 0,
+                "level_up": False,
+                "danger": False,
+                "consistent": True,
+            }
+            edges[plan] = edge
+        edge["count"] += 1
+        if edge["dest"] != next_key:
+            edge["consistent"] = False
+            edge["dest"] = next_key
+        if level_up:
+            edge["level_up"] = True
+        if game_over:
+            edge["danger"] = True
+        if next_key == prev_key and not changed and not level_up and not game_over:
+            edge["noop"] += 1
+
+    def edge_dest(self, key: tuple, plan: tuple) -> tuple | None:
+        edge = self.edges.get(key, {}).get(plan)
+        if edge is None or not edge["consistent"]:
+            return None
+        return edge["dest"]
+
+    def is_known_noop(self, key: tuple, plan: tuple) -> bool:
+        edge = self.edges.get(key, {}).get(plan)
+        return bool(
+            edge
+            and edge["count"] >= self.NOOP_MIN_OBS
+            and edge["noop"] == edge["count"]
+            and not edge["level_up"]
+            and not edge["danger"]
+        )
+
+    # -- frontier search -----------------------------------------------------
+
+    def bfs_to_frontier(self, start: tuple) -> list[tuple] | None:
+        """Plans leading from `start` to the nearest node with untested plans.
+
+        Only traverses same-level, deterministic (consistent), non-danger,
+        non-no-op edges — the grinder must never navigate through an edge that
+        completed a level or killed the game.
+        """
+        from collections import deque
+
+        queue: deque = deque([(start, [])])
+        visited = {start}
+        while queue:
+            node, path = queue.popleft()
+            if node != start and self.untested_plans(node):
+                return path
+            for plan, edge in self.edges.get(node, {}).items():
+                if not edge["consistent"] or edge["danger"] or edge["level_up"]:
+                    continue
+                if edge["noop"] == edge["count"] and edge["count"] > 0:
+                    continue
+                dest = edge["dest"]
+                if dest is None or dest in visited or dest[0] != start[0]:
+                    continue
+                visited.add(dest)
+                queue.append((dest, path + [plan]))
+        return None
+
+    def diagnostics(self) -> dict[str, int]:
+        return {
+            "nodes": len(self.nodes),
+            "edges": sum(len(edges) for edges in self.edges.values()),
+        }
+
+
+def _graph_plan_key(action_name: str, action_data: dict[str, Any] | None) -> tuple:
+    if action_name == "ACTION6":
+        data = action_data or {}
+        return ("ACTION6", int(data.get("x", 0)), int(data.get("y", 0)))
+    return (action_name,)
+
+
+def _graph_session_state(session: Any) -> dict[str, Any]:
+    gs = getattr(session, "_graph_state", None)
+    if gs is None:
+        gs = {
+            "graph": FrontierGraph(
+                click_limit=_graph_env_int("TAAF_GRAPH_CLICK_LIMIT", 64),
+                click_step=_graph_env_int("TAAF_GRAPH_CLICK_STEP", 8),
+                max_nodes=_graph_env_int("TAAF_GRAPH_MAX_NODES", 60000),
+            ),
+            "level_actions": {},        # level number -> executed engine actions
+            "completed_levels": set(),  # level numbers completed this run (permanent)
+            "vetoes_per_level": {},
+            "grinds_per_level": {},
+            "grind_exhausted": set(),   # levels whose reachable frontier is empty
+            "grinding": False,
+            "diag": {
+                "vetoes_issued": 0,
+                "vetoes_capped": 0,
+                "grinder_engagements": 0,
+                "grinder_actions": 0,
+                "levels_unlocked_by_grinder": 0,
+            },
+        }
+        session._graph_state = gs
+    return gs
+
+
+def graph_diagnostics(session: Any) -> dict[str, Any]:
+    """The B1-B3-style per-session diagnostics dict for the A/B kernel to log."""
+    gs = getattr(session, "_graph_state", None)
+    if gs is None:
+        return {}
+    out = dict(gs["diag"])
+    out.update(gs["graph"].diagnostics())
+    return out
+
+
+def _graph_mask_cells(session: Any) -> list:
+    """The live HUD mask for this game (patch 8's tracker), respecting its kill switch."""
+    tracker = getattr(session, "_hud_tracker", None)
+    if tracker is None or not _hud_mask_enabled():
+        return []
+    try:
+        return tracker.mask_cells()
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _graph_maybe_veto(session: Any, arguments: dict[str, Any]) -> dict[str, Any] | None:
+    """Synthetic zero-cost result for a proposed KNOWN no-op edge, else None."""
+    import arcengine
+
+    from inference.agent.action_names import to_engine_action
+    from inference.framework import solver
+
+    gs = getattr(session, "_graph_state", None)
+    if gs is None or gs["grinding"]:
+        return None
+    arguments = arguments or {}
+    if arguments.get("actions") is not None:
+        return None  # batches always execute
+    name = to_engine_action(str(arguments.get("action", "")).strip())
+    if not name or name == "RESET":
+        return None
+    game = session.game
+    state = game.current_state
+    if session.stop_event.is_set():
+        return None
+    if state.raw.state != arcengine.GameState.NOT_FINISHED:
+        return None  # terminal/odd states go down the original path
+    try:
+        action_id = arcengine.GameAction.from_name(name)
+    except Exception:  # noqa: BLE001
+        return None
+    if action_id.value not in state.available_actions:
+        return None
+    data: dict[str, Any] = {}
+    if action_id == arcengine.GameAction.ACTION6:
+        try:  # mirror _normalize_actions' clamping exactly (plan keys must match)
+            data = {
+                "x": max(0, min(63, int(arguments["col"]))),
+                "y": max(0, min(63, int(arguments["row"]))),
+            }
+        except (KeyError, TypeError, ValueError):
+            return None
+    level = solver._level_number(game)
+    if gs["level_actions"].get(level, 0) < _graph_env_int("TAAF_GRAPH_VETO_MIN_LEVEL_ACTIONS", 10):
+        return None  # state-gated buttons: never veto early in a level
+    key = gs["graph"].node_key(level, solver._grid_from_state(state), _graph_mask_cells(session))
+    plan = _graph_plan_key(name, data)
+    if not gs["graph"].is_known_noop(key, plan):
+        return None
+    if gs["vetoes_per_level"].get(level, 0) >= _graph_env_int("TAAF_GRAPH_VETO_CAP", 25):
+        gs["diag"]["vetoes_capped"] += 1
+        return None
+    gs["vetoes_per_level"][level] = gs["vetoes_per_level"].get(level, 0) + 1
+    gs["diag"]["vetoes_issued"] += 1
+    display = solver._format_action_display(name, data)
+    return {
+        "executed": True,
+        "action_num": session.action_count,  # unchanged: no scored action was spent
+        "level": level,
+        "score": int(state.levels_completed),
+        "reward": 0.0,
+        "state": state.raw.state.name,
+        "valid_actions": solver.to_model_actions(solver._engine_action_names(game)),
+        "board_changed": False,
+        "done": False,
+        "level_completed": False,
+        "game_over": False,
+        "run_complete": False,
+        "action_name": name,
+        "action_data": (
+            solver._model_mouse_action_data(data)
+            if action_id == arcengine.GameAction.ACTION6
+            else dict(data)
+        ),
+        "action_display": display,
+        "batch_index": 1,
+        "batch_size": 1,
+        "requested_count": 1,
+        "executed_count": 1,
+        "vetoed_noop": True,
+        **session.timing_payload(),
+    }
+
+
+def _graph_maybe_grind(session: Any) -> None:
+    """Engage the frontier grinder iff patch 7's watchdog state shows a stall."""
+    import threading
+    import time
+
+    from inference.framework import solver
+
+    wd = getattr(session, "_watchdog_state", None)
+    if not isinstance(wd, dict) or wd.get("in_reset"):
+        return
+    if wd.get("thread_id") != threading.get_ident():
+        return  # engine actions only ever from the session's own worker thread
+    gs = _graph_session_state(session)
+    if gs["grinding"]:
+        return
+    if (time.monotonic() - wd["t_progress"]) < wd["stall_s"]:
+        return
+
+    game = session.game
+    run = getattr(game, "game_run", None)
+    if run is None or run.state != "playing":
+        return
+    if session.stop_event.is_set():
+        return
+    if solver._is_run_complete(game) or solver._is_engine_game_over(game):
+        return
+    if session.runtime_limit_reached():
+        return
+    if (
+        session.solver.max_actions_per_game is not None
+        and session.action_count >= session.solver.max_actions_per_game
+    ):
+        return
+    soft_remaining = session.solver.soft_time_remaining_seconds()
+    if soft_remaining is not None and soft_remaining < 120.0:
+        return
+    level = solver._level_number(game)
+    if level in gs["completed_levels"]:
+        return  # grinding a completed level's counter destroys its score — never
+    if level in gs["grind_exhausted"]:
+        return
+    if gs["grinds_per_level"].get(level, 0) >= _graph_env_int("TAAF_GRAPH_GRIND_MAX_PER_LEVEL", 2):
+        return  # keep the watchdog's RESET/kill path reachable behind the grinder
+    gs["grinds_per_level"][level] = gs["grinds_per_level"].get(level, 0) + 1
+    gs["diag"]["grinder_engagements"] += 1
+    _graph_grind(session, gs, level)
+
+
+def _graph_grind(session: Any, gs: dict[str, Any], level: int) -> None:
+    """Scripted frontier walk at engine speed. Free on never-completed levels."""
+    import time
+    from collections import deque
+
+    import arcengine
+
+    from inference.framework import solver
+
+    graph: FrontierGraph = gs["graph"]
+    game = session.game
+    run = game.game_run
+    game_id = getattr(run, "game_id", "?")
+    budget = max(1, _graph_env_int("TAAF_GRAPH_GRIND_BUDGET", 2000))
+    start_levels = int(game.current_state.levels_completed)
+    print(
+        f"[graph] {game_id}: stall on level {level} (0 completions this run) — "
+        f"frontier grind, budget {budget}",
+        flush=True,
+    )
+    gs["grinding"] = True
+    executed = 0
+    stop_reason = "budget"
+    plan_queue: deque = deque()
+    try:
+        while executed < budget:
+            if session.stop_event.is_set():
+                stop_reason = "cancelled"
+                break
+            if solver._is_run_complete(game):
+                stop_reason = "win"
+                break
+            state = game.current_state
+            if state.raw.state == arcengine.GameState.GAME_OVER:
+                stop_reason = "game_over"
+                break
+            if int(state.levels_completed) != start_levels:
+                stop_reason = "level_unlocked"
+                break
+            if session.runtime_limit_reached():
+                stop_reason = "runtime_cap"
+                break
+            if (
+                session.solver.max_actions_per_game is not None
+                and session.action_count >= session.solver.max_actions_per_game
+            ):
+                stop_reason = "action_cap"
+                break
+            soft_remaining = session.solver.soft_time_remaining_seconds()
+            if soft_remaining is not None and soft_remaining < 60.0:
+                stop_reason = "soft_time"
+                break
+
+            grid = solver._grid_from_state(state)
+            mask = _graph_mask_cells(session)
+            key = graph.node_key(level, grid, mask)
+            graph.ensure_node(
+                key, solver._engine_action_names(game), graph.masked_rows(grid, mask)
+            )
+
+            expected_dest = None
+            if plan_queue:
+                plan = plan_queue.popleft()
+                expected_dest = graph.edge_dest(key, plan)
+            else:
+                plan = graph.pop_untested(key)
+                if plan is None:
+                    path = graph.bfs_to_frontier(key)
+                    if not path:
+                        gs["grind_exhausted"].add(level)
+                        stop_reason = "frontier_exhausted"
+                        break
+                    plan_queue = deque(path)
+                    plan = plan_queue.popleft()
+                    expected_dest = graph.edge_dest(key, plan)
+
+            try:
+                action_id = arcengine.GameAction.from_name(plan[0])
+            except Exception:  # noqa: BLE001
+                graph.mark_dead(key, plan)
+                plan_queue.clear()
+                continue
+            if action_id.value not in state.available_actions:
+                graph.mark_dead(key, plan)
+                plan_queue.clear()
+                continue
+            data = (
+                {"x": int(plan[1]), "y": int(plan[2])}
+                if plan[0] == "ACTION6" and len(plan) == 3
+                else {}
+            )
+
+            history_len = len(session.history_entries)
+            events_len = len(session.viewer_events)
+            try:
+                payload = session._execute_action(
+                    arcengine.ActionInput(id=action_id, data=data),
+                    batch_index=1,
+                    batch_size=1,
+                    generated_tokens=0,
+                    flush_viewer_payload=False,
+                )
+            except Exception:  # noqa: BLE001
+                graph.mark_dead(key, plan)
+                plan_queue.clear()
+                continue
+            executed += 1
+            gs["diag"]["grinder_actions"] += 1
+
+            level_up = int(game.current_state.levels_completed) != start_levels
+            game_over = bool(payload.get("game_over")) if isinstance(payload, dict) else False
+            if not (level_up or game_over):
+                # Grind steps must not bloat the model-facing history or the
+                # in-memory viewer stream (a 2000-action walk would append
+                # thousands of full-board entries): drop the bulk records and
+                # keep only the graph edges + the replay trace.
+                try:
+                    if len(session.history_entries) > history_len:
+                        del session.history_entries[history_len:]
+                    if (
+                        len(session.viewer_events) > events_len
+                        and session._viewer_events_flushed <= events_len
+                    ):
+                        del session.viewer_events[events_len:]
+                except Exception:  # noqa: BLE001
+                    pass
+            if level_up:
+                gs["diag"]["levels_unlocked_by_grinder"] += 1
+                stop_reason = "level_unlocked"
+                break
+            if game_over:
+                stop_reason = "game_over"
+                break
+            if plan_queue and expected_dest is not None:
+                new_key = graph.node_key(
+                    solver._level_number(game),
+                    solver._grid_from_state(game.current_state),
+                    _graph_mask_cells(session),
+                )
+                if new_key != expected_dest:
+                    plan_queue.clear()  # replay desynced: re-plan from live state
+    finally:
+        gs["grinding"] = False
+        try:
+            session.write_runtime_state()
+        except Exception:  # noqa: BLE001
+            pass
+        if executed > 0:
+            wd = getattr(session, "_watchdog_state", None)
+            if isinstance(wd, dict):
+                # Progress was made: refresh the watchdog so its recovery RESET
+                # re-arms instead of firing on this same poll. A zero-action
+                # grind leaves wd untouched so recovery proceeds immediately.
+                import time as _time
+
+                wd["t_progress"] = _time.monotonic()
+                wd["progress"] = None
+    print(
+        f"[graph] {game_id}: grind ended ({stop_reason}) after {executed} engine "
+        f"actions — levels {int(game.current_state.levels_completed)}, "
+        f"graph {graph.diagnostics()}",
+        flush=True,
+    )
+
+
+def patch_frontier_graph() -> str:
+    """Install the graph substrate, veto and grinder. Presence-gated per symbol."""
+    import arcengine
+
+    from inference.framework import solver
+
+    session_cls = getattr(solver, "_HarnessGameSession", None)
+    if session_cls is None:
+        return "patch11 graph: FAIL (_HarnessGameSession not found)"
+    missing = [
+        name
+        for name in ("_execute_action", "step_env", "should_stop", "timing_payload")
+        if not hasattr(session_cls, name)
+    ]
+    if missing:
+        return f"patch11 graph: SKIP (bundle session lacks {missing})"
+    # Scored-bundle law: presence-gate EVERY module symbol we call and decline
+    # cleanly when the bundle differs (see test_sandbox_patch_declines_on_scored_
+    # bundle_shape for the precedent this follows).
+    missing = [
+        name
+        for name in (
+            "_grid_from_state",
+            "_engine_action_names",
+            "_level_number",
+            "_is_run_complete",
+            "_is_engine_game_over",
+            "_format_action_display",
+            "_model_mouse_action_data",
+            "to_model_actions",
+        )
+        if not hasattr(solver, name)
+    ]
+    if missing:
+        return f"patch11 graph: SKIP (bundle solver lacks {missing})"
+    missing = [name for name in ("ActionInput", "GameAction") if not hasattr(arcengine, name)]
+    if missing:
+        return f"patch11 graph: SKIP (arcengine lacks {missing})"
+    try:
+        from inference.agent.action_names import to_engine_action  # noqa: F401
+    except ImportError:
+        return "patch11 graph: SKIP (bundle lacks action_names.to_engine_action)"
+    if getattr(session_cls._execute_action, "_graph_patched", False):
+        return "patch11 graph: SKIP (already applied)"
+
+    original_execute = session_cls._execute_action
+    original_step_env = session_cls.step_env
+    original_should_stop = session_cls.should_stop
+
+    def _execute_action(self: Any, action: Any, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        pre = None
+        if _graph_enabled():
+            try:
+                gs = _graph_session_state(self)
+                state = self.game.current_state
+                grid = solver._grid_from_state(state)
+                mask = _graph_mask_cells(self)
+                level = solver._level_number(self.game)
+                key = gs["graph"].node_key(level, grid, mask)
+                gs["graph"].ensure_node(
+                    key,
+                    solver._engine_action_names(self.game),
+                    gs["graph"].masked_rows(grid, mask),
+                )
+                pre = (gs, key, level, int(state.levels_completed))
+            except Exception:  # noqa: BLE001 - bookkeeping must never break an action
+                pre = None
+        payload = original_execute(self, action, *args, **kwargs)
+        if pre is not None and isinstance(payload, dict) and payload.get("executed"):
+            try:
+                gs, prev_key, level, levels_before = pre
+                state = self.game.current_state
+                levels_after = int(state.levels_completed)
+                gs["level_actions"][level] = gs["level_actions"].get(level, 0) + 1
+                for done in range(levels_before + 1, levels_after + 1):
+                    gs["completed_levels"].add(done)
+                name = getattr(getattr(action, "id", None), "name", "")
+                if name and name != "RESET":
+                    grid = solver._grid_from_state(state)
+                    mask = _graph_mask_cells(self)
+                    post_key = gs["graph"].node_key(
+                        solver._level_number(self.game), grid, mask
+                    )
+                    gs["graph"].ensure_node(
+                        post_key,
+                        solver._engine_action_names(self.game),
+                        gs["graph"].masked_rows(grid, mask),
+                    )
+                    gs["graph"].record(
+                        prev_key,
+                        _graph_plan_key(name, dict(getattr(action, "data", None) or {})),
+                        post_key,
+                        changed=bool(payload.get("board_changed")),
+                        level_up=levels_after > levels_before,
+                        game_over=bool(payload.get("game_over")),
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+        return payload
+
+    def step_env(self: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        if _graph_enabled():
+            try:
+                veto = _graph_maybe_veto(self, arguments)
+            except Exception:  # noqa: BLE001 - a broken veto must never eat an action
+                veto = None
+            if veto is not None:
+                return veto
+        return original_step_env(self, arguments)
+
+    def should_stop(self: Any) -> bool:
+        if _graph_enabled() and _watchdog_enabled():
+            try:
+                _graph_maybe_grind(self)
+            except Exception:  # noqa: BLE001 - the grinder must never wedge the loop
+                pass
+        return original_should_stop(self)
+
+    # Keep the underlying patches' introspection markers visible (the A/B
+    # kernel's patch proof and each patch's own idempotency check read them).
+    for wrapper, original in (
+        (_execute_action, original_execute),
+        (step_env, original_step_env),
+        (should_stop, original_should_stop),
+    ):
+        _forward_patch_markers(wrapper, original)
+        wrapper._graph_patched = True  # type: ignore[attr-defined]
+
+    session_cls._execute_action = _execute_action
+    session_cls.step_env = step_env
+    session_cls.should_stop = should_stop
+
+    if getattr(original_should_stop, "_watchdog_patched", False):
+        return "patch11 graph: OK"
+    return "patch11 graph: OK (grinder dormant — watchdog patch absent)"
 
 
 def apply_all(verbose: bool = True) -> list[str]:
@@ -1439,6 +2251,7 @@ def apply_all(verbose: bool = True) -> list[str]:
         patch_hud_board_identity,
         patch_hud_sandbox,
         patch_win_replay,
+        patch_frontier_graph,
     ):
         try:
             results.append(fn())

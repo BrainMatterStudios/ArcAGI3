@@ -137,6 +137,7 @@ def _reset_count(game) -> int:
 
 def test_watchdog_detects_in_call_hang_and_completes_run(tmp_path, monkeypatch):
     """Injected hang inside analyze: detect -> recovery RESET -> kill -> run banked."""
+    monkeypatch.setenv("TAAF_GRAPH", "0")  # isolate patch 7 from the patch-11 grinder
     monkeypatch.setenv("TAAF_WATCHDOG", "1")
     monkeypatch.setenv("TAAF_WATCHDOG_STALL_S", "1.5")
     monkeypatch.setenv("TAAF_WATCHDOG_MAX_RESETS", "1")
@@ -160,6 +161,7 @@ def test_watchdog_detects_in_call_hang_and_completes_run(tmp_path, monkeypatch):
 
 def test_watchdog_detects_retry_loop_stall(tmp_path, monkeypatch):
     """Endless retryable failures: recovery RESET, then a clean stop."""
+    monkeypatch.setenv("TAAF_GRAPH", "0")  # isolate patch 7 from the patch-11 grinder
     monkeypatch.setenv("TAAF_WATCHDOG", "1")
     monkeypatch.setenv("TAAF_WATCHDOG_STALL_S", "1.5")
     monkeypatch.setenv("TAAF_WATCHDOG_MAX_RESETS", "1")
@@ -183,6 +185,7 @@ def test_watchdog_detects_retry_loop_stall(tmp_path, monkeypatch):
 
 def test_watchdog_wall_cap_stops_endless_progress(tmp_path, monkeypatch):
     """A game that always progresses must still hit the per-game wall cap."""
+    monkeypatch.setenv("TAAF_GRAPH", "0")  # isolate patch 7 from the patch-11 grinder
     monkeypatch.setenv("TAAF_WATCHDOG", "1")
     monkeypatch.setenv("TAAF_WATCHDOG_STALL_S", "300")
     monkeypatch.setenv("TAAF_WATCHDOG_WALL_CAP_S", "2")
@@ -203,6 +206,7 @@ def test_watchdog_wall_cap_stops_endless_progress(tmp_path, monkeypatch):
 
 def test_watchdog_disabled_is_inert(tmp_path, monkeypatch):
     """TAAF_WATCHDOG=0: the session runs and stops on its own limits only."""
+    monkeypatch.setenv("TAAF_GRAPH", "0")  # isolate patch 7 from the patch-11 grinder
     monkeypatch.setenv("TAAF_WATCHDOG", "0")
     monkeypatch.setenv("TAAF_WATCHDOG_STALL_S", "1")
 
@@ -220,6 +224,7 @@ def test_watchdog_disabled_is_inert(tmp_path, monkeypatch):
 
 def test_watchdog_respects_existing_solver_runtime_cap(tmp_path, monkeypatch):
     """When max_runtime_s_per_game is set, the watchdog wall cap must defer to it."""
+    monkeypatch.setenv("TAAF_GRAPH", "0")  # isolate patch 7 from the patch-11 grinder
     monkeypatch.setenv("TAAF_WATCHDOG", "1")
     monkeypatch.setenv("TAAF_WATCHDOG_STALL_S", "300")
     monkeypatch.setenv("TAAF_WATCHDOG_WALL_CAP_S", "1")

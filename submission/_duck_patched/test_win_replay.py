@@ -187,6 +187,8 @@ def test_win_replay_end_to_end_sloppy_then_clean(rest_server, tmp_path, monkeypa
     base_url, api = rest_server
     monkeypatch.setenv("TAAF_WIN_REPLAY", "1")
     monkeypatch.setenv("TAAF_WATCHDOG_STALL_S", "900")  # keep the watchdog quiet
+    monkeypatch.setenv("TAAF_GRAPH", "0")  # isolate patch 10: the wasted-click
+    # script deliberately repeats a no-op, which patch 11 would veto
 
     import arc_agi
     from taaf.game import RunSession
