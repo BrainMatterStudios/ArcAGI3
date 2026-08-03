@@ -1,25 +1,43 @@
 # ============================================================================
-# A/B wave driver — behavioral effect of the three shipped duck patches
-# (watchdog f591392, HUD mask b28569c, replay-at-WIN a1d0378) on the real
-# bundled Qwen3.6-27B duck.
+# A/B wave driver — ROUND 2: marginal value of patch11 (frontier graph) and
+# patch12 (compaction + plan queue) on top of the submitted v6 config, on the
+# real bundled Qwen3.6-27B duck.
 #
-# Design:
-#   * ONE kernel session, ONE vLLM server. Arms differ ONLY in the three env
-#     kill switches (TAAF_WATCHDOG / TAAF_HUD_MASK / TAAF_WIN_REPLAY), which
-#     duck_patches.py provably reads AT CALL TIME (_watchdog_enabled(),
-#     _hud_mask_enabled(), _win_replay_enabled() all read os.environ per call),
-#     so toggling between waves in one process is a genuine arm switch.
-#   * Waves A,B,B,A (counterbalanced): with exactly 2 pairs, ABBA cancels
-#     linear server drift deterministically, which dominates randomisation at
-#     n=2 (an unlucky draw gives AABB and re-introduces drift). The realized
-#     order is logged per law 5 (HANDOFF-2026-08-01 §8).
-#   * Per the A/A noise floor (RMS 0.707 levels/game-run), a single-session
-#     score delta is NOISE. The primary readout is qualitative event counts
-#     (watchdog fires, mask engagement, replay events, per-arm patch proof)
-#     plus paired per-game level deltas — not the score.
+# Arms (env pins only; the patch layer is identical everywhere — apply_all(),
+# exactly what the submitted v6 kernel installs):
+#   B = v6 as submitted: watchdog + HUD mask + win replay ON,
+#       TAAF_GRAPH=0, TAAF_COMPACT=0, grid burner off.
+#   C = B + TAAF_GRAPH=1   (patch11: frontier graph, no-op veto, stall grinder)
+#   D = B + TAAF_COMPACT=1 (patch12: compaction-on-evict + LLM-free plan queue)
+#
+# Design (carried from round 1, commit 3c21726):
+#   * ONE kernel session, ONE vLLM server. duck_patches.py provably reads every
+#     switch AT CALL TIME (_watchdog_enabled/_hud_mask_enabled/
+#     _win_replay_enabled/_graph_enabled/_compact_enabled all read os.environ
+#     per call), so toggling between waves in one process is a genuine arm
+#     switch. Analyzers (ToolAgent) are constructed per game INSIDE each wave,
+#     so patch12b's system-prompt guidance also follows the wave's env.
+#   * Waves B,C,D,D,C,B (mirrored counterbalance): each arm's two runs average
+#     to the same mean wave index (B:2.5, C:2.5, D:2.5), cancelling linear
+#     server drift deterministically. Realized order is logged (law 5).
+#   * Per the A/A noise floor (RMS 0.707 levels/game-run), single-session score
+#     deltas are NOISE. Primary readouts are event counts: graph veto/grinder
+#     engagements (C), compaction/queue counters (D), watchdog/HUD/replay
+#     events (all), plus paired per-game level deltas vs B.
 #   * "An env toggle is not a shipped arm": every wave logs positive runtime
-#     proof of its toggle state AND the patch layer's applied markers; the
-#     serving assert proves the 27B is genuinely served BEFORE any game runs.
+#     proof of its toggle state AND a patch-proof snapshot; the serving assert
+#     proves the 27B is genuinely served BEFORE any game runs.
+#
+# Round-2 instrumentation fixes/additions:
+#   * gen_tokens FIXED. Round 1 read gr.final_generated_tokens, which this
+#     bundle's solver NEVER populates (play() calls game.finish_game() with no
+#     arguments — solver.py:346). The real per-action accounting lives in
+#     run.history[i].generated_tokens (solver._execute_action diffs the
+#     analyzer's cumulative usage-based counter per action — solver.py:679-682).
+#     Rows now sum the history records; the analyzer's own session counters and
+#     solver_note ("tokens=N", solver.py:335) are captured as cross-checks.
+#   * Per-game graph diagnostics (C waves) via duck_patches.graph_diagnostics.
+#   * COMPACT_DIAGNOSTICS deltas per wave + per-game compact/queue state.
 #
 # This file is BOTH inlined into the kernel's run cell by build_ab_wmr.py AND
 # imported by dry_run.py for the GPU-free local test. Edit here, then rebuild.
@@ -27,26 +45,25 @@
 import glob as _ab_glob
 import json as _ab_json
 import os as _ab_os
+import sys as _ab_sys
 import time as _ab_time
 import traceback as _ab_traceback
 import urllib.request as _ab_urlreq
 
+_AB_WMR_TRIO = {"TAAF_WATCHDOG": "1", "TAAF_HUD_MASK": "1", "TAAF_WIN_REPLAY": "1",
+                "TAAF_GRID_BURNER": "0"}
 AB_ARM_ENV = {
-    "A": {"TAAF_WATCHDOG": "0", "TAAF_HUD_MASK": "0", "TAAF_WIN_REPLAY": "0"},
-    "B": {"TAAF_WATCHDOG": "1", "TAAF_HUD_MASK": "1", "TAAF_WIN_REPLAY": "1"},
+    # B is byte-for-byte the submitted v6 experiment env (EXPERIMENT_ENV in
+    # build_duck_patched.py pins GRAPH=0 COMPACT=0; WMR trio on by default).
+    "B": {**_AB_WMR_TRIO, "TAAF_GRAPH": "0", "TAAF_COMPACT": "0"},
+    "C": {**_AB_WMR_TRIO, "TAAF_GRAPH": "1", "TAAF_COMPACT": "0"},
+    "D": {**_AB_WMR_TRIO, "TAAF_GRAPH": "0", "TAAF_COMPACT": "1"},
 }
 
-# Panel (10 games) chosen from the 196-run g0 base distribution
-# (docs/test-artifacts-2026-08-02/RESULTS-2026-08-02-trace-audits.md):
-#   unlock-sensitive (base sometimes completes 1-2 levels, mean lvl in parens):
-#     sb26 (1.29) re86 (1.14) su15 (0.71) tu93 (0.71) vc33 (0.71)
-#     bp35 (0.64) ar25 (0.57)
-#   stall-prone / watchdog-sensitive (lowest realized throughput in the 3600s
-#   box, 0 levels in 7 repeats): g50t (4-62 actions) ls20 (15-65 actions);
-#     ft09 (14-34 actions but can hit 2 levels) doubles as both.
-#   replay-sensitive: sb26 (lowest baselines of all 25, the only realistic
-#     fast-full-win candidate). vc33/ls20/tu93 also exercise the HUD mask's
-#     hardest cases (paint fills, two-row bar, edge strip).
+# Panel (10 games) — SAME as round 1 (chosen from the 196-run g0 base
+# distribution, docs/test-artifacts-2026-08-02/RESULTS-2026-08-02-trace-audits.md):
+# unlock-sensitive sb26 re86 su15 tu93 vc33 bp35 ar25; stall-prone g50t ls20
+# ft09; replay-sensitive sb26; HUD-hard vc33/ls20/tu93.
 AB_DEFAULT_GAMES = "sb26,re86,su15,tu93,vc33,bp35,ar25,ft09,g50t,ls20"
 
 
@@ -55,9 +72,9 @@ def _ab_cfg(name: str, default: str) -> str:
 
 
 AB_GAMES = [s.strip() for s in _ab_cfg("AB_GAMES", AB_DEFAULT_GAMES).split(",") if s.strip()]
-AB_WAVES = [w.strip().upper() for w in _ab_cfg("AB_WAVES", "A,B,B,A").split(",") if w.strip()]
+AB_WAVES = [w.strip().upper() for w in _ab_cfg("AB_WAVES", "B,C,D,D,C,B").split(",") if w.strip()]
 AB_BUDGET = float(_ab_cfg("AB_BUDGET", "3600"))          # per-game wall cap, seconds
-AB_DEADLINE_S = float(_ab_cfg("AB_DEADLINE_S", str(int(7.6 * 3600))))  # from notebook start
+AB_DEADLINE_S = float(_ab_cfg("AB_DEADLINE_S", str(int(8.2 * 3600))))  # from notebook start
 AB_WAVE_OVERHEAD_S = 900.0                               # server start + collect + slack
 AB_DRY_RUN = _ab_os.environ.get("AB_DRY_RUN", "") == "1"
 
@@ -65,38 +82,92 @@ AB_SESSIONS = []                # (wave_index, session) — filled by the regist
 _AB_WAVE = {"i": -1}
 
 
+def _ab_patch_module():
+    """The namespace holding duck_patches' module-level objects.
+
+    In the kernel the patch layer is inlined into the notebook, so
+    graph_diagnostics / COMPACT_DIAGNOSTICS live in __main__; in the dry run
+    they live in the synthetic 'duck_patches' module."""
+    mod = _ab_sys.modules.get("duck_patches")
+    if mod is not None and hasattr(mod, "COMPACT_DIAGNOSTICS"):
+        return mod
+    main = _ab_sys.modules.get("__main__")
+    if main is not None and hasattr(main, "COMPACT_DIAGNOSTICS"):
+        return main
+    return None
+
+
 # --- toggle semantics: EXACTLY duck_patches.py's readers -----------------------
 
 
 def _ab_toggles():
-    def on(name):
+    def default_on(name):
         return _ab_os.environ.get(name, "1").strip() not in {"0", "false", "False"}
 
+    def opt_in(name):  # grid burner only: _grid_burner_enabled() is opt-in
+        return _ab_os.environ.get(name, "0").strip() in {"1", "true", "True"}
+
     return {
-        "TAAF_WATCHDOG": on("TAAF_WATCHDOG"),
-        "TAAF_HUD_MASK": on("TAAF_HUD_MASK"),
-        "TAAF_WIN_REPLAY": on("TAAF_WIN_REPLAY"),
+        "TAAF_WATCHDOG": default_on("TAAF_WATCHDOG"),
+        "TAAF_HUD_MASK": default_on("TAAF_HUD_MASK"),
+        "TAAF_WIN_REPLAY": default_on("TAAF_WIN_REPLAY"),
+        "TAAF_GRAPH": default_on("TAAF_GRAPH"),
+        "TAAF_COMPACT": default_on("TAAF_COMPACT"),
+        "TAAF_GRID_BURNER": opt_in("TAAF_GRID_BURNER"),
     }
 
 
-def _ab_patch_proof():
-    """Positive proof the patch layer is installed on the live session class.
+def _ab_expected_toggles(arm):
+    return {k: v == "1" for k, v in AB_ARM_ENV[arm].items()}
 
-    Captured BEFORE the registry wrapper re-wraps play/_execute_action (the
-    wrapper would hide the markers on the class attributes).
+
+def _ab_patch_proof():
+    """Positive proof the full patch layer is installed on the live classes.
+
+    Session-class play/_execute_action markers are read BEFORE the registry
+    wrapper re-wraps them (behav_probe already hides inner markers on
+    _execute_action, hence the or-chain, as in round 1). ToolAgent and
+    step_env are never wrapped by probe/registry, so their markers stay
+    readable all run and are re-snapshotted per wave.
     """
+    from inference.agent import tool_agent as _ta
     from inference.framework import solver as _sv
 
     cls = _sv._HarnessGameSession
+    agent_cls = _ta.ToolAgent
     return {
         "watchdog_should_stop_patched": bool(getattr(cls.should_stop, "_watchdog_patched", False)),
+        "graph_should_stop_patched": bool(getattr(cls.should_stop, "_graph_patched", False)),
+        "graph_step_env_patched": bool(getattr(cls.step_env, "_graph_patched", False)),
         "hud_or_outer_execute_patched": bool(getattr(cls._execute_action, "_hud_patched", False)
                                              or getattr(cls._execute_action, "_win_replay_patched", False)
+                                             or getattr(cls._execute_action, "_graph_patched", False)
                                              or getattr(cls._execute_action, "_behav", False)),
         "play_patched": bool(getattr(cls.play, "_win_replay_patched", False)
                              or getattr(cls.play, "_watchdog_play_patched", False)),
+        "plan_queue_analyze_patched": bool(getattr(agent_cls.analyze, "_plan_queue_patched", False)),
+        "compaction_history_patched": bool(
+            getattr(agent_cls._persistent_history_messages, "_compact12_patched", False)),
+        "compact_prompt_injector_patched": bool(
+            getattr(agent_cls._build_user_prompt, "_compact12_patched", False)),
         "execute_chain_repr": repr(cls._execute_action),
         "play_chain_repr": repr(cls.play),
+    }
+
+
+def _ab_wave_patch_proof():
+    """Per-arm re-proof on the surfaces the registry wrapper does not touch."""
+    from inference.agent import tool_agent as _ta
+    from inference.framework import solver as _sv
+
+    cls = _sv._HarnessGameSession
+    agent_cls = _ta.ToolAgent
+    return {
+        "graph_step_env_patched": bool(getattr(cls.step_env, "_graph_patched", False)),
+        "watchdog_should_stop_patched": bool(getattr(cls.should_stop, "_watchdog_patched", False)),
+        "plan_queue_analyze_patched": bool(getattr(agent_cls.analyze, "_plan_queue_patched", False)),
+        "compaction_history_patched": bool(
+            getattr(agent_cls._persistent_history_messages, "_compact12_patched", False)),
     }
 
 
@@ -253,6 +324,21 @@ def ab_load_baselines(env_dir):
 
 # --- per-session diagnostics ---------------------------------------------------
 
+_COMPACT_DIAG_KEYS = (
+    "evictions_seen", "compactions_done", "compaction_failures", "compaction_tokens",
+    "queue_plans", "queue_plans_rejected", "queue_steps_executed", "queue_aborts",
+    "llm_calls_saved",
+)
+_COMPACT_KNOWLEDGE_KEYS = ("facts", "action_effects", "failed_hypotheses", "open_questions")
+
+
+def _ab_compact_snapshot():
+    mod = _ab_patch_module()
+    diag = getattr(mod, "COMPACT_DIAGNOSTICS", None) if mod else None
+    if not isinstance(diag, dict):
+        return None
+    return {k: int(diag.get(k, 0) or 0) for k in _COMPACT_DIAG_KEYS}
+
 
 def _ab_session_diag(session):
     d = {}
@@ -279,9 +365,63 @@ def _ab_session_diag(session):
     rp = getattr(session, "_win_replay_result", None)
     if rp is not None:
         d["replay"] = rp
+
+    # -- round 2: graph diagnostics (C waves; state exists only when TAAF_GRAPH=1)
+    if getattr(session, "_graph_state", None) is not None:
+        mod = _ab_patch_module()
+        try:
+            if mod is not None and hasattr(mod, "graph_diagnostics"):
+                d["graph"] = dict(mod.graph_diagnostics(session))
+            else:  # same fields graph_diagnostics returns, read directly
+                gs = session._graph_state
+                d["graph"] = {**gs["diag"], **gs["graph"].diagnostics()}
+        except Exception as e:
+            d["graph"] = {"error": repr(e)}
+
+    # -- round 2: analyzer-side token + compaction/queue state
+    an = getattr(session, "analyzer", None)
+    if an is not None:
+        try:
+            d["analyzer_tokens"] = {
+                "generated": int(getattr(an, "generated_tokens", 0) or 0),
+                "total": int(getattr(an, "total_tokens", 0) or 0),
+            }
+        except Exception as e:
+            d["analyzer_tokens"] = {"error": repr(e)}
+        cs = getattr(an, "_compact12_state", None)
+        if isinstance(cs, dict):
+            try:
+                d["compact"] = {
+                    "compactions_done": int(cs.get("compactions_done", 0) or 0),
+                    "queue_total_last": int(cs.get("queue_total", 0) or 0),
+                    "queue_pending": len(cs.get("queue") or []),
+                    "knowledge_items": {
+                        k: len((cs.get("knowledge") or {}).get(k) or [])
+                        for k in _COMPACT_KNOWLEDGE_KEYS},
+                }
+            except Exception as e:
+                d["compact"] = {"error": repr(e)}
+
     d["trace_len"] = len(getattr(session, "_replay_trace", None) or [])
     d["action_count"] = int(getattr(session, "action_count", 0) or 0)
     return d
+
+
+def _ab_row_tokens(gr):
+    """FIXED token accounting (round-1 defect): per-action generated tokens are
+    recorded on run.history entries; final_generated_tokens is never populated
+    by this bundle's solver (finish_game() is called with no arguments)."""
+    total = 0
+    for rec in (getattr(gr, "history", None) or []):
+        try:
+            total += max(0, int(getattr(rec, "generated_tokens", 0) or 0))
+        except (TypeError, ValueError):
+            continue
+    try:
+        total += max(0, int(getattr(gr, "final_generated_tokens", 0) or 0))
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        pass
+    return total
 
 
 # --- main ----------------------------------------------------------------------
@@ -295,7 +435,7 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
     t0 = notebook_start if notebook_start is not None else _ab_time.time()
     stage = {"s": "init"}
     result = {
-        "experiment": "ab_wmr",
+        "experiment": "ab_wmr_round2_graph_compact",
         "arms": AB_ARM_ENV,
         "games": AB_GAMES,
         "waves_planned": AB_WAVES,
@@ -317,7 +457,7 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
             _ab_json.dumps(result, indent=1, default=str))
 
     try:
-        # -- config snapshot: proof both arms share sampling/config ------------
+        # -- config snapshot: proof all arms share sampling/config -------------
         stage["s"] = "config_snapshot"
         try:
             from inference.agent import tool_agent as _ta
@@ -384,13 +524,15 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
             stage["s"] = f"wave{wi}_{arm}_env"
             _ab_os.environ.update(AB_ARM_ENV[arm])
             toggles = _ab_toggles()
-            expected = arm == "B"
-            if any(v != expected for v in toggles.values()):
-                raise RuntimeError(f"arm {arm} toggle mismatch: {toggles}")
+            expected = _ab_expected_toggles(arm)
+            if toggles != expected:
+                raise RuntimeError(
+                    f"arm {arm} toggle mismatch: realized {toggles} != expected {expected}")
             print(f"[ab] === wave {wi} arm {arm} toggles {toggles} "
                   f"elapsed {elapsed:.0f}s ===", flush=True)
 
             stage["s"] = f"wave{wi}_{arm}_server"
+            compact_before = _ab_compact_snapshot()
             srv = _ca.CompetitionArcadeServer(
                 game_ids=tuple(chosen), total_runs=len(chosen),
                 environments_dir=env_dir).start()
@@ -446,22 +588,32 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
                         "apl_sum_matches_history": (sum(apl) == hist),
                         "state": str(getattr(gr, "state", None)),
                         "wallclock_s": getattr(gr, "final_wallclock_seconds", None),
-                        "gen_tokens": getattr(gr, "final_generated_tokens", None),
+                        "gen_tokens": _ab_row_tokens(gr),
+                        "solver_note": str(getattr(gr, "solver_note", "") or ""),
                         "score": (ab_env_score(lv, apl, nl, baselines[src])
                                   if src in baselines else None),
                     }
                     row.update(diag_by_run.get(id(gr), {}))
                     rows.append(row)
                     print(f"[ab] w{wi} {arm} {src}: levels={lv}/{nl} actions={hist} "
-                          f"score={row['score']} wd={row.get('watchdog')} "
-                          f"hud={row.get('hud')} replay={(row.get('replay') or {}).get('status')}",
+                          f"tok={row['gen_tokens']} score={row['score']} "
+                          f"wd={row.get('watchdog')} hud={row.get('hud')} "
+                          f"graph={row.get('graph')} compact={row.get('compact')} "
+                          f"replay={(row.get('replay') or {}).get('status')}",
                           flush=True)
 
+                compact_after = _ab_compact_snapshot()
                 wave_rec = {
                     "wave": wi, "arm": arm, "env": dict(AB_ARM_ENV[arm]),
-                    "toggles_verified": toggles, "wall_s": round(wall, 1),
+                    "toggles_verified": toggles,
+                    "patch_proof_wave": _ab_wave_patch_proof(),
+                    "wall_s": round(wall, 1),
                     "started_at_elapsed_s": round(elapsed, 1), "rows": rows,
                 }
+                if compact_before is not None and compact_after is not None:
+                    wave_rec["compact_diag_delta"] = {
+                        k: compact_after[k] - compact_before[k] for k in _COMPACT_DIAG_KEYS}
+                    wave_rec["compact_diag_cumulative"] = compact_after
                 if callable(behav_report):
                     try:
                         wave_rec["behav_cumulative"] = behav_report()
@@ -499,9 +651,9 @@ def _ab_print_summary(result):
     print("\n[ab] ================ SUMMARY ================", flush=True)
     print(f"[ab] wave order realized: "
           f"{[(w['wave'], w['arm']) for w in result.get('waves', [])]}", flush=True)
-    header = (f"{'game':6} {'wave':4} {'arm':3} {'lvl':>6} {'acts':>6} {'score':>8} "
-              f"{'wd_rst':>6} {'wd_kill':>8} {'hud_cells':>9} {'hud_supp':>8} "
-              f"{'guard':>5} {'replay':>12}")
+    header = (f"{'game':6} {'wave':4} {'arm':3} {'lvl':>6} {'acts':>6} {'tok':>8} {'score':>8} "
+              f"{'wd_rst':>6} {'hud_supp':>8} {'veto':>5} {'grind':>5} {'q_exec':>6} "
+              f"{'replay':>10}")
     print("[ab] " + header, flush=True)
     per_arm = {}
     for w in waves:
@@ -509,36 +661,49 @@ def _ab_print_summary(result):
             stem = (r.get("source_game") or "?").split("-")[0]
             wd = r.get("watchdog") or {}
             hud = r.get("hud") or {}
+            gph = r.get("graph") or {}
+            cq = r.get("compact") or {}
             rp = r.get("replay") or {}
             score = r.get("score")
             score_s = f"{score:8.2f}" if isinstance(score, (int, float)) else f"{'-':>8}"
+            q_exec = (cq.get("queue_total_last", 0) - cq.get("queue_pending", 0)
+                      if cq and "error" not in cq else "-")
             print(f"[ab] {stem:6} {w['wave']:<4} {w['arm']:3} "
                   f"{r.get('levels_completed', 0):>3}/{r.get('levels_total', 0):<2} "
-                  f"{r.get('actions_total', 0):>6} {score_s} "
-                  f"{wd.get('resets_done', '-')!s:>6} {wd.get('killed', '-')!s:>8} "
-                  f"{hud.get('mask_cells', '-')!s:>9} {hud.get('suppressed_hud_only', '-')!s:>8} "
-                  f"{hud.get('guard_dead_lines', '-')!s:>5} {rp.get('status', '-')!s:>12}",
+                  f"{r.get('actions_total', 0):>6} {r.get('gen_tokens', 0):>8} {score_s} "
+                  f"{wd.get('resets_done', '-')!s:>6} "
+                  f"{hud.get('suppressed_hud_only', '-')!s:>8} "
+                  f"{gph.get('vetoes_issued', '-')!s:>5} "
+                  f"{gph.get('grinder_engagements', '-')!s:>5} "
+                  f"{q_exec!s:>6} {rp.get('status', '-')!s:>10}",
                   flush=True)
             slot = per_arm.setdefault(stem, {}).setdefault(w["arm"], {"lvl": [], "score": []})
             slot["lvl"].append(r.get("levels_completed", 0) or 0)
             if isinstance(score, (int, float)):
                 slot["score"].append(score)
-    print("[ab] ---- paired per-game means (B - A) ----", flush=True)
-    dl_sum, ds_sum, n = 0.0, 0.0, 0
-    for stem in sorted(per_arm):
-        arms = per_arm[stem]
-        if "A" not in arms or "B" not in arms:
+    for w in waves:
+        delta = w.get("compact_diag_delta")
+        if delta and any(delta.values()):
+            print(f"[ab] wave {w['wave']} ({w['arm']}) compact delta: {delta}", flush=True)
+    for probe_arm in ("C", "D"):
+        if not any(w["arm"] == probe_arm for w in waves):
             continue
-        la = sum(arms["A"]["lvl"]) / max(len(arms["A"]["lvl"]), 1)
-        lb = sum(arms["B"]["lvl"]) / max(len(arms["B"]["lvl"]), 1)
-        sa = sum(arms["A"]["score"]) / max(len(arms["A"]["score"]), 1)
-        sb = sum(arms["B"]["score"]) / max(len(arms["B"]["score"]), 1)
-        dl_sum += lb - la
-        ds_sum += sb - sa
-        n += 1
-        print(f"[ab] {stem:6} levels A={la:.1f} B={lb:.1f} d={lb - la:+.1f}   "
-              f"score A={sa:.2f} B={sb:.2f} d={sb - sa:+.2f}", flush=True)
-    if n:
-        print(f"[ab] TOTAL paired delta over {n} games: levels {dl_sum:+.1f}, "
-              f"score {ds_sum:+.2f}  (A/A noise floor: RMS 0.707 levels/game-run — "
-              f"read event counts, not small score deltas)", flush=True)
+        print(f"[ab] ---- paired per-game means ({probe_arm} - B) ----", flush=True)
+        dl_sum, ds_sum, n = 0.0, 0.0, 0
+        for stem in sorted(per_arm):
+            arms = per_arm[stem]
+            if "B" not in arms or probe_arm not in arms:
+                continue
+            lb = sum(arms["B"]["lvl"]) / max(len(arms["B"]["lvl"]), 1)
+            lx = sum(arms[probe_arm]["lvl"]) / max(len(arms[probe_arm]["lvl"]), 1)
+            sb = sum(arms["B"]["score"]) / max(len(arms["B"]["score"]), 1)
+            sx = sum(arms[probe_arm]["score"]) / max(len(arms[probe_arm]["score"]), 1)
+            dl_sum += lx - lb
+            ds_sum += sx - sb
+            n += 1
+            print(f"[ab] {stem:6} levels B={lb:.1f} {probe_arm}={lx:.1f} d={lx - lb:+.1f}   "
+                  f"score B={sb:.2f} {probe_arm}={sx:.2f} d={sx - sb:+.2f}", flush=True)
+        if n:
+            print(f"[ab] TOTAL paired delta ({probe_arm}-B) over {n} games: "
+                  f"levels {dl_sum:+.1f}, score {ds_sum:+.2f}  (A/A noise floor: RMS 0.707 "
+                  f"levels/game-run — read event counts, not small score deltas)", flush=True)

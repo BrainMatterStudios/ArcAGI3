@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
-"""Build submission/_ab_wmr/ab-wmr.ipynb — behavioral A/B for the three shipped
-duck patches (watchdog f591392, HUD mask b28569c, replay-at-WIN a1d0378).
+"""Build submission/_ab_wmr/ab-wmr.ipynb — ROUND 2: marginal value of patch11
+(frontier graph) and patch12 (compaction + plan queue) over the submitted v6
+config. Round 1 (WMR trio A/B, waves A,B,B,A) is preserved at commit 3c21726;
+its results live in docs/test-artifacts-2026-08-02/AB-WMR-ANALYSIS-2026-08-03.md.
 
 NOT a competition submission. A plain GPU commit kernel on the _rig mechanism
 (submission/_rig/build_rig.py): duck-base notebook, serve forced, run cell
 replaced by the A/B wave driver (ab_wave_driver.py). One vLLM session; arms
-toggle ONLY the env kill switches between counterbalanced waves A,B,B,A.
+toggle ONLY env pins between counterbalanced waves B,C,D,D,C,B:
+    B = v6 as submitted (WMR trio on, TAAF_GRAPH=0, TAAF_COMPACT=0)
+    C = B + TAAF_GRAPH=1        D = B + TAAF_COMPACT=1
 
-Both arms get the SAME curated patch subset applied (hard-gated):
-    patch_action7, patch_animation_producer, patch_animation_metadata,
-    verify_reset_already_handled, patch_watchdog, patch_hud_board_identity,
-    patch_win_replay
-The experimental grid-burner / prompt / transfer-explorer patches in
-duck_patches.py are deliberately EXCLUDED: they never scored, patch6's
-heuristic prober would dominate the first 200 actions, and the pinned base
-distribution (the 0.929 +- 0.195 yardstick) was measured without them. Arm A
-is therefore pinned-behavior-plus-ACTION7/animation with the three patches
-installed-but-disabled; arm B flips only the three switches.
+Every arm gets the IDENTICAL patch layer the submitted v6 kernel installs:
+apply_all() from the CURRENT duck_patches.py (patches 11/12, the
+marker-forwarding fix, grid-burner default OFF, the patch6 no-__file__ fix).
+Expected SKIPs on this bundle, positively asserted by the apply gate:
+  * patch9 hud-sandbox — the scored bundle's sandbox bootstrap has no
+    state_hash/diff_frames; patch9 now detects that and declines (round 1 had
+    to exclude it by hand for the same defect).
+  * patch6 tool_agent_analyze — the arcagi3-agent dataset is deliberately NOT
+    attached to this kernel (its heuristic prober would own the first 200
+    actions of every game and confound all three arms against round 1).
+Anything else SKIP/FAIL/REVIEW aborts before a GPU-minute is spent on games.
 
-patch_hud_sandbox is EXCLUDED for a measured defect (see APPLY_BLOCK comment
-and dry_run.py): on the scored bundle it NameErrors every sandbox process
-(no state_hash in that bundle's bootstrap) and the duck executes 0 actions.
+Round-2 instrumentation (see ab_wave_driver.py): fixed gen_tokens accounting
+(round 1 read final_generated_tokens, which this bundle's solver never sets;
+the real counts live on run.history records), per-game graph diagnostics in C
+waves, COMPACT_DIAGNOSTICS wave deltas + per-game queue state in D waves.
 
 Output artifact: /kaggle/working/ab_result.json (written after every wave and
 on failure) + a compact summary table at the end of the log.
@@ -50,41 +56,32 @@ SERVE_GUARD = "if TRUE_SUBMISSION:  # serving Qwen needs the eval GPU; the CPU-s
 RUN_MARKER = "# Build the live competition game list from the gateway's available environments."
 
 APPLY_BLOCK = '''
-# --- curated patch application (BOTH arms, identical) ---------------------------
-# The three patches under test are installed here and env-gated at CALL time;
-# grid-burner/prompt/transfer-explorer are excluded (never scored, would
-# confound the A/B — see build_ab_wmr.py docstring).
-#
-# patch_hud_sandbox is ALSO excluded — measured defect (dry_run.py, 2026-08-02):
-# its helper block does `_hud_raw_state_hash = state_hash` at sandbox-module
-# level, but the scored bundle's _SANDBOX_BOOTSTRAP (taaf-src-hybrid, Jul-03)
-# defines NO state_hash/diff_frames anywhere, so every sandbox process dies
-# with NameError at startup and the duck executes ZERO actions. Its unit tests
-# pass only against the drifted _adopt tree. On this bundle there is nothing
-# for patch9 to make HUD-aware, so excluding it loses nothing; patch8
-# (board_changed masking) is the semantic core of the HUD arm and stays.
-_AB_PATCH_FNS = [
-    patch_action7,
-    patch_animation_producer,
-    patch_animation_metadata,
-    verify_reset_already_handled,
-    patch_watchdog,
-    patch_hud_board_identity,
-    patch_win_replay,
-]
-_ab_patch_results = {}
-for _fn in _AB_PATCH_FNS:
-    _line = _fn()
-    _ab_patch_results[_fn.__name__] = _line
-    print(f"[ab-patch] {_line}", flush=True)
-_ab_bad = {k: v for k, v in _ab_patch_results.items()
-           if "FAIL" in v or "REVIEW" in v}
+# --- full v6 patch application (ALL arms, identical) ----------------------------
+# Round 2 installs the SAME layer the submitted v6 kernel installs: apply_all().
+# Arms differ ONLY in env pins the driver sets per wave (each patch reads its
+# switch at call time). Hard gate (rig pack law: an unpatched arm comparison is
+# meaningless): any FAIL/REVIEW aborts, and SKIP is allowed ONLY for the two
+# lines this bundle is EXPECTED to skip —
+#   patch9: the scored bundle's sandbox bootstrap lacks state_hash/diff_frames
+#           (patch9 self-detects the round-1 measured defect and declines);
+#   patch6: arcagi3-agent is deliberately not attached (its prober would own
+#           the first 200 actions and confound all arms vs round 1).
+# Both are asserted POSITIVELY: if either unexpectedly applied, the bundle
+# under test is not the one this experiment was designed for — abort.
+_ab_patch_results = apply_all()
+_AB_EXPECTED_SKIPS = ("patch9 hud-sandbox:", "patch6 tool_agent_analyze:")
+_ab_bad = [line for line in _ab_patch_results
+           if "FAIL" in line or "REVIEW" in line
+           or ("SKIP" in line and not line.startswith(_AB_EXPECTED_SKIPS))]
 if _ab_bad:
-    # Hard gate: an unpatched arm comparison is meaningless (rig pack law).
     raise RuntimeError(f"[ab] patch layer did not fully apply: {_ab_bad}")
-print("[ab] patch layer applied; excluded by design: patch_dynamic_grid_burner, "
-      "patch_prompts, patch_tool_agent_analyze; excluded for the measured "
-      "sandbox NameError defect: patch_hud_sandbox", flush=True)
+for _prefix in _AB_EXPECTED_SKIPS:
+    _line = next((l for l in _ab_patch_results if l.startswith(_prefix)), "")
+    if "SKIP" not in _line:
+        raise RuntimeError(
+            f"[ab] expected {_prefix} SKIP on this bundle, got: {_line!r}")
+print("[ab] patch layer = v6 apply_all(); expected SKIPs verified "
+      "(patch9 sandbox-defect decline, patch6 prober not mounted)", flush=True)
 # Belt and suspenders: prove the sandbox is ALIVE after patching. patch9 (had
 # it been applied) kills every sandbox subprocess on this bundle; a dead
 # sandbox turns the whole A/B into two zero-action arms.

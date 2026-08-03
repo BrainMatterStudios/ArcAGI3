@@ -1,17 +1,31 @@
 #!/usr/bin/env python3
-"""GPU-free end-to-end dry run of the ab-wmr kernel logic.
+"""GPU-free end-to-end dry run of the ab-wmr ROUND 2 kernel logic.
 
-Mock brain (fixed `python` tool call -> action('UP'), plus /models and
-logprobs so the serving assert's endpoint checks execute for real) <- REAL
-duck harness (scratchpad/taaf_scored_ref bundle, per the 2026-07-26 audit
-law) <- REAL CompetitionArcadeServer over repo environment_files <- the REAL
-ab_wave_driver (imported from this directory, same file the builder inlines).
+Mock brain (fixed `python` tool call -> action('UP'), a plan_queue block in the
+assistant text to exercise patch12b, usage counts so the token accounting is
+provable, plus /models and logprobs so the serving assert's endpoint checks
+execute for real) <- REAL duck harness (scratchpad/taaf_scored_ref bundle, per
+the 2026-07-26 audit law) <- REAL CompetitionArcadeServer over repo
+environment_files <- the REAL ab_wave_driver (imported from this directory,
+same file the builder inlines).
 
-Proves before any GPU minute is spent: curated patch application + hard gate,
-per-arm env toggling + verification, session registry, serving assert path,
-wave loop with fresh competition server per wave, row collection incl.
-watchdog/hud/replay diagnostics, in-run scoring, ab_result.json writing, and
-the summary table.
+duck_patches.py is loaded EXACTLY as the kernel loads it: source exec'd into a
+module namespace with NO __file__ (the builder inlines it into a notebook
+cell), so patch6 declines for want of /kaggle/input/arcagi3-agent here too and
+the dry run exercises the kernel's true patch surface (patch9 SKIP included).
+
+Proves before any GPU minute is spent:
+  * full v6 apply_all() + the expected-SKIP hard gate (patch9, patch6);
+  * per-arm env toggling B/C/D + verification against AB_ARM_ENV;
+  * patch11 activation ONLY in C waves (graph diagnostics rows: nodes/edges/
+    veto/grinder counters), patch12 activation ONLY in D waves
+    (COMPACT_DIAGNOSTICS wave delta: plan accepted + steps drained LLM-free);
+  * NONZERO gen_tokens per row (round-1 defect fixed: tokens are summed from
+    run.history records; the analyzer's usage-fed session counter is captured
+    as a cross-check);
+  * session registry, serving assert path, fresh competition server per wave,
+    watchdog/hud/replay diagnostics, in-run scoring, incremental
+    ab_result.json writes, and the summary table.
 
 Run:  .venv/bin/python submission/_ab_wmr/dry_run.py
 """
@@ -25,6 +39,7 @@ import os
 import sys
 import threading
 import time
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,6 +49,13 @@ TAAF_ROOT = REPO / "scratchpad/taaf_scored_ref"
 WORKDIR = Path(os.environ.get("AB_DRY_WORKDIR",
                               str(REPO / "scratchpad" / "ab_dry_run"))) / time.strftime("%H%M%S")
 
+# The assistant text carries a plan_queue block so patch12b's capture/drain
+# path runs for real in D waves (and is provably inert in B/C waves).
+MOCK_CONTENT = (
+    "Plan: probe with UP.\n"
+    '{"plan_queue": [{"action": "UP"}, {"action": "UP"}]}'
+)
+
 MOCK_REPLY = {
     "id": "cmpl-mock", "object": "chat.completion", "model": "mock-27b",
     "choices": [{
@@ -41,7 +63,7 @@ MOCK_REPLY = {
         "finish_reason": "tool_calls",
         "message": {
             "role": "assistant",
-            "content": "Plan: probe with UP.",
+            "content": MOCK_CONTENT,
             "tool_calls": [{
                 "id": "call_1", "type": "function",
                 "function": {"name": "python",
@@ -84,6 +106,21 @@ class MockBrain(http.server.BaseHTTPRequestHandler):
         self._send(MOCK_REPLY)
 
 
+def load_duck_patches_like_the_kernel() -> types.ModuleType:
+    """Exec duck_patches.py source with NO __file__, as the inlined cell does.
+
+    This makes patch6's path discovery behave exactly as on Kaggle (no repo-src
+    fallback), so it SKIPs here for the same reason it SKIPs there.
+    """
+    source = (REPO / "submission/_duck_patched/duck_patches.py").read_text()
+    mod = types.ModuleType("duck_patches")
+    mod.__dict__["__name__"] = "duck_patches"
+    assert "__file__" not in mod.__dict__
+    exec(compile(source, "<inlined duck_patches>", "exec"), mod.__dict__)
+    sys.modules["duck_patches"] = mod
+    return mod
+
+
 def main() -> int:
     WORKDIR.mkdir(parents=True, exist_ok=True)
 
@@ -104,7 +141,7 @@ def main() -> int:
         "RECORDINGS_DIR": str(WORKDIR / "server_recording"),
         "AB_DRY_RUN": "1",
         "AB_GAMES": "tu93,ls20",
-        "AB_WAVES": "A,B",
+        "AB_WAVES": "B,C,D",
         "AB_BUDGET": "60",
         "AB_DEADLINE_S": "3000",
     })
@@ -112,24 +149,20 @@ def main() -> int:
     for p in (TAAF_ROOT / "src/ARC3-Inference", TAAF_ROOT / "src/tufa-arc-agi-framework/src"):
         assert p.is_dir(), f"missing bundle path {p}"
         sys.path.insert(0, str(p))
-    sys.path.insert(0, str(REPO / "submission/_duck_patched"))
     sys.path.insert(0, str(REPO / "submission/_rig"))
 
-    # --- curated patch application, exactly as the hook cell does -------------
-    # patch_hud_sandbox EXCLUDED: measured defect — on this bundle its helper
-    # block NameErrors the sandbox bootstrap (no state_hash there) and the duck
-    # executes 0 actions. See build_ab_wmr.py APPLY_BLOCK comment.
-    import duck_patches as dp
-    fns = [dp.patch_action7, dp.patch_animation_producer, dp.patch_animation_metadata,
-           dp.verify_reset_already_handled, dp.patch_watchdog,
-           dp.patch_hud_board_identity, dp.patch_win_replay]
-    results = {}
-    for fn in fns:
-        line = fn()
-        results[fn.__name__] = line
-        print(f"[dry][ab-patch] {line}")
-    bad = {k: v for k, v in results.items() if "FAIL" in v or "REVIEW" in v}
+    # --- full v6 patch application + the EXACT gate the hook cell uses --------
+    dp = load_duck_patches_like_the_kernel()
+    results = dp.apply_all()
+    expected_skips = ("patch9 hud-sandbox:", "patch6 tool_agent_analyze:")
+    bad = [line for line in results
+           if "FAIL" in line or "REVIEW" in line
+           or ("SKIP" in line and not line.startswith(expected_skips))]
     assert not bad, f"patch layer did not fully apply: {bad}"
+    for prefix in expected_skips:
+        line = next((l for l in results if l.startswith(prefix)), "")
+        assert "SKIP" in line, f"expected {prefix} SKIP on this bundle, got {line!r}"
+    print("[dry] patch layer = v6 apply_all(); expected SKIPs verified")
 
     # sandbox liveness — the check the hook cell also performs
     from inference.agent import python_tool_sandbox as ptx
@@ -168,23 +201,54 @@ def main() -> int:
     assert out["stage"] == "done", f"stage={out['stage']}"
     sa = {c["check"]: c["ok"] for c in out["serving_assert"]["checks"]}
     assert all(sa.values()) and len(sa) == 4, f"serving assert incomplete: {sa}"
+
     pp = out["patch_proof"]
-    assert pp["watchdog_should_stop_patched"] and pp["play_patched"], pp
+    for key in ("watchdog_should_stop_patched", "graph_should_stop_patched",
+                "graph_step_env_patched", "hud_or_outer_execute_patched",
+                "play_patched", "plan_queue_analyze_patched",
+                "compaction_history_patched", "compact_prompt_injector_patched"):
+        assert pp.get(key) is True, f"patch proof {key}: {pp}"
+
     waves = out["waves"]
-    assert [w["arm"] for w in waves] == ["A", "B"], waves
+    assert [w["arm"] for w in waves] == ["B", "C", "D"], waves
     for w in waves:
-        exp = w["arm"] == "B"
-        assert all(v == exp for v in w["toggles_verified"].values()), w["toggles_verified"]
+        arm = w["arm"]
+        expected = {k: v == "1" for k, v in drv.AB_ARM_ENV[arm].items()}
+        assert w["toggles_verified"] == expected, (arm, w["toggles_verified"])
+        wp = w["patch_proof_wave"]
+        assert all(wp.get(k) is True for k in wp), (arm, wp)
         assert len(w["rows"]) == 2, f"wave {w['wave']}: {len(w['rows'])} rows"
+        assert "compact_diag_delta" in w, sorted(w)
+        delta = w["compact_diag_delta"]
+        assert set(delta) == set(drv._COMPACT_DIAG_KEYS), delta
         for r in w["rows"]:
             assert r["source_game"] is not None and r["actions_total"] > 0, r
             assert r["score"] is not None, r
             assert "watchdog" in r and "hud" in r and "trace_len" in r, sorted(r)
+            # round-1 defect fixed: nonzero token accounting must flow to rows
+            assert r["gen_tokens"] > 0, f"gen_tokens still zero: {r}"
+            assert r["analyzer_tokens"]["generated"] > 0, r["analyzer_tokens"]
+            assert "tokens=" in r["solver_note"], r["solver_note"]
             rp = (r.get("replay") or {}).get("status")
-            if w["arm"] == "A":
-                assert rp == "disabled", f"arm A replay status {rp!r}"
+            assert rp in ("skipped", "replayed", "aborted"), f"arm {arm} replay {rp!r}"
+            if arm == "C":
+                g = r.get("graph")
+                assert isinstance(g, dict) and "error" not in g, f"C-wave graph diag: {r}"
+                for key in ("nodes", "edges", "vetoes_issued", "vetoes_capped",
+                            "grinder_engagements", "grinder_actions",
+                            "levels_unlocked_by_grinder"):
+                    assert key in g, (key, g)
+                assert g["nodes"] >= 1, f"graph recorded no nodes in C wave: {g}"
             else:
-                assert rp in ("skipped", "replayed", "aborted"), f"arm B replay status {rp!r}"
+                assert "graph" not in r, f"graph state leaked into arm {arm}: {r}"
+            if arm == "D":
+                assert "compact" in r and "error" not in r["compact"], r.get("compact")
+        if arm == "D":
+            assert delta["queue_plans"] >= 1, f"plan_queue never captured: {delta}"
+            assert delta["queue_steps_executed"] + delta["queue_aborts"] >= 1, delta
+            assert delta["llm_calls_saved"] == delta["queue_steps_executed"], delta
+        else:
+            assert not any(delta.values()), f"compact counters moved in arm {arm}: {delta}"
         assert "behav_cumulative" in w and "behav_raw_cumulative" in w
     assert MockBrain.n_posts > 0
     print(f"\n[dry] PASS — {MockBrain.n_posts} mock-brain calls, "
