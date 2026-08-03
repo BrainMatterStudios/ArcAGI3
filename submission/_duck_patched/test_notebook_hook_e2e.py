@@ -133,6 +133,7 @@ def _e2e_main() -> int:
 
     class MockBrain(http.server.BaseHTTPRequestHandler):
         n_posts = 0
+        system_prompts: list[str] = []
 
         def log_message(self, *a):  # noqa: D102
             pass
@@ -153,8 +154,15 @@ def _e2e_main() -> int:
 
         def do_POST(self):  # noqa: N802
             n = int(self.headers.get("Content-Length", 0) or 0)
-            _ = self.rfile.read(n)
+            raw = self.rfile.read(n)
             MockBrain.n_posts += 1
+            try:
+                payload = json.loads(raw or b"{}")
+                for message in payload.get("messages", []):
+                    if message.get("role") == "system":
+                        MockBrain.system_prompts.append(str(message.get("content", "")))
+            except Exception:
+                pass  # prompt capture must never break the mock
             self._send(_MOCK_REPLY)
 
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MockBrain)
@@ -249,6 +257,29 @@ def _e2e_main() -> int:
             f"zero-action game runs {zero} — the never-played fingerprint of the "
             "0.00 submission; the shipped artifact must not do this")
         assert MockBrain.n_posts > 0, "the benchmark never called the model"
+
+        # --- patch13 prompt plumbing, through the REAL request path ---------------
+        # The shipped arm pins TAAF_PLAYBOOK=0 (EXPERIMENT_ENV), so the system
+        # prompts the model actually received must NOT carry the playbook...
+        assert MockBrain.system_prompts, "no system prompt reached the mock brain"
+        assert all(
+            "Mechanic playbook" not in p for p in MockBrain.system_prompts
+        ), "pinned TAAF_PLAYBOOK=0 arm leaked the playbook into a live prompt"
+        # ...while flipping the switch on the SAME scored bytes must inject it
+        # (call-time gating through the patched builder chain).
+        from inference.agent import tool_agent as _ta
+        os.environ["TAAF_PLAYBOOK"] = "1"
+        try:
+            enabled_prompt = _ta._build_system_prompt(tool_output_tokens=1000)
+        finally:
+            os.environ["TAAF_PLAYBOOK"] = "0"
+        assert "PRECONDITION HUNT" in enabled_prompt, (
+            "playbook did not land in the scored-bundle system prompt when enabled"
+        )
+        overhead = len(enabled_prompt) - len(_ta._build_system_prompt(tool_output_tokens=1000))
+        assert overhead <= 1500, f"playbook overhead {overhead} chars (> ~350 tokens)"
+        print(f"[e2e] playbook plumbing OK (pin honored; overhead {overhead} chars)",
+              flush=True)
     finally:
         csrv.stop()
 

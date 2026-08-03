@@ -3082,6 +3082,75 @@ def patch_plan_queue() -> str:
     return "patch12b plan-queue: OK"
 
 
+# --- PATCH 13: mechanic-archetype playbook ---------------------------------------
+#
+# The 2026-08-03 unlock diagnosis (docs/test-artifacts-2026-08-02/UNLOCK-DIAGNOSIS-
+# 9-GAMES-2026-08-03.md) classified all 9 never-unlocked games: goal/mechanic
+# inference is the primary blocker on 8/9, and the misses cluster into four
+# recurring hypothesis-class gaps: (a) arrival-without-win never triggers a
+# precondition hunt, (b) apparent setbacks are never tested as tools, (c) revealed
+# legends/markers are never read as goal specs, (d) multi-entity coupling is never
+# hypothesized. This patch appends a compact archetype playbook to the system
+# prompt encoding those four heuristics. Deliberately archetype-level, never
+# game-specific: the hidden set is different games, so memorized solutions are
+# worthless — only the hypothesis classes transfer.
+#
+# Injection point: `tool_agent._build_system_prompt`, the same seam patch 12b uses
+# (agents are constructed after apply_all(), so wrapping the module function
+# reaches every agent). TAAF_PLAYBOOK=0 disables at call time (default ON;
+# pinned OFF in the current submission arm via EXPERIMENT_ENV until A/B'd).
+
+_PLAYBOOK_TEXT = (
+    "Mechanic playbook — recurring hidden-mechanic families. Check BEFORE calling a "
+    "level impossible or retrying a failed plan:\n"
+    "1) PRECONDITION HUNT: reached the apparent goal and nothing happened => a hidden "
+    "precondition exists. Hunt for special tiles or toggles you have not touched, "
+    "and watch SMALL indicator sprites (a few cells, often near an edge): if one changes "
+    "when you step on a tile, that tile sets hidden state (mode/orientation/key) the goal "
+    "checks. Arm it, then reach the goal again.\n"
+    "2) SETBACKS MAY BE TOOLS: an action that looks like punishment — position snapping "
+    "back to start, an object vanishing when touched — may BE the mechanic: it can bank a "
+    "recording (a ghost may replay your path), grab an object into carry (it reappears on "
+    "release), or remove-as-progress (fewer objects = the win). Repeat the 'bad' action "
+    "once deliberately and study the next frames before avoiding it.\n"
+    "3) LEGENDS ARE SPECS: a small strip of icons or colors apart from the play area "
+    "(a color order, paired symbols, marker dots on sprites) is usually THE goal spec, not "
+    "decoration. Read it first; check the board's order/alignment/pairing against it.\n"
+    "4) COUPLED ENTITIES: two objects moving together or mirrored on every input => the "
+    "goal is usually to desync them (a wall blocks one while its twin moves) or merge them "
+    "onto one cell.\n"
+    "If a hypothesis fails twice, switch families instead of retrying variants."
+)
+
+
+def _playbook_enabled() -> bool:
+    import os
+
+    return os.environ.get("TAAF_PLAYBOOK", "1").strip() not in {"0", "false", "False"}
+
+
+def patch_mechanic_playbook() -> str:
+    """PATCH 13: append the mechanic-archetype playbook to the system prompt."""
+    from inference.agent import tool_agent
+
+    builder = getattr(tool_agent, "_build_system_prompt", None)
+    if not callable(builder):
+        return "patch13 playbook: FAIL (_build_system_prompt not found)"
+    if getattr(builder, "_playbook_patched", False):
+        return "patch13 playbook: SKIP (already applied)"
+
+    def _build_system_prompt(*args: Any, **kwargs: Any) -> str:
+        prompt = builder(*args, **kwargs)
+        if _playbook_enabled():
+            prompt = f"{prompt}\n\n{_PLAYBOOK_TEXT}"
+        return prompt
+
+    _forward_patch_markers(_build_system_prompt, builder)
+    _build_system_prompt._playbook_patched = True  # type: ignore[attr-defined]
+    tool_agent._build_system_prompt = _build_system_prompt
+    return "patch13 playbook: OK"
+
+
 def apply_all(verbose: bool = True) -> list[str]:
     """Apply every patch. Each is independent; one failing does not block the others."""
     results = []
@@ -3100,6 +3169,7 @@ def apply_all(verbose: bool = True) -> list[str]:
         patch_frontier_graph,
         patch_compaction,
         patch_plan_queue,
+        patch_mechanic_playbook,
     ):
         try:
             results.append(fn())

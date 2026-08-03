@@ -81,6 +81,9 @@ HOOK_MARKER = "Make one-off changes to `bm`, `bm.games`, or `bm.solver` here"
 EXPERIMENT_ENV = {
     "TAAF_GRAPH": "0",
     "TAAF_COMPACT": "0",
+    # patch13 archetype playbook: default ON outside pins, but pinned OFF here so
+    # the settled v6 arm stays clean until the playbook is A/B'd on its own.
+    "TAAF_PLAYBOOK": "0",
 }
 
 
