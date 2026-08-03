@@ -43,6 +43,35 @@ Added fields, only when an action produced an animation (so single-frame actions
 
 No images, no raw frames — roughly 20–40 tokens per animated action.
 
+## Patch 12 — compaction-on-evict + LLM-free plan queue (`TAAF_COMPACT`, default ON)
+
+Research 2026-08-02 idea 4 / plan B4. Two context-lifecycle repairs, one env switch
+(`TAAF_COMPACT=0` disables both at call time):
+
+- **12a compaction-on-evict.** The bundle silently drops oldest history on token-budget
+  overflow (`_drop_oldest_history_block`) and at the 30-assistant-turn cap
+  (`_keep_recent_history_turns`); both channels converge in `_persistent_history_messages`,
+  which the patch wraps to diff what left persistent memory each turn. Every
+  `TAAF_COMPACT_EVERY` (8) evicted messages, ONE bounded LLM call (prompt ≤
+  `TAAF_COMPACT_PROMPT_CHARS`, reply ≤ `TAAF_COMPACT_RESPONSE_TOKENS`, timeout
+  `TAAF_COMPACT_TIMEOUT_S`, ≤ `TAAF_COMPACT_MAX_CALLS` per game) folds them into a pinned
+  store — `facts / action_effects / failed_hypotheses / open_questions` — injected into
+  every later user prompt. `failed_hypotheses` merges mechanically (old ∪ new) so refuted
+  ideas are not retried after eviction. Any failure falls back to the stock silent drop.
+- **12b plan queue.** The model may end its text with `{"plan_queue": [...]}` (schema is
+  appended to the system prompt). The harness drains it one action per analysis step with
+  zero LLM calls through the solver's own `step_env` (its `board_changed` is already
+  HUD-masked by patch 8). First violation — rejected action, GAME_OVER, unexpected level
+  change, or a per-step `expect` note contradicted — aborts the remainder and the model
+  gets a compact report in its next prompt. Aborted plans are never re-accepted verbatim.
+  Cap `TAAF_COMPACT_QUEUE_MAX` (10) steps.
+
+Diagnostics accumulate in `COMPACT_DIAGNOSTICS` (evictions_seen, compactions_done,
+compaction_tokens, queue_plans, queue_steps_executed, queue_aborts, llm_calls_saved, …),
+printed to the kernel log at exit. Tests: `test_compact_queue.py` (23, incl. a stub-brain
+E2E through the real play loop and a subprocess apply-check against the scored bundle
+bytes at `scratchpad/taaf_scored_ref`).
+
 ## Not patched — RESET restriction
 
 The public fork this work draws on restricts RESET to GAME_OVER. **Our bundle already does the

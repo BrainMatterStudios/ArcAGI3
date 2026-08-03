@@ -2236,6 +2236,796 @@ def patch_frontier_graph() -> str:
     return "patch11 graph: OK (grinder dormant — watchdog patch absent)"
 
 
+# --- PATCH 12: compaction-on-evict + LLM-free plan queue -------------------------
+#
+# Two context-lifecycle repairs (research 2026-08-02 idea 4 / plan B4), one env
+# switch: TAAF_COMPACT (default ON, "0" disables both at call time).
+#
+# 12a COMPACTION-ON-EVICT. The bundle silently drops oldest history when either
+#     (a) the ~32k token budget overflows (`_drop_oldest_history_block` inside
+#     `_trim_messages_for_context`) or (b) the 30-assistant-turn cap fires
+#     (`_keep_recent_history_turns`). Both channels converge in
+#     `_persistent_history_messages`, which computes the history that SURVIVES a
+#     turn — so the wrapper diffs old persistent history against the survivor
+#     set once per turn and captures everything that left memory. Captured
+#     blocks are batched; every TAAF_COMPACT_EVERY evicted messages, ONE cheap
+#     LLM call (hard caps: prompt chars, response tokens, request timeout, max
+#     calls/game) folds them into a structured pinned knowledge store with a
+#     `failed_hypotheses` key that is merged MECHANICALLY (old ∪ new, deduped) so
+#     refuted ideas survive even a sloppy compaction reply. The store is injected
+#     into every subsequent user prompt. If the call fails or times out, the
+#     buffer is discarded — exactly the bundle's original silent-drop behavior;
+#     compaction can only add, never block.
+#
+# 12b PLAN QUEUE. The model may emit `{"plan_queue": [...]}` as JSON in its
+#     assistant text (schema in _PLAN_QUEUE_GUIDANCE, appended to the system
+#     prompt). The queue is drained ONE action per solver analysis step with ZERO
+#     LLM calls: each `analyze()` entry pops a step, validates it against the
+#     current valid actions, executes it through the solver's own `step_env`
+#     (whose `board_changed` verdict is already HUD-masked by patch 8 — the mask
+#     composes by layering, nothing is duplicated), and updates the agent's
+#     `_last_action_result` / `_last_step_summary` exactly like a model-driven
+#     step. The remainder is aborted on the first violation — action not
+#     executed, GAME_OVER, unexpected level change, or a per-step `expect` note
+#     contradicted — and a compact violation report is injected into the model's
+#     next user prompt. Queues go stale safely: terminal state or a level change
+#     between capture and drain drops the plan with a report instead of firing
+#     blind. Length cap TAAF_COMPACT_QUEUE_MAX (default 10).
+#
+# Diagnostics: COMPACT_DIAGNOSTICS (module-level, cumulative across games).
+
+
+COMPACT_DIAGNOSTICS: dict[str, int] = {
+    "evictions_seen": 0,          # history messages that left persistent memory
+    "compactions_done": 0,        # successful compaction LLM calls
+    "compaction_failures": 0,     # failed/timed-out compaction calls (fell back to drop)
+    "compaction_tokens": 0,       # tokens spent on compaction calls
+    "queue_plans": 0,             # plan_queue blocks accepted from the model
+    "queue_plans_rejected": 0,    # plan_queue blocks rejected at parse/validation
+    "queue_steps_executed": 0,    # actions executed straight from the queue
+    "queue_aborts": 0,            # queues aborted on a violation / staleness
+    "llm_calls_saved": 0,         # analyzer turns served without any LLM call
+}
+
+_COMPACT_KNOWLEDGE_KEYS = ("facts", "action_effects", "failed_hypotheses", "open_questions")
+_COMPACT_MAX_ITEMS = 10
+_COMPACT_MAX_ITEM_CHARS = 240
+_COMPACT_MSG_RENDER_CHARS = 500
+
+_PLAN_QUEUE_GUIDANCE = (
+    "PLAN QUEUE (optional): when you are CONFIDENT in a short deterministic sequence of "
+    "next actions, you may end your assistant text with a JSON object like\n"
+    '{"plan_queue": [{"action": "UP"}, {"action": "MOUSE", "row": 10, "col": 20}, '
+    '{"action": "UP", "expect": {"level_completed": true}}]}\n'
+    "The harness then executes those steps for you, one per turn, without asking you "
+    "again. Optional per-step \"expect\" notes are checked after each step: "
+    '"board_changed": true/false and "level_completed": true/false. The remainder of '
+    "the queue is dropped and you get a report if a step is rejected, causes GAME_OVER, "
+    "changes the level unexpectedly, or contradicts an expect note. Use it only for "
+    "sequences you have verified; keep exploring one action at a time otherwise. "
+    "Do not repeat actions you already executed with action(...) this turn. Max 10 steps."
+)
+
+
+def _compact_enabled() -> bool:
+    import os
+
+    return os.environ.get("TAAF_COMPACT", "1").strip() not in {"0", "false", "False"}
+
+
+def _compact_env_int(name: str, default: int) -> int:
+    import os
+
+    try:
+        return int(float(os.environ.get(name, "") or default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _compact_config() -> dict[str, int]:
+    return {
+        "every": max(1, _compact_env_int("TAAF_COMPACT_EVERY", 8)),
+        "max_calls": max(0, _compact_env_int("TAAF_COMPACT_MAX_CALLS", 8)),
+        "prompt_chars": max(500, _compact_env_int("TAAF_COMPACT_PROMPT_CHARS", 6000)),
+        "response_tokens": max(64, _compact_env_int("TAAF_COMPACT_RESPONSE_TOKENS", 350)),
+        "timeout_s": max(1, _compact_env_int("TAAF_COMPACT_TIMEOUT_S", 20)),
+        "queue_max": max(1, _compact_env_int("TAAF_COMPACT_QUEUE_MAX", 10)),
+    }
+
+
+def _fresh_compact_fields() -> dict[str, Any]:
+    return {
+        "evict_buffer": [],            # list[str], rendered evicted messages
+        "evictions_since": 0,
+        "compactions_done": 0,
+        "knowledge": {key: [] for key in _COMPACT_KNOWLEDGE_KEYS},
+        "queue": [],                   # normalized pending steps
+        "queue_level": None,           # level the pending queue was planned for
+        "queue_total": 0,              # length of the pending queue at capture
+        "queue_raw": None,             # raw JSON of the accepted queue (dedup)
+        "queue_report": None,          # violation report for the next user prompt
+    }
+
+
+def _compact_state(agent: Any, runtime_dir: Any = None) -> dict[str, Any]:
+    if runtime_dir is None:
+        # Callers inside a turn (capture, prompt injection) inherit the session
+        # the agent is already bound to; only analyze() entry passes it in.
+        runtime_dir = getattr(agent, "_session_runtime_dir", None)
+    state = getattr(agent, "_compact12_state", None)
+    if state is None:
+        state = {"session_dir": runtime_dir, **_fresh_compact_fields()}
+        agent._compact12_state = state
+        return state
+    if runtime_dir is not None:
+        if state.get("session_dir") is None:
+            state["session_dir"] = runtime_dir
+        elif state["session_dir"] != runtime_dir:
+            # New game session: per-game memory must not leak across games.
+            fresh = _fresh_compact_fields()
+            state.clear()
+            state.update({"session_dir": runtime_dir, **fresh})
+    return state
+
+
+def _compact_message_text(message: Any) -> str:
+    """Extract the readable text of a chat message (str or multimodal parts)."""
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    parts: list[str] = []
+    if isinstance(content, str):
+        parts.append(content)
+    elif isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                parts.append(str(part.get("text", "")))
+    reasoning = message.get("reasoning")
+    if isinstance(reasoning, str) and reasoning and not parts:
+        parts.append(reasoning)
+    return "\n".join(p for p in parts if p).strip()
+
+
+def _render_evicted_message(message: Any) -> str:
+    role = str(message.get("role", "?")).strip() if isinstance(message, dict) else "?"
+    text = _compact_message_text(message)
+    if not text:
+        return ""
+    if len(text) > _COMPACT_MSG_RENDER_CHARS:
+        text = text[:_COMPACT_MSG_RENDER_CHARS] + " ...[cut]"
+    return f"[{role}] {text}"
+
+
+def _render_compaction_prompt(state: dict[str, Any], prompt_chars: int) -> str:
+    import json as _json
+
+    knowledge_json = _json.dumps(
+        {key: state["knowledge"].get(key, []) for key in _COMPACT_KNOWLEDGE_KEYS},
+        ensure_ascii=True,
+    )
+    fixed = (
+        "You maintain the long-term memory of an agent playing a grid puzzle game. "
+        "Older conversation turns are being evicted from its context window. Fold "
+        "anything durable from them into the compact knowledge store.\n\n"
+        f"CURRENT KNOWLEDGE STORE (JSON):\n{knowledge_json}\n\n"
+        "Reply with ONLY one JSON object (no prose, no code fences) of the merged store:\n"
+        '{"facts": [], "action_effects": [], "failed_hypotheses": [], "open_questions": []}\n'
+        "Rules: keep still-relevant items from the current store; add durable new items "
+        "from the evicted turns; put ideas the evicted turns show to be WRONG into "
+        "failed_hypotheses so they are not retried; max "
+        f"{_COMPACT_MAX_ITEMS} items per list; each item one short sentence.\n\n"
+        "EVICTED TURNS (oldest first):\n"
+    )
+    evicted = "\n".join(state["evict_buffer"])
+    allowed = max(200, prompt_chars - len(fixed))
+    if len(evicted) > allowed:
+        evicted = "...[oldest truncated]\n" + evicted[-allowed:]
+    return fixed + evicted
+
+
+def _parse_compaction_reply(content: Any) -> dict[str, list[str]] | None:
+    import json as _json
+
+    if isinstance(content, list):
+        content = "\n".join(
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    text = str(content or "").strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        data = _json.loads(text[start : end + 1])
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    parsed: dict[str, list[str]] = {}
+    for key in _COMPACT_KNOWLEDGE_KEYS:
+        value = data.get(key)
+        items: list[str] = []
+        if isinstance(value, list):
+            for item in value:
+                item_text = str(item).strip()
+                if item_text:
+                    items.append(item_text[:_COMPACT_MAX_ITEM_CHARS])
+        parsed[key] = items[:_COMPACT_MAX_ITEMS]
+    return parsed
+
+
+def _merge_compact_knowledge(state: dict[str, Any], parsed: dict[str, list[str]]) -> None:
+    """Merge a compaction reply into the store.
+
+    `failed_hypotheses` is merged mechanically (old ∪ new, order-preserving,
+    deduped) so refuted ideas can never be dropped by a sloppy reply; the other
+    keys trust the model's merge when it returned anything, else keep the old.
+    """
+    knowledge = state["knowledge"]
+    for key in _COMPACT_KNOWLEDGE_KEYS:
+        new_items = parsed.get(key, [])
+        if key == "failed_hypotheses":
+            merged: list[str] = []
+            for item in [*knowledge.get(key, []), *new_items]:
+                if item and item not in merged:
+                    merged.append(item)
+            # keep the newest when over cap: refuted-most-recently matters most
+            knowledge[key] = merged[-_COMPACT_MAX_ITEMS:]
+        elif new_items:
+            knowledge[key] = new_items[:_COMPACT_MAX_ITEMS]
+
+
+def _run_compaction(agent: Any, state: dict[str, Any], config: dict[str, int]) -> None:
+    """ONE bounded compaction call; any failure falls back to the plain drop."""
+    import inspect
+
+    prompt = _render_compaction_prompt(state, config["prompt_chars"])
+    chat = getattr(agent, "_chat_completion", None)
+    if not callable(chat):
+        raise RuntimeError("agent has no _chat_completion")
+    kwargs: dict[str, Any] = {"tools": None}
+    try:
+        if "request_timeout_seconds" in inspect.signature(chat).parameters:
+            kwargs["request_timeout_seconds"] = float(config["timeout_s"])
+    except (TypeError, ValueError):
+        pass
+    saved_max = getattr(agent, "_max_output_tokens", None)
+    try:
+        agent._max_output_tokens = min(saved_max or config["response_tokens"], config["response_tokens"])
+        result = chat([{"role": "user", "content": prompt}], **kwargs)
+    finally:
+        agent._max_output_tokens = saved_max
+    parsed = _parse_compaction_reply(result.message.get("content", ""))
+    if parsed is None:
+        raise ValueError("compaction reply was not a JSON store")
+    _merge_compact_knowledge(state, parsed)
+
+    tokens = 0
+    usage = getattr(result, "usage", None)
+    if isinstance(usage, dict):
+        try:
+            tokens = int(usage.get("total_tokens") or 0)
+        except (TypeError, ValueError):
+            tokens = 0
+        if tokens <= 0:
+            for key in ("prompt_tokens", "completion_tokens"):
+                try:
+                    tokens += max(0, int(usage.get(key) or 0))
+                except (TypeError, ValueError):
+                    pass
+    if tokens <= 0:
+        tokens = len(prompt) // 4  # coarse fallback, same spirit as _estimate_tokens
+    COMPACT_DIAGNOSTICS["compaction_tokens"] += tokens
+    COMPACT_DIAGNOSTICS["compactions_done"] += 1
+    state["compactions_done"] += 1
+
+
+def _note_evictions(agent: Any, old_history: list[Any], surviving: list[Any]) -> None:
+    """Capture messages that left persistent memory; compact on cadence."""
+    evicted = [message for message in old_history if message not in surviving]
+    if not evicted:
+        return
+    state = _compact_state(agent)
+    config = _compact_config()
+    for message in evicted:
+        rendered = _render_evicted_message(message)
+        if rendered:
+            state["evict_buffer"].append(rendered)
+    COMPACT_DIAGNOSTICS["evictions_seen"] += len(evicted)
+    state["evictions_since"] += len(evicted)
+    # Bound the buffer itself: beyond ~4 prompts of text the oldest lines are
+    # exactly as gone as the stock bundle would have made them.
+    while (
+        len(state["evict_buffer"]) > 1
+        and sum(len(line) for line in state["evict_buffer"]) > 4 * config["prompt_chars"]
+    ):
+        state["evict_buffer"].pop(0)
+
+    if (
+        state["evictions_since"] >= config["every"]
+        and state["evict_buffer"]
+        and state["compactions_done"] < config["max_calls"]
+    ):
+        state["evictions_since"] = 0
+        try:
+            _run_compaction(agent, state, config)
+            print(
+                f"[compact] folded {len(state['evict_buffer'])} evicted blocks "
+                f"(call {state['compactions_done']}/{config['max_calls']})",
+                flush=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - fall back to the plain drop
+            COMPACT_DIAGNOSTICS["compaction_failures"] += 1
+            print(f"[compact] compaction failed, dropping buffer ({exc!r})", flush=True)
+        state["evict_buffer"] = []
+
+
+def _compact_prompt_injection(agent: Any) -> str:
+    """Pinned-knowledge block + pending queue violation report, or ''."""
+    state = getattr(agent, "_compact12_state", None)
+    if not isinstance(state, dict):
+        return ""
+    lines: list[str] = []
+    knowledge = state.get("knowledge") or {}
+    labels = (
+        ("facts", "Facts"),
+        ("action_effects", "Action effects"),
+        ("failed_hypotheses", "FAILED HYPOTHESES (do not retry these)"),
+        ("open_questions", "Open questions"),
+    )
+    knowledge_lines = [
+        f"- {label}: " + " | ".join(knowledge.get(key, []))
+        for key, label in labels
+        if knowledge.get(key)
+    ]
+    if knowledge_lines:
+        lines.append("Compacted memory from evicted earlier turns (survives history trimming):")
+        lines.extend(knowledge_lines)
+    report = state.get("queue_report")
+    if report:
+        lines.append(str(report))
+        state["queue_report"] = None  # show once
+    if not lines:
+        return ""
+    return "\n" + "\n".join(lines)
+
+
+def _install_compact_prompt_injector() -> str | None:
+    """Idempotent `_build_user_prompt` wrapper shared by patches 12a/12b."""
+    from inference.agent import tool_agent
+
+    agent_cls = getattr(tool_agent, "ToolAgent", None)
+    if agent_cls is None or not hasattr(agent_cls, "_build_user_prompt"):
+        return "ToolAgent._build_user_prompt not found"
+    if getattr(agent_cls._build_user_prompt, "_compact12_patched", False):
+        return None
+
+    original = agent_cls._build_user_prompt
+
+    def _build_user_prompt(self: Any, *args: Any, **kwargs: Any) -> str:
+        prompt = original(self, *args, **kwargs)
+        if not _compact_enabled():
+            return prompt
+        try:
+            return prompt + _compact_prompt_injection(self)
+        except Exception:  # noqa: BLE001 - injection must never break a turn
+            return prompt
+
+    _build_user_prompt._compact12_patched = True  # type: ignore[attr-defined]
+    agent_cls._build_user_prompt = _build_user_prompt
+    return None
+
+
+def patch_compaction() -> str:
+    """PATCH 12a: capture evicted history and fold it into pinned knowledge."""
+    from inference.agent import tool_agent
+
+    agent_cls = getattr(tool_agent, "ToolAgent", None)
+    if agent_cls is None:
+        return "patch12a compaction: FAIL (ToolAgent not found)"
+    for name in ("_persistent_history_messages", "_build_user_prompt", "_chat_completion"):
+        if not hasattr(agent_cls, name):
+            return f"patch12a compaction: FAIL (ToolAgent.{name} not found)"
+    if getattr(agent_cls._persistent_history_messages, "_compact12_patched", False):
+        return "patch12a compaction: SKIP (already applied)"
+
+    injector_error = _install_compact_prompt_injector()
+    if injector_error:
+        return f"patch12a compaction: FAIL ({injector_error})"
+
+    original = agent_cls._persistent_history_messages
+
+    def _persistent_history_messages(
+        self: Any, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None
+    ) -> list[dict[str, Any]]:
+        old_history = list(getattr(self, "_history_messages", None) or [])
+        result = original(self, messages, tools=tools)
+        if _compact_enabled():
+            try:
+                _note_evictions(self, old_history, result)
+            except Exception:  # noqa: BLE001 - capture must never break the turn
+                pass
+        return result
+
+    _persistent_history_messages._compact12_patched = True  # type: ignore[attr-defined]
+    agent_cls._persistent_history_messages = _persistent_history_messages
+    return "patch12a compaction: OK"
+
+
+# -- plan queue -------------------------------------------------------------------
+
+
+def _match_braces(text: str, start: int) -> str | None:
+    """Return the balanced {...} substring starting at `start`, if any."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return None
+
+
+def _find_plan_queue_json(content: Any) -> tuple[str, list[Any]] | None:
+    """Locate a {"plan_queue": [...]} object in assistant text."""
+    import json as _json
+
+    if isinstance(content, list):
+        content = "\n".join(
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    text = str(content or "")
+    key_index = text.find('"plan_queue"')
+    if key_index < 0:
+        return None
+    start = text.rfind("{", 0, key_index)
+    while start >= 0:
+        candidate = _match_braces(text, start)
+        if candidate is not None:
+            try:
+                data = _json.loads(candidate)
+            except (ValueError, TypeError):
+                data = None
+            if isinstance(data, dict) and isinstance(data.get("plan_queue"), list):
+                return candidate, data["plan_queue"]
+        start = text.rfind("{", 0, start)
+    return None
+
+
+def _normalize_plan_queue(raw_queue: list[Any], queue_max: int) -> tuple[list[dict[str, Any]], str | None]:
+    """Validate/normalize a raw plan_queue. Returns (steps, rejection_reason)."""
+    try:
+        from inference.agent.action_names import to_engine_action
+    except Exception:  # noqa: BLE001 - bundle moved; validate name shape only
+        def to_engine_action(name: Any) -> str | None:  # type: ignore[misc]
+            text = str(name or "").strip().upper()
+            return text or None
+
+    if not raw_queue:
+        return [], "plan_queue is empty"
+    steps: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_queue[:queue_max], start=1):
+        if isinstance(item, str):
+            item = {"action": item}
+        if not isinstance(item, dict):
+            return [], f"step {index} is not an action object"
+        engine_name = to_engine_action(item.get("action"))
+        if not engine_name:
+            return [], f"step {index} has unknown action {item.get('action')!r}"
+        if engine_name == "RESET":
+            return [], f"step {index}: RESET is not allowed in plan_queue"
+        step: dict[str, Any] = {"action": engine_name}
+        if engine_name == "ACTION6":
+            try:
+                step["row"] = max(0, min(63, int(item["row"])))
+                step["col"] = max(0, min(63, int(item["col"])))
+            except (KeyError, TypeError, ValueError):
+                return [], f"step {index}: MOUSE requires integer row and col"
+        expect_raw = item.get("expect")
+        if isinstance(expect_raw, dict):
+            expect = {
+                key: bool(expect_raw[key])
+                for key in ("board_changed", "level_completed")
+                if key in expect_raw and expect_raw[key] is not None
+            }
+            if expect:
+                step["expect"] = expect
+        note = str(item.get("note", "") or "").strip()
+        if note:
+            step["note"] = note[:80]
+        steps.append(step)
+    return steps, None
+
+
+def _step_display(step: dict[str, Any]) -> str:
+    """Model-facing label (the model speaks UP/DOWN/MOUSE, not ACTION1..6)."""
+    if step.get("action") == "ACTION6":
+        return f"MOUSE(row={step.get('row')}, col={step.get('col')})"
+    try:
+        from inference.agent.action_names import to_model_action
+
+        return to_model_action(step.get("action"))
+    except Exception:  # noqa: BLE001
+        return str(step.get("action"))
+
+
+def _capture_plan_queue(agent: Any, content: Any) -> None:
+    found = _find_plan_queue_json(content)
+    if found is None:
+        return
+    raw_json, raw_queue = found
+    state = _compact_state(agent)
+    if state.get("queue_raw") == raw_json:
+        # Same block re-emitted: either a retry loop within a turn, or the model
+        # (or a degenerate loop) re-sending a plan that was just aborted or
+        # rejected. Never re-accept it verbatim — that way an abort can never
+        # turn into an abort/replan spin.
+        return
+    config = _compact_config()
+    steps, rejection = _normalize_plan_queue(raw_queue, config["queue_max"])
+    if rejection is not None:
+        COMPACT_DIAGNOSTICS["queue_plans_rejected"] += 1
+        state["queue"] = []
+        state["queue_raw"] = raw_json  # block verbatim resubmission of a bad plan
+        state["queue_report"] = f"PLAN QUEUE REJECTED: {rejection}. No queued steps will run."
+        print(f"[plan-queue] rejected: {rejection}", flush=True)
+        return
+    last = getattr(agent, "_last_action_result", None)
+    level = None
+    if isinstance(last, dict):
+        try:
+            level = int(last.get("level")) if last.get("level") is not None else None
+        except (TypeError, ValueError):
+            level = None
+    state["queue"] = steps
+    state["queue_total"] = len(steps)
+    state["queue_raw"] = raw_json
+    state["queue_level"] = level
+    state["queue_report"] = None
+    COMPACT_DIAGNOSTICS["queue_plans"] += 1
+    truncated = " (truncated)" if len(raw_queue) > config["queue_max"] else ""
+    print(
+        f"[plan-queue] accepted {len(steps)}-step plan{truncated}: "
+        + ", ".join(_step_display(step) for step in steps),
+        flush=True,
+    )
+
+
+def _abort_plan_queue(state: dict[str, Any], reason: str) -> None:
+    executed = state.get("queue_total", 0) - len(state.get("queue", []))
+    remaining = [_step_display(step) for step in state.get("queue", [])]
+    report = (
+        f"PLAN QUEUE ABORTED after {executed}/{state.get('queue_total', 0)} steps: {reason}."
+    )
+    if remaining:
+        report += f" Dropped: {', '.join(remaining)}."
+    report += " Re-inspect the board before planning again."
+    state["queue"] = []
+    # queue_raw is retained: the identical plan must not be re-accepted verbatim.
+    state["queue_report"] = report
+    COMPACT_DIAGNOSTICS["queue_aborts"] += 1
+    print(f"[plan-queue] {report}", flush=True)
+
+
+def _drain_plan_queue(
+    agent: Any,
+    state_path: Any,
+    valid_actions: list[str] | None,
+    step_env: Any,
+    should_stop: Any = None,
+) -> Any:
+    """Execute one queued step without an LLM call, or return None."""
+    runtime_dir = getattr(state_path, "parent", None)
+    state = _compact_state(agent, runtime_dir=runtime_dir)
+    if not state["queue"]:
+        return None
+    if step_env is None:
+        return None
+    if callable(should_stop):
+        try:
+            if should_stop():
+                return None
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Staleness guards: the world moved since the plan was made.
+    last = getattr(agent, "_last_action_result", None)
+    if isinstance(last, dict):
+        if last.get("game_over") or last.get("run_complete"):
+            _abort_plan_queue(state, "terminal state reached before the queued step")
+            return None
+        level = last.get("level")
+        if (
+            state.get("queue_level") is not None
+            and level is not None
+            and int(level) != int(state["queue_level"])
+        ):
+            _abort_plan_queue(state, f"level changed to {level} before the queued step")
+            return None
+
+    step = state["queue"][0]
+    display = _step_display(step)
+    valid = {str(name).strip().upper() for name in (valid_actions or [])}
+    if valid and step["action"] not in valid:
+        _abort_plan_queue(state, f"{display} is not a valid action right now")
+        return None
+
+    state["queue"].pop(0)
+    arguments: dict[str, Any] = {"action": step["action"]}
+    if "row" in step:
+        arguments["row"] = step["row"]
+        arguments["col"] = step["col"]
+    try:
+        payload = step_env(arguments)
+    except Exception as exc:  # noqa: BLE001
+        _abort_plan_queue(state, f"{display} raised {type(exc).__name__}")
+        return None
+    if not isinstance(payload, dict) or not payload.get("executed"):
+        error = payload.get("error") if isinstance(payload, dict) else "no payload"
+        _abort_plan_queue(state, f"{display} was not executed ({error})")
+        return None
+
+    # Book-keep exactly like a model-driven step so the next LLM turn sees a
+    # truthful "previous sequence" line and last_action_result.
+    compact = payload
+    try:
+        compactor = getattr(agent, "_compact_action_result", None)
+        if callable(compactor):
+            compact = compactor(payload)
+    except Exception:  # noqa: BLE001
+        compact = payload
+    try:
+        agent._last_action_result = dict(compact)
+        summarizer = getattr(agent, "_summarize_step_sequence", None)
+        if callable(summarizer):
+            summary = summarizer([dict(compact)])
+            if summary:
+                agent._last_step_summary = summary
+                updater = getattr(agent, "_update_summarized_knowledge_from_step_summary", None)
+                if callable(updater):
+                    updater()
+    except Exception:  # noqa: BLE001
+        pass
+
+    COMPACT_DIAGNOSTICS["queue_steps_executed"] += 1
+    COMPACT_DIAGNOSTICS["llm_calls_saved"] += 1
+    executed_index = state["queue_total"] - len(state["queue"])
+
+    # Post-conditions on the step just executed.
+    expect = step.get("expect") or {}
+    level_completed = bool(compact.get("level_completed"))
+    if compact.get("run_complete"):
+        state["queue"] = []
+        state["queue_raw"] = None
+        print(f"[plan-queue] {display} -> run complete", flush=True)
+    elif compact.get("game_over"):
+        _abort_plan_queue(state, f"{display} caused GAME_OVER")
+    elif expect.get("level_completed") is True and not level_completed:
+        _abort_plan_queue(state, f"{display} did not complete the level as expected")
+    elif level_completed and expect.get("level_completed") is not True:
+        _abort_plan_queue(state, f"{display} completed the level (not planned); plan is stale")
+    elif "board_changed" in expect and bool(compact.get("board_changed")) != expect["board_changed"]:
+        actual = bool(compact.get("board_changed"))
+        _abort_plan_queue(
+            state, f"{display} board_changed={actual}, expected {expect['board_changed']}"
+        )
+    else:
+        try:
+            if compact.get("level") is not None:
+                state["queue_level"] = int(compact.get("level"))
+        except (TypeError, ValueError):
+            pass
+        if not state["queue"]:
+            # Fully drained with no violation: a repeat of the same (working)
+            # plan is legitimate, so stop blocking its verbatim JSON.
+            state["queue_raw"] = None
+        print(
+            f"[plan-queue] executed {display} ({executed_index}/{state['queue_total']}) "
+            "with no LLM call",
+            flush=True,
+        )
+
+    from inference.agent.tool_agent import AnalyzerTurnResult
+
+    return AnalyzerTurnResult(
+        step_executed=True,
+        reasoning=f"[plan-queue] executed {display} ({executed_index}/{state['queue_total']})",
+    )
+
+
+def patch_plan_queue() -> str:
+    """PATCH 12b: capture model-emitted action queues, drain them LLM-free."""
+    from inference.agent import tool_agent
+
+    agent_cls = getattr(tool_agent, "ToolAgent", None)
+    if agent_cls is None:
+        return "patch12b plan-queue: FAIL (ToolAgent not found)"
+    for name in ("analyze", "_update_summarized_knowledge_from_assistant", "_build_user_prompt"):
+        if not hasattr(agent_cls, name):
+            return f"patch12b plan-queue: FAIL (ToolAgent.{name} not found)"
+    if getattr(tool_agent, "AnalyzerTurnResult", None) is None:
+        return "patch12b plan-queue: FAIL (AnalyzerTurnResult not found)"
+    if getattr(agent_cls.analyze, "_plan_queue_patched", False):
+        return "patch12b plan-queue: SKIP (already applied)"
+
+    injector_error = _install_compact_prompt_injector()
+    if injector_error:
+        return f"patch12b plan-queue: FAIL ({injector_error})"
+
+    original_analyze = agent_cls.analyze
+    original_update = agent_cls._update_summarized_knowledge_from_assistant
+
+    def analyze(
+        self: Any,
+        state_path: Any,
+        action_num: int,
+        valid_actions: list[str] | None = None,
+        step_env: Any = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        if _compact_enabled():
+            try:
+                drained = _drain_plan_queue(
+                    self,
+                    state_path,
+                    valid_actions,
+                    step_env,
+                    should_stop=kwargs.get("should_stop"),
+                )
+            except Exception:  # noqa: BLE001 - the queue must never break a turn
+                drained = None
+            if drained is not None:
+                return drained
+        return original_analyze(self, state_path, action_num, valid_actions, step_env, *args, **kwargs)
+
+    def _update_summarized_knowledge_from_assistant(self: Any, content: str) -> None:
+        original_update(self, content)
+        if _compact_enabled():
+            try:
+                _capture_plan_queue(self, content)
+            except Exception:  # noqa: BLE001
+                pass
+
+    analyze._plan_queue_patched = True  # type: ignore[attr-defined]
+    _update_summarized_knowledge_from_assistant._plan_queue_patched = True  # type: ignore[attr-defined]
+    agent_cls.analyze = analyze
+    agent_cls._update_summarized_knowledge_from_assistant = _update_summarized_knowledge_from_assistant
+
+    # One-time schema guidance in the system prompt (agents are constructed
+    # after apply_all(), so wrapping the builder reaches every agent).
+    builder = getattr(tool_agent, "_build_system_prompt", None)
+    if callable(builder) and not getattr(builder, "_plan_queue_patched", False):
+        def _build_system_prompt(*args: Any, **kwargs: Any) -> str:
+            prompt = builder(*args, **kwargs)
+            if _compact_enabled():
+                prompt = f"{prompt}\n\n{_PLAN_QUEUE_GUIDANCE}"
+            return prompt
+
+        _build_system_prompt._plan_queue_patched = True  # type: ignore[attr-defined]
+        tool_agent._build_system_prompt = _build_system_prompt
+
+    return "patch12b plan-queue: OK"
+
+
 def apply_all(verbose: bool = True) -> list[str]:
     """Apply every patch. Each is independent; one failing does not block the others."""
     results = []
@@ -2252,6 +3042,8 @@ def apply_all(verbose: bool = True) -> list[str]:
         patch_hud_sandbox,
         patch_win_replay,
         patch_frontier_graph,
+        patch_compaction,
+        patch_plan_queue,
     ):
         try:
             results.append(fn())
