@@ -2370,7 +2370,7 @@ def _compact_config() -> dict[str, int]:
         "max_calls": max(0, _compact_env_int("TAAF_COMPACT_MAX_CALLS", 8)),
         "prompt_chars": max(500, _compact_env_int("TAAF_COMPACT_PROMPT_CHARS", 6000)),
         "response_tokens": max(64, _compact_env_int("TAAF_COMPACT_RESPONSE_TOKENS", 350)),
-        "timeout_s": max(1, _compact_env_int("TAAF_COMPACT_TIMEOUT_S", 20)),
+        "timeout_s": max(1, _compact_env_int("TAAF_COMPACT_TIMEOUT_S", 60)),
         "queue_max": max(1, _compact_env_int("TAAF_COMPACT_QUEUE_MAX", 10)),
     }
 
@@ -2533,12 +2533,26 @@ def _run_compaction(agent: Any, state: dict[str, Any], config: dict[str, int]) -
     except (TypeError, ValueError):
         pass
     saved_max = getattr(agent, "_max_output_tokens", None)
+    # Thinking mode must be OFF for this call: the bundle's _chat_completion
+    # reads _LOCAL_ANALYZER_ENABLE_THINKING at call time, and with it on Qwen
+    # burns the whole narrowed budget inside <think> — vLLM's qwen3 parser then
+    # returns content=None and every compaction fails (303/303 in A/B round 2).
+    ta_mod = inspect.getmodule(type(agent))
+    saved_think = getattr(ta_mod, "_LOCAL_ANALYZER_ENABLE_THINKING", None)
     try:
         agent._max_output_tokens = min(saved_max or config["response_tokens"], config["response_tokens"])
+        if saved_think is not None:
+            ta_mod._LOCAL_ANALYZER_ENABLE_THINKING = False
         result = chat([{"role": "user", "content": prompt}], **kwargs)
     finally:
         agent._max_output_tokens = saved_max
-    parsed = _parse_compaction_reply(result.message.get("content", ""))
+        if saved_think is not None:
+            ta_mod._LOCAL_ANALYZER_ENABLE_THINKING = saved_think
+    content = result.message.get("content", "") or ""
+    if not content.strip():
+        # Reasoning-parser models put stray output in reasoning_content.
+        content = result.message.get("reasoning_content", "") or ""
+    parsed = _parse_compaction_reply(content)
     if parsed is None:
         raise ValueError("compaction reply was not a JSON store")
     _merge_compact_knowledge(state, parsed)
