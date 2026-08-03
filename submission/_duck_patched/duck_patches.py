@@ -3200,6 +3200,126 @@ def patch_mechanic_playbook() -> str:
     return "patch13 playbook: OK"
 
 
+# --- PATCH 14: world-model anti-freeze guard -------------------------------------
+#
+# tr87 (bsm k021): the copy-forward world-model instruction ("the default behavior
+# is to copy it") became a trap — the model repeated the identical world-model text
+# and plan verbatim for 10+ turns while issuing almost no actions, burning the whole
+# run frozen. This guard hashes the carried world model at prompt-build time; when
+# it is unchanged for TAAF_ANTIFREEZE_TURNS consecutive turns (default 3) while the
+# board is also unchanged (HUD-masked, so a ticking budget bar cannot hide a
+# freeze), a one-line breaker is appended to the user prompt telling the model its
+# hypothesis is stalled and to re-derive from the raw frame. Cheap, bounded, no LLM
+# calls. TAAF_ANTIFREEZE=0 disables at call time.
+
+ANTIFREEZE_DIAGNOSTICS = {"triggers": 0}
+
+_ANTIFREEZE_BREAKER = (
+    "ALERT: your world model text has been IDENTICAL for {turns} consecutive turns "
+    "while the board did not change. Your current hypothesis is wrong or stalled. Do "
+    "NOT copy the world model again: discard it, re-derive a NEW one from the raw "
+    "frame (`current_frame.segmentation`), and run a DIFFERENT experiment this turn."
+)
+
+
+def _antifreeze_enabled() -> bool:
+    import os
+
+    return os.environ.get("TAAF_ANTIFREEZE", "1").strip() not in {"0", "false", "False"}
+
+
+def _antifreeze_turns() -> int:
+    import os
+
+    try:
+        return max(1, int(os.environ.get("TAAF_ANTIFREEZE_TURNS", "3").strip() or "3"))
+    except ValueError:
+        return 3
+
+
+def _antifreeze_board_fingerprint(current_frame: Any) -> str:
+    """Stable, HUD-masked fingerprint of the board carried by the prompt's frame.
+
+    HUD cells (live thread-local mask from patch 8) are zeroed first: a budget
+    bar ticking under a frozen model must not read as 'the board changed'.
+    """
+    grid = getattr(current_frame, "grid", None)
+    if grid is None:
+        return ""
+    try:
+        rows = [list(row) for row in grid]
+        for cell in _hud_current_mask_cells():
+            y, x = int(cell[0]), int(cell[1])
+            if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
+                rows[y][x] = 0
+        return repr(rows)
+    except Exception:
+        return ""
+
+
+def _antifreeze_note(agent: Any, current_frame: Any) -> str:
+    """Streak bookkeeping; returns the breaker line when frozen, else ''."""
+    import json as _json
+
+    knowledge = getattr(agent, "_summarized_knowledge", None)
+    if not isinstance(knowledge, dict) or not any(v for v in knowledge.values()):
+        # Nothing carried forward (fresh game/level) — cannot be frozen.
+        model_fp = ""
+    else:
+        model_fp = _json.dumps(knowledge, sort_keys=True, default=str)
+    board_fp = _antifreeze_board_fingerprint(current_frame)
+
+    state = agent.__dict__.setdefault(
+        "_antifreeze14", {"model_fp": None, "board_fp": None, "streak": 0}
+    )
+    if model_fp and model_fp == state["model_fp"] and board_fp == state["board_fp"]:
+        state["streak"] += 1
+    else:
+        state["streak"] = 0
+    state["model_fp"] = model_fp
+    state["board_fp"] = board_fp
+
+    turns = _antifreeze_turns()
+    if state["streak"] < turns:
+        return ""
+    ANTIFREEZE_DIAGNOSTICS["triggers"] += 1
+    print(
+        f"[antifreeze] world model + board frozen for {state['streak']} turns — "
+        "breaker injected",
+        flush=True,
+    )
+    return "\n" + _ANTIFREEZE_BREAKER.format(turns=state["streak"])
+
+
+def patch_antifreeze() -> str:
+    """PATCH 14: break verbatim world-model repetition on a stuck board."""
+    from inference.agent import tool_agent
+
+    agent_cls = getattr(tool_agent, "ToolAgent", None)
+    if agent_cls is None or not hasattr(agent_cls, "_build_user_prompt"):
+        return "patch14 antifreeze: FAIL (ToolAgent._build_user_prompt not found)"
+    if not hasattr(agent_cls, "_summarized_knowledge_lines"):
+        return "patch14 antifreeze: FAIL (ToolAgent._summarized_knowledge_lines not found)"
+    if getattr(agent_cls._build_user_prompt, "_antifreeze_patched", False):
+        return "patch14 antifreeze: SKIP (already applied)"
+
+    original = agent_cls._build_user_prompt
+
+    def _build_user_prompt(self: Any, *args: Any, **kwargs: Any) -> str:
+        prompt = original(self, *args, **kwargs)
+        if not _antifreeze_enabled():
+            return prompt
+        try:
+            return prompt + _antifreeze_note(self, kwargs.get("current_frame"))
+        except Exception:  # noqa: BLE001 - the guard must never break a turn
+            return prompt
+
+    _forward_patch_markers(_build_user_prompt, original)
+    _build_user_prompt._antifreeze_patched = True  # type: ignore[attr-defined]
+    agent_cls._build_user_prompt = _build_user_prompt
+    return "patch14 antifreeze: OK"
+
+
 def apply_all(verbose: bool = True) -> list[str]:
     """Apply every patch. Each is independent; one failing does not block the others."""
     results = []
@@ -3219,6 +3339,7 @@ def apply_all(verbose: bool = True) -> list[str]:
         patch_compaction,
         patch_plan_queue,
         patch_mechanic_playbook,
+        patch_antifreeze,
     ):
         try:
             results.append(fn())

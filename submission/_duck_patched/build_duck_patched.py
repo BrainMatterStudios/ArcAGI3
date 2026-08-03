@@ -122,7 +122,8 @@ def patch_cell_source() -> str:
         "# stream during the run regardless).\n"
         "import atexit as _atexit\n"
         "_atexit.register(\n"
-        '    lambda: print(f"[duck-patch] compact diagnostics: {COMPACT_DIAGNOSTICS}", flush=True)\n'
+        '    lambda: print(f"[duck-patch] compact diagnostics: {COMPACT_DIAGNOSTICS} '
+        'antifreeze: {ANTIFREEZE_DIAGNOSTICS}", flush=True)\n'
         ")\n"
     )
 
