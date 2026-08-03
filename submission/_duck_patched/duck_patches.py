@@ -196,8 +196,27 @@ def verify_reset_already_handled() -> str:
     )
 
 
+def _grid_burner_enabled() -> bool:
+    """Opt-in only (TAAF_GRID_BURNER=1). Default OFF.
+
+    The 2026-08-03 zero-submission diagnosis found the burner draws ~11px default-font
+    labels and per-cell grid lines onto the images at the SCORED config's
+    MULTIMODAL_UPSCALE=4 (4px cells) — substantial frame defacement. It was only ever
+    validated at dev upscale 16 and has never been part of a scored config, so it must
+    be explicitly opted into, never on by default.
+    """
+    import os
+
+    return os.environ.get("TAAF_GRID_BURNER", "0").strip() in {"1", "true", "True"}
+
+
 def patch_dynamic_grid_burner() -> str:
-    """Burn coordinate grids into the images sent to the VLM (Spatial Overlay)."""
+    """Burn coordinate grids into the images sent to the VLM (Spatial Overlay).
+
+    Call-time gated on TAAF_GRID_BURNER (default OFF): the wrapper is always
+    installed but delegates to the stock renderer unless explicitly enabled,
+    matching the other patches' env-switch style.
+    """
     from inference.agent import vision_context
 
     if getattr(vision_context.frame_to_png_data_url, "_grid_burner_patched", False):
@@ -206,6 +225,8 @@ def patch_dynamic_grid_burner() -> str:
     original_func = vision_context.frame_to_png_data_url
 
     def frame_to_png_data_url_patched(frame: Any, *, upscale: int | None = None) -> str:
+        if not _grid_burner_enabled():
+            return original_func(frame, upscale=upscale)
         import io, base64
         from PIL import Image, ImageDraw
 
@@ -258,9 +279,12 @@ def patch_dynamic_grid_burner() -> str:
         encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
         return f"data:image/png;base64,{encoded}"
 
+    _forward_patch_markers(frame_to_png_data_url_patched, original_func)
     frame_to_png_data_url_patched._grid_burner_patched = True  # type: ignore[attr-defined]
     vision_context.frame_to_png_data_url = frame_to_png_data_url_patched
-    return "patch4 grid-burner: OK"
+    if _grid_burner_enabled():
+        return "patch4 grid-burner: OK (TAAF_GRID_BURNER=1)"
+    return "patch4 grid-burner: OK (dormant — opt in with TAAF_GRID_BURNER=1)"
 
 
 def patch_prompts() -> str:

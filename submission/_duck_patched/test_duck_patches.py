@@ -208,6 +208,62 @@ def test_animation_producer_never_breaks_an_action(monkeypatch):
     assert payload == {"executed": True}
 
 
+class _FakeFrame:
+    def __init__(self, grid):
+        self.grid = grid
+
+
+def _grid_burner_fixture():
+    """Pristine stock renderer + freshly-applied patch4 wrapper on the same module."""
+    import importlib
+
+    from inference.agent import vision_context
+
+    vision_context = importlib.reload(vision_context)  # drop any previous wrapper
+    stock = vision_context.frame_to_png_data_url
+    status = duck_patches.patch_dynamic_grid_burner()
+    assert "OK" in status, status
+    return stock, vision_context.frame_to_png_data_url
+
+
+def test_grid_burner_default_off_is_pixel_identical_to_stock(monkeypatch):
+    """Unset env (the scored default): the wrapper must not touch a single pixel."""
+    monkeypatch.delenv("TAAF_GRID_BURNER", raising=False)
+    stock, patched = _grid_burner_fixture()
+    assert patched is not stock
+    frame = _FakeFrame([[1, 2, 3, 0], [3, 4, 0, 1], [0, 1, 2, 3], [2, 0, 1, 4]])
+    # upscale=4 is the scored config's MULTIMODAL_UPSCALE — the exact setting the
+    # 2026-08-03 diagnosis showed the burner defaces.
+    assert patched(frame, upscale=4) == stock(frame, upscale=4)
+    assert patched(frame, upscale=16) == stock(frame, upscale=16)
+
+
+def test_grid_burner_explicit_zero_is_off(monkeypatch):
+    monkeypatch.setenv("TAAF_GRID_BURNER", "0")
+    stock, patched = _grid_burner_fixture()
+    frame = _FakeFrame([[1, 2], [3, 4]])
+    assert patched(frame, upscale=4) == stock(frame, upscale=4)
+
+
+def test_grid_burner_opt_in_draws_the_overlay(monkeypatch):
+    """TAAF_GRID_BURNER=1: grid lines/labels change the rendered image."""
+    monkeypatch.setenv("TAAF_GRID_BURNER", "1")
+    stock, patched = _grid_burner_fixture()
+    frame = _FakeFrame([[1, 2, 3, 0], [3, 4, 0, 1], [0, 1, 2, 3], [2, 0, 1, 4]])
+    assert patched(frame, upscale=16) != stock(frame, upscale=16)
+
+
+def test_grid_burner_toggle_is_call_time_not_apply_time(monkeypatch):
+    """The switch is read per call, like the other patches' env switches."""
+    monkeypatch.setenv("TAAF_GRID_BURNER", "1")
+    stock, patched = _grid_burner_fixture()
+    frame = _FakeFrame([[1, 2], [3, 4]])
+    burned = patched(frame, upscale=16)
+    assert burned != stock(frame, upscale=16)
+    monkeypatch.setenv("TAAF_GRID_BURNER", "0")
+    assert patched(frame, upscale=16) == stock(frame, upscale=16)
+
+
 def test_apply_all_reports_every_patch():
     lines = duck_patches.apply_all(verbose=False)
     assert len(lines) == 14  # patches 1-6 + verify + 7/8/9/10/11 + patch12a + patch12b

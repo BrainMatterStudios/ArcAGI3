@@ -43,6 +43,40 @@ Added fields, only when an action produced an animation (so single-frame actions
 
 No images, no raw frames — roughly 20–40 tokens per animated action.
 
+## Patch 4 — grid burner (`TAAF_GRID_BURNER`, default OFF)
+
+Burns coordinate labels and per-cell grid lines into the images sent to the VLM. **Off by
+default and opt-in only**: the 2026-08-03 zero-submission diagnosis found the burner's ~11px
+default-font labels and per-cell lines substantially deface the frames at the scored config's
+`MULTIMODAL_UPSCALE=4` (4px cells). It was only ever validated at dev upscale 16 and has never
+been part of a scored config. The wrapper is always installed but delegates to the stock
+renderer unless `TAAF_GRID_BURNER=1` (checked per call, like the other switches).
+
+## Patch 11 — frontier-graph substrate + no-op veto + stall grinder (`TAAF_GRAPH`, default on)
+
+Research idea 2 part 2 / plan item B6 (docs/RESEARCH-2026-08-02-unbiased-deep-research.md).
+Composes with the shipped patches: node identity = patch 8's HUD-masked grid hash; the stall
+signal is read off patch 7's `_watchdog_state` (no second stall detector).
+
+* **Graph substrate** — every executed action records `(level, masked-hash) --action-->
+  (level, masked-hash)` with tested/untested plan bookkeeping; click plans are
+  connected-component centroids in poby's benchmarked *flat* button-likeness order (its hard
+  salience tiers regressed and are deliberately not ported), plus a coarse sweep.
+* **No-op edge veto** — a single proposed action that is a known no-op edge from the exact
+  current node (>= 2 observations, all pure self-loops) is answered with a zero-cost synthetic
+  result (`vetoed_noop: true`). Never RESET, never batches, never in the first
+  `TAAF_GRAPH_VETO_MIN_LEVEL_ACTIONS` (10) actions of a level, at most `TAAF_GRAPH_VETO_CAP`
+  (25) per level.
+* **Stall grinder (grind-to-UNLOCK only)** — on a watchdog stall on a level with 0 completions
+  this run, a scripted frontier walk runs at engine speed (BFS to nearest node with untested
+  plans) and stops on level transition / GAME_OVER / `TAAF_GRAPH_GRIND_BUDGET` (2000) actions.
+  Verified economics: free on never-completed levels; **permanently disengages for any level
+  completed this run** (grinding a completed level's counter destroys its score), and engages
+  at most `TAAF_GRAPH_GRIND_MAX_PER_LEVEL` (2) times per level so the watchdog RESET/kill path
+  stays reachable.
+* **Diagnostics** — `graph_diagnostics(session)`: `{nodes, edges, vetoes_issued,
+  vetoes_capped, grinder_engagements, grinder_actions, levels_unlocked_by_grinder}`.
+
 ## Patch 12 — compaction-on-evict + LLM-free plan queue (`TAAF_COMPACT`, default ON)
 
 Research 2026-08-02 idea 4 / plan B4. Two context-lifecycle repairs, one env switch
@@ -79,31 +113,6 @@ equivalent, more thoroughly:** `solver._engine_action_names` strips RESET from t
 choices unconditionally (solver.py:116-117), and `_execute_auto_reset()` fires automatically on
 GAME_OVER (solver.py:278-282). `verify_reset_already_handled()` asserts both still hold, so if
 upstream ever changes we find out in the log instead of silently regressing.
-
-## Patch 11 — frontier-graph substrate + no-op veto + stall grinder (`TAAF_GRAPH`, default on)
-
-Research idea 2 part 2 / plan item B6 (docs/RESEARCH-2026-08-02-unbiased-deep-research.md).
-Composes with the shipped patches: node identity = patch 8's HUD-masked grid hash; the stall
-signal is read off patch 7's `_watchdog_state` (no second stall detector).
-
-* **Graph substrate** — every executed action records `(level, masked-hash) --action-->
-  (level, masked-hash)` with tested/untested plan bookkeeping; click plans are
-  connected-component centroids in poby's benchmarked *flat* button-likeness order (its hard
-  salience tiers regressed and are deliberately not ported), plus a coarse sweep.
-* **No-op edge veto** — a single proposed action that is a known no-op edge from the exact
-  current node (>= 2 observations, all pure self-loops) is answered with a zero-cost synthetic
-  result (`vetoed_noop: true`). Never RESET, never batches, never in the first
-  `TAAF_GRAPH_VETO_MIN_LEVEL_ACTIONS` (10) actions of a level, at most `TAAF_GRAPH_VETO_CAP`
-  (25) per level.
-* **Stall grinder (grind-to-UNLOCK only)** — on a watchdog stall on a level with 0 completions
-  this run, a scripted frontier walk runs at engine speed (BFS to nearest node with untested
-  plans) and stops on level transition / GAME_OVER / `TAAF_GRAPH_GRIND_BUDGET` (2000) actions.
-  Verified economics: free on never-completed levels; **permanently disengages for any level
-  completed this run** (grinding a completed level's counter destroys its score), and engages
-  at most `TAAF_GRAPH_GRIND_MAX_PER_LEVEL` (2) times per level so the watchdog RESET/kill path
-  stays reachable.
-* **Diagnostics** — `graph_diagnostics(session)`: `{nodes, edges, vetoes_issued,
-  vetoes_capped, grinder_engagements, grinder_actions, levels_unlocked_by_grinder}`.
 
 ## Verification
 
