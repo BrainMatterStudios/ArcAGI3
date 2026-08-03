@@ -94,6 +94,14 @@ def patch_cell_source() -> str:
         "    # Loud but non-fatal: a failed patch means upstream moved, and we want that in\n"
         "    # the log rather than a silently unpatched scored run.\n"
         '    print("[duck-patch] WARNING: at least one patch did not apply", flush=True)\n'
+        "\n"
+        "# Patch-12 diagnostics land in the kernel log at interpreter exit (bm.run() has\n"
+        "# no after-run hook in this notebook; per-event [compact]/[plan-queue] lines\n"
+        "# stream during the run regardless).\n"
+        "import atexit as _atexit\n"
+        "_atexit.register(\n"
+        '    lambda: print(f"[duck-patch] compact diagnostics: {COMPACT_DIAGNOSTICS}", flush=True)\n'
+        ")\n"
     )
 
 
