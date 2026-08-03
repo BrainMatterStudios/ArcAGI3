@@ -117,7 +117,7 @@ upstream ever changes we find out in the log instead of silently regressing.
 ## Verification
 
 ```
-.venv/bin/python -m pytest submission/_duck_patched/ -q                         # 87 passed
+.venv/bin/python -m pytest submission/_duck_patched/ -q                         # 117 passed
 .venv/bin/python submission/_duck_patched/build_duck_patched.py                 # rebuild notebook
 ```
 
