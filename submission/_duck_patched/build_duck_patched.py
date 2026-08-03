@@ -73,9 +73,23 @@ CPU_SAFE_RUN_NEW = (
 HOOK_MARKER = "Make one-off changes to `bm`, `bm.games`, or `bm.solver` here"
 
 
+# Experiment-arm pins, emitted into the hook cell before apply_all. This build is
+# the clean WMR draw: watchdog/HUD-mask/replay ON (their defaults), the un-A/B'd
+# patch11/12 pinned OFF, grid-burner already default-off. Change these ONLY when
+# the submitted experiment changes, and keep the submission description in sync
+# (scripts/submit_gated.py cross-checks it).
+EXPERIMENT_ENV = {
+    "TAAF_GRAPH": "0",
+    "TAAF_COMPACT": "0",
+}
+
+
 def patch_cell_source() -> str:
     """The customization-hook cell: duck_patches.py inlined, then applied."""
     body = PATCHES.read_text()
+    pins = "".join(
+        f'_os.environ["{k}"] = "{v}"\n' for k, v in sorted(EXPERIMENT_ENV.items())
+    )
     return (
         "# ============================================================================\n"
         "# In-memory harness patches. Inlined from submission/_duck_patched/duck_patches.py\n"
@@ -87,6 +101,11 @@ def patch_cell_source() -> str:
         "# ============================================================================\n"
         "\n"
         f"{body}\n"
+        "\n"
+        "# --- experiment-arm pins (see EXPERIMENT_ENV in build_duck_patched.py) ---\n"
+        "import os as _os\n"
+        f"{pins}"
+        'print(f"[duck-patch] experiment pins: {' + repr(sorted(EXPERIMENT_ENV.items())) + '}", flush=True)\n'
         "\n"
         "_patch_results = apply_all()\n"
         "if any"
