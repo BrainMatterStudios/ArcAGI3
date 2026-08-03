@@ -1,48 +1,51 @@
 # ============================================================================
-# A/B wave driver — ROUND 2: marginal value of patch11 (frontier graph) and
-# patch12 (compaction + plan queue) on top of the submitted v6 config, on the
-# real bundled Qwen3.6-27B duck.
+# A/B wave driver — ROUND 3: the mechanic-archetype PLAYBOOK (patch13) as the
+# single variable, on the real bundled Qwen3.6-27B duck.
 #
 # Arms (env pins only; the patch layer is identical everywhere — apply_all(),
-# exactly what the submitted v6 kernel installs):
-#   B = v6 as submitted: watchdog + HUD mask + win replay ON,
-#       TAAF_GRAPH=0, TAAF_COMPACT=0, grid burner off.
-#   C = B + TAAF_GRAPH=1   (patch11: frontier graph, no-op veto, stall grinder)
-#   D = B + TAAF_COMPACT=1 (patch12: compaction-on-evict + LLM-free plan queue)
+# exactly what the submitted v6 kernel installs, now including patch13/14):
+#   A = current pins: WMR trio ON, TAAF_GRAPH=0, TAAF_COMPACT=0,
+#       TAAF_PLAYBOOK=0, TAAF_ANTIFREEZE=1 (patch14 point fix, BOTH arms —
+#       like the HUD slow-tick rotation fix it is a default now, so the
+#       playbook isolates cleanly).
+#   B = A + TAAF_PLAYBOOK=1 (patch13: archetype playbook appended to the
+#       system prompt — the 2026-08-03 unlock diagnosis's #1 intervention).
 #
-# Design (carried from round 1, commit 3c21726):
+# Design (mechanism carried wholesale from rounds 1-2, commits 3c21726/ae1286b):
 #   * ONE kernel session, ONE vLLM server. duck_patches.py provably reads every
-#     switch AT CALL TIME (_watchdog_enabled/_hud_mask_enabled/
-#     _win_replay_enabled/_graph_enabled/_compact_enabled all read os.environ
-#     per call), so toggling between waves in one process is a genuine arm
-#     switch. Analyzers (ToolAgent) are constructed per game INSIDE each wave,
-#     so patch12b's system-prompt guidance also follows the wave's env.
-#   * Waves B,C,D,D,C,B (mirrored counterbalance): each arm's two runs average
-#     to the same mean wave index (B:2.5, C:2.5, D:2.5), cancelling linear
-#     server drift deterministically. Realized order is logged (law 5).
-#   * Per the A/A noise floor (RMS 0.707 levels/game-run), single-session score
-#     deltas are NOISE. Primary readouts are event counts: graph veto/grinder
-#     engagements (C), compaction/queue counters (D), watchdog/HUD/replay
-#     events (all), plus paired per-game level deltas vs B.
+#     switch AT CALL TIME (_playbook_enabled/_antifreeze_enabled/
+#     _watchdog_enabled/... all read os.environ per call), so toggling between
+#     waves in one process is a genuine arm switch. Analyzers (ToolAgent) are
+#     constructed per game INSIDE each wave, so patch13's system-prompt
+#     injection follows the wave's env.
+#   * Waves A,B,B,A (mirrored counterbalance): each arm's two runs average to
+#     the same mean wave index (A:1.5, B:1.5), cancelling linear server drift
+#     deterministically. Realized order is logged (law 5).
+#   * Per the A/A noise floor (RMS 0.707 levels/game-run), score deltas at
+#     2 waves/arm are NOISE — see pre_registered_reading in the result JSON:
+#     primary readout is paired per-game L1-UNLOCK EVENTS on the 8 target
+#     games, secondary is antifreeze triggers + m0r0 mask confirmation.
 #   * "An env toggle is not a shipped arm": every wave logs positive runtime
-#     proof of its toggle state AND a patch-proof snapshot; the serving assert
-#     proves the 27B is genuinely served BEFORE any game runs.
+#     proof of its toggle state, a patch-proof snapshot, AND a playbook
+#     presence proof (the playbook text asserted present/absent in real
+#     system prompts built during the wave — direct probe BEFORE the wave,
+#     sampled in-run prompts after). The serving assert proves the 27B is
+#     genuinely served BEFORE any game runs.
 #
-# Round-2 instrumentation fixes/additions:
-#   * gen_tokens FIXED. Round 1 read gr.final_generated_tokens, which this
-#     bundle's solver NEVER populates (play() calls game.finish_game() with no
-#     arguments — solver.py:346). The real per-action accounting lives in
-#     run.history[i].generated_tokens (solver._execute_action diffs the
-#     analyzer's cumulative usage-based counter per action — solver.py:679-682).
-#     Rows now sum the history records; the analyzer's own session counters and
-#     solver_note ("tokens=N", solver.py:335) are captured as cross-checks.
-#   * Per-game graph diagnostics (C waves) via duck_patches.graph_diagnostics.
-#   * COMPACT_DIAGNOSTICS deltas per wave + per-game compact/queue state.
+# Round-3 instrumentation additions (on top of round 2's fixed gen_tokens
+# accounting, HUD/watchdog/replay diagnostics, compact/graph counters):
+#   * patch14 antifreeze diagnostics: per-wave ANTIFREEZE_DIAGNOSTICS delta +
+#     per-game trigger counts (module-global _antifreeze_note is wrapped to
+#     attribute triggers to the calling agent; tr87 is the predicted site).
+#   * HUD mask stats were already per-row (mask_cells/confirmed_lines); the
+#     slow-tick rotation fix should now confirm masks on m0r0.
+#   * playbook presence proof per wave (see above), logged like toggle proof.
 #
 # This file is BOTH inlined into the kernel's run cell by build_ab_wmr.py AND
 # imported by dry_run.py for the GPU-free local test. Edit here, then rebuild.
 # ============================================================================
 import glob as _ab_glob
+import hashlib as _ab_hashlib
 import json as _ab_json
 import os as _ab_os
 import sys as _ab_sys
@@ -52,19 +55,24 @@ import urllib.request as _ab_urlreq
 
 _AB_WMR_TRIO = {"TAAF_WATCHDOG": "1", "TAAF_HUD_MASK": "1", "TAAF_WIN_REPLAY": "1",
                 "TAAF_GRID_BURNER": "0"}
+# A is the current pin set: v6 EXPERIMENT_ENV (GRAPH=0 COMPACT=0 PLAYBOOK=0)
+# plus the two point fixes both arms inherit as defaults (HUD rotation fix has
+# no switch; patch14 antifreeze pinned ON explicitly for the toggle proof).
+_AB_ROUND3_BASE = {**_AB_WMR_TRIO, "TAAF_GRAPH": "0", "TAAF_COMPACT": "0",
+                   "TAAF_ANTIFREEZE": "1"}
 AB_ARM_ENV = {
-    # B is byte-for-byte the submitted v6 experiment env (EXPERIMENT_ENV in
-    # build_duck_patched.py pins GRAPH=0 COMPACT=0; WMR trio on by default).
-    "B": {**_AB_WMR_TRIO, "TAAF_GRAPH": "0", "TAAF_COMPACT": "0"},
-    "C": {**_AB_WMR_TRIO, "TAAF_GRAPH": "1", "TAAF_COMPACT": "0"},
-    "D": {**_AB_WMR_TRIO, "TAAF_GRAPH": "0", "TAAF_COMPACT": "1"},
+    "A": {**_AB_ROUND3_BASE, "TAAF_PLAYBOOK": "0"},
+    "B": {**_AB_ROUND3_BASE, "TAAF_PLAYBOOK": "1"},
 }
 
-# Panel (10 games) — SAME as round 1 (chosen from the 196-run g0 base
-# distribution, docs/test-artifacts-2026-08-02/RESULTS-2026-08-02-trace-audits.md):
-# unlock-sensitive sb26 re86 su15 tu93 vc33 bp35 ar25; stall-prone g50t ls20
-# ft09; replay-sensitive sb26; HUD-hard vc33/ls20/tu93.
-AB_DEFAULT_GAMES = "sb26,re86,su15,tu93,vc33,bp35,ar25,ft09,g50t,ls20"
+# Panel (10 games) — NEW for round 3, diagnosis-targeted (docs/test-artifacts-
+# 2026-08-02/UNLOCK-DIAGNOSIS-9-GAMES-2026-08-03.md): 8 never-unlocked target
+# games the playbook PREDICTS unlocks on (sk48 also gets its first
+# post-ACTION7-fix measurement) + 2 continuity games from rounds 1-2.
+# dc22 deliberately EXCLUDED: capability-blocked (the K3 teacher fails it too).
+_AB_TARGET_GAMES = ("cn04", "lf52", "ls20", "m0r0", "wa30", "g50t", "tr87", "sk48")
+_AB_CONTINUITY_GAMES = ("ft09", "re86")
+AB_DEFAULT_GAMES = ",".join(_AB_TARGET_GAMES + _AB_CONTINUITY_GAMES)
 
 
 def _ab_cfg(name: str, default: str) -> str:
@@ -72,14 +80,37 @@ def _ab_cfg(name: str, default: str) -> str:
 
 
 AB_GAMES = [s.strip() for s in _ab_cfg("AB_GAMES", AB_DEFAULT_GAMES).split(",") if s.strip()]
-AB_WAVES = [w.strip().upper() for w in _ab_cfg("AB_WAVES", "B,C,D,D,C,B").split(",") if w.strip()]
+AB_WAVES = [w.strip().upper() for w in _ab_cfg("AB_WAVES", "A,B,B,A").split(",") if w.strip()]
 AB_BUDGET = float(_ab_cfg("AB_BUDGET", "3600"))          # per-game wall cap, seconds
-AB_DEADLINE_S = float(_ab_cfg("AB_DEADLINE_S", str(int(8.2 * 3600))))  # from notebook start
+AB_DEADLINE_S = float(_ab_cfg("AB_DEADLINE_S", str(int(8 * 3600))))  # from notebook start
 AB_WAVE_OVERHEAD_S = 900.0                               # server start + collect + slack
 AB_DRY_RUN = _ab_os.environ.get("AB_DRY_RUN", "") == "1"
 
 AB_SESSIONS = []                # (wave_index, session) — filled by the registry wrapper
+_AB_SYSPROMPTS = []             # (wave_index, prompt) — filled by the prompt recorder
 _AB_WAVE = {"i": -1}
+
+# Pre-registered reading — written verbatim into the result JSON header so the
+# analysis cannot quietly move the goalposts after the data lands.
+AB_PREREGISTERED_READING = {
+    "primary": (
+        "Paired per-game L1-unlock events on the 8 target games "
+        f"{list(_AB_TARGET_GAMES)}: B unlocking a target game A never does = "
+        "signal. The diagnosis predicts lf52/wa30/cn04 reachable and the ls20 "
+        "rate up; g50t/tr87/sk48 are stretch; dc22 is excluded as "
+        "capability-blocked (the K3 teacher fails it too)."
+    ),
+    "secondary": (
+        "patch14 antifreeze trigger counts and any freeze-broken game (tr87 is "
+        "the predicted trigger site); m0r0 HUD mask confirmation "
+        "(mask_cells/confirmed_lines) after the slow-tick rotation fix; sk48's "
+        "first post-ACTION7-fix measurement."
+    ),
+    "not_a_readout": (
+        "Score deltas at 2 waves/arm are noise (A/A floor RMS 0.707 "
+        "levels/game-run) — do not headline them."
+    ),
+}
 
 
 def _ab_patch_module():
@@ -113,6 +144,8 @@ def _ab_toggles():
         "TAAF_WIN_REPLAY": default_on("TAAF_WIN_REPLAY"),
         "TAAF_GRAPH": default_on("TAAF_GRAPH"),
         "TAAF_COMPACT": default_on("TAAF_COMPACT"),
+        "TAAF_PLAYBOOK": default_on("TAAF_PLAYBOOK"),
+        "TAAF_ANTIFREEZE": default_on("TAAF_ANTIFREEZE"),
         "TAAF_GRID_BURNER": opt_in("TAAF_GRID_BURNER"),
     }
 
@@ -150,6 +183,10 @@ def _ab_patch_proof():
             getattr(agent_cls._persistent_history_messages, "_compact12_patched", False)),
         "compact_prompt_injector_patched": bool(
             getattr(agent_cls._build_user_prompt, "_compact12_patched", False)),
+        "playbook_system_prompt_patched": bool(
+            getattr(_ta._build_system_prompt, "_playbook_patched", False)),
+        "antifreeze_user_prompt_patched": bool(
+            getattr(agent_cls._build_user_prompt, "_antifreeze_patched", False)),
         "execute_chain_repr": repr(cls._execute_action),
         "play_chain_repr": repr(cls.play),
     }
@@ -168,6 +205,10 @@ def _ab_wave_patch_proof():
         "plan_queue_analyze_patched": bool(getattr(agent_cls.analyze, "_plan_queue_patched", False)),
         "compaction_history_patched": bool(
             getattr(agent_cls._persistent_history_messages, "_compact12_patched", False)),
+        "playbook_system_prompt_patched": bool(
+            getattr(_ta._build_system_prompt, "_playbook_patched", False)),
+        "antifreeze_user_prompt_patched": bool(
+            getattr(agent_cls._build_user_prompt, "_antifreeze_patched", False)),
     }
 
 
@@ -198,6 +239,99 @@ def _ab_install_registry():
     _execute_action._ab_registered = True
     cls.play = play
     cls._execute_action = _execute_action
+
+
+# --- round 3: playbook presence proof -------------------------------------------
+
+
+def _ab_playbook_marker():
+    """The playbook's identifying text, read from the live patch layer when
+    possible so the proof cannot drift from what patch13 actually injects."""
+    mod = _ab_patch_module()
+    text = getattr(mod, "_PLAYBOOK_TEXT", None) if mod else None
+    if isinstance(text, str) and text.strip():
+        return text.splitlines()[0].strip()
+    return "Mechanic playbook"
+
+
+def _ab_install_prompt_recorder():
+    """Outermost wrapper on tool_agent._build_system_prompt: record every real
+    system prompt built during play, tagged with the current wave index.
+    Installed AFTER apply_all(), so it observes patch13's output. Patch markers
+    are forwarded so per-wave patch proofs still see _playbook_patched."""
+    from inference.agent import tool_agent as _ta
+
+    builder = _ta._build_system_prompt
+    if getattr(builder, "_ab_recorded", False):
+        return
+
+    def _build_system_prompt(*args, **kwargs):
+        prompt = builder(*args, **kwargs)
+        _AB_SYSPROMPTS.append((_AB_WAVE["i"], prompt))
+        return prompt
+
+    for k, v in vars(builder).items():
+        if k.endswith("_patched"):
+            setattr(_build_system_prompt, k, v)
+    _build_system_prompt._ab_recorded = True
+    _ta._build_system_prompt = _build_system_prompt
+
+
+def _ab_playbook_probe(arm):
+    """Direct pre-wave probe: build one real system prompt through the patched
+    builder and hard-assert playbook presence matches the arm BEFORE any GPU
+    minute is spent on a mis-toggled wave (toggle-proof law)."""
+    from inference.agent import tool_agent as _ta
+
+    prompt = _ta._build_system_prompt(tool_output_tokens=2000)
+    marker = _ab_playbook_marker()
+    present = marker in prompt
+    expected = AB_ARM_ENV[arm].get("TAAF_PLAYBOOK") == "1"
+    if present != expected:
+        raise RuntimeError(
+            f"arm {arm} playbook probe mismatch: marker {marker!r} present={present} "
+            f"expected={expected} (prompt tail: ...{prompt[-300:]!r})")
+    return {"marker": marker, "present": present, "expected": expected,
+            "prompt_sha256": _ab_hashlib.sha256(prompt.encode()).hexdigest(),
+            "prompt_chars": len(prompt)}
+
+
+# --- round 3: per-agent antifreeze trigger attribution ---------------------------
+
+
+def _ab_install_antifreeze_counter():
+    """Wrap the patch module's _antifreeze_note (the module-global patch14's
+    _build_user_prompt wrapper resolves at call time) so each fired breaker is
+    also attributed to the calling agent. Observational only — the note text
+    is returned unchanged."""
+    mod = _ab_patch_module()
+    if mod is None or not callable(getattr(mod, "_antifreeze_note", None)):
+        return False
+    orig = mod._antifreeze_note
+    if getattr(orig, "_ab_counted", False):
+        return True
+
+    def _antifreeze_note(agent, current_frame):
+        note = orig(agent, current_frame)
+        if note:
+            try:
+                agent.__dict__["_ab_antifreeze_triggers"] = (
+                    agent.__dict__.get("_ab_antifreeze_triggers", 0) + 1)
+            except Exception:
+                pass
+        return note
+
+    _antifreeze_note._ab_counted = True
+    mod._antifreeze_note = _antifreeze_note
+    return True
+
+
+def _ab_antifreeze_snapshot():
+    mod = _ab_patch_module()
+    diag = getattr(mod, "ANTIFREEZE_DIAGNOSTICS", None) if mod else None
+    if not isinstance(diag, dict):
+        return None
+    return {"triggers": int(diag.get("triggers", 0) or 0)}
 
 
 # --- serving assert ------------------------------------------------------------
@@ -388,6 +522,16 @@ def _ab_session_diag(session):
             }
         except Exception as e:
             d["analyzer_tokens"] = {"error": repr(e)}
+        # round 3: patch14 antifreeze — triggers attributed by the counter
+        # wrapper, plus the guard's final streak state for context.
+        try:
+            af = an.__dict__.get("_antifreeze14") or {}
+            d["antifreeze"] = {
+                "triggers": int(an.__dict__.get("_ab_antifreeze_triggers", 0) or 0),
+                "last_streak": af.get("streak"),
+            }
+        except Exception as e:
+            d["antifreeze"] = {"error": repr(e)}
         cs = getattr(an, "_compact12_state", None)
         if isinstance(cs, dict):
             try:
@@ -435,9 +579,12 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
     t0 = notebook_start if notebook_start is not None else _ab_time.time()
     stage = {"s": "init"}
     result = {
-        "experiment": "ab_wmr_round2_graph_compact",
+        "experiment": "ab_round3_playbook",
+        "pre_registered_reading": AB_PREREGISTERED_READING,
         "arms": AB_ARM_ENV,
         "games": AB_GAMES,
+        "target_games": list(_AB_TARGET_GAMES),
+        "continuity_games": list(_AB_CONTINUITY_GAMES),
         "waves_planned": AB_WAVES,
         "per_game_budget_s": AB_BUDGET,
         "deadline_s_from_start": AB_DEADLINE_S,
@@ -479,6 +626,11 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
         result["patch_proof"] = _ab_patch_proof()
         print(f"[ab] patch proof {result['patch_proof']}", flush=True)
         _ab_install_registry()
+        _ab_install_prompt_recorder()
+        result["antifreeze_counter_installed"] = _ab_install_antifreeze_counter()
+        if not result["antifreeze_counter_installed"]:
+            raise RuntimeError("antifreeze counter could not install — patch module "
+                               "namespace lacks _antifreeze_note (patch14 missing?)")
 
         # -- serving assert (hard gate) ----------------------------------------
         stage["s"] = "serving_assert"
@@ -528,11 +680,15 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
             if toggles != expected:
                 raise RuntimeError(
                     f"arm {arm} toggle mismatch: realized {toggles} != expected {expected}")
+            _AB_WAVE["i"] = wi
+            probe = _ab_playbook_probe(arm)   # raises on mismatch BEFORE the wave runs
             print(f"[ab] === wave {wi} arm {arm} toggles {toggles} "
-                  f"elapsed {elapsed:.0f}s ===", flush=True)
+                  f"playbook_probe={probe} elapsed {elapsed:.0f}s ===", flush=True)
 
             stage["s"] = f"wave{wi}_{arm}_server"
             compact_before = _ab_compact_snapshot()
+            antifreeze_before = _ab_antifreeze_snapshot()
+            n_sp_before = len(_AB_SYSPROMPTS)   # after the probe: in-run samples only
             srv = _ca.CompetitionArcadeServer(
                 game_ids=tuple(chosen), total_runs=len(chosen),
                 environments_dir=env_dir).start()
@@ -598,18 +754,49 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
                     print(f"[ab] w{wi} {arm} {src}: levels={lv}/{nl} actions={hist} "
                           f"tok={row['gen_tokens']} score={row['score']} "
                           f"wd={row.get('watchdog')} hud={row.get('hud')} "
-                          f"graph={row.get('graph')} compact={row.get('compact')} "
+                          f"antifreeze={row.get('antifreeze')} "
                           f"replay={(row.get('replay') or {}).get('status')}",
                           flush=True)
 
                 compact_after = _ab_compact_snapshot()
+                antifreeze_after = _ab_antifreeze_snapshot()
+
+                # -- round 3: in-run playbook presence proof (real sampled
+                # system prompts built while games played this wave) ----------
+                marker = _ab_playbook_marker()
+                pb_expected = AB_ARM_ENV[arm].get("TAAF_PLAYBOOK") == "1"
+                samples = [p for swi, p in _AB_SYSPROMPTS[n_sp_before:] if swi == wi]
+                mismatches = [i for i, p in enumerate(samples)
+                              if (marker in p) != pb_expected]
+                playbook_proof = {
+                    "marker": marker,
+                    "expected_present": pb_expected,
+                    "n_prompts_sampled": len(samples),
+                    "n_mismatches": len(mismatches),
+                    "probe_before_wave": probe,
+                    "sample_sha256": (_ab_hashlib.sha256(samples[-1].encode()).hexdigest()
+                                      if samples else None),
+                    "sample_chars": len(samples[-1]) if samples else None,
+                }
+                if not samples or mismatches:
+                    raise RuntimeError(
+                        f"arm {arm} in-run playbook proof failed: {playbook_proof}")
+                print(f"[ab] w{wi} {arm} playbook proof: {len(samples)} real system "
+                      f"prompts, all {'WITH' if pb_expected else 'WITHOUT'} playbook",
+                      flush=True)
+
                 wave_rec = {
                     "wave": wi, "arm": arm, "env": dict(AB_ARM_ENV[arm]),
                     "toggles_verified": toggles,
                     "patch_proof_wave": _ab_wave_patch_proof(),
+                    "playbook_proof": playbook_proof,
                     "wall_s": round(wall, 1),
                     "started_at_elapsed_s": round(elapsed, 1), "rows": rows,
                 }
+                if antifreeze_before is not None and antifreeze_after is not None:
+                    wave_rec["antifreeze_diag_delta"] = {
+                        "triggers": antifreeze_after["triggers"] - antifreeze_before["triggers"]}
+                    wave_rec["antifreeze_diag_cumulative"] = antifreeze_after
                 if compact_before is not None and compact_after is not None:
                     wave_rec["compact_diag_delta"] = {
                         k: compact_after[k] - compact_before[k] for k in _COMPACT_DIAG_KEYS}
@@ -652,7 +839,7 @@ def _ab_print_summary(result):
     print(f"[ab] wave order realized: "
           f"{[(w['wave'], w['arm']) for w in result.get('waves', [])]}", flush=True)
     header = (f"{'game':6} {'wave':4} {'arm':3} {'lvl':>6} {'acts':>6} {'tok':>8} {'score':>8} "
-              f"{'wd_rst':>6} {'hud_supp':>8} {'veto':>5} {'grind':>5} {'q_exec':>6} "
+              f"{'wd_rst':>6} {'hud_supp':>8} {'mask':>5} {'conf':>5} {'antifz':>6} "
               f"{'replay':>10}")
     print("[ab] " + header, flush=True)
     per_arm = {}
@@ -661,49 +848,65 @@ def _ab_print_summary(result):
             stem = (r.get("source_game") or "?").split("-")[0]
             wd = r.get("watchdog") or {}
             hud = r.get("hud") or {}
-            gph = r.get("graph") or {}
-            cq = r.get("compact") or {}
+            af = r.get("antifreeze") or {}
             rp = r.get("replay") or {}
             score = r.get("score")
             score_s = f"{score:8.2f}" if isinstance(score, (int, float)) else f"{'-':>8}"
-            q_exec = (cq.get("queue_total_last", 0) - cq.get("queue_pending", 0)
-                      if cq and "error" not in cq else "-")
             print(f"[ab] {stem:6} {w['wave']:<4} {w['arm']:3} "
                   f"{r.get('levels_completed', 0):>3}/{r.get('levels_total', 0):<2} "
                   f"{r.get('actions_total', 0):>6} {r.get('gen_tokens', 0):>8} {score_s} "
                   f"{wd.get('resets_done', '-')!s:>6} "
                   f"{hud.get('suppressed_hud_only', '-')!s:>8} "
-                  f"{gph.get('vetoes_issued', '-')!s:>5} "
-                  f"{gph.get('grinder_engagements', '-')!s:>5} "
-                  f"{q_exec!s:>6} {rp.get('status', '-')!s:>10}",
+                  f"{hud.get('mask_cells', '-')!s:>5} "
+                  f"{hud.get('confirmed_lines', '-')!s:>5} "
+                  f"{af.get('triggers', '-')!s:>6} {rp.get('status', '-')!s:>10}",
                   flush=True)
             slot = per_arm.setdefault(stem, {}).setdefault(w["arm"], {"lvl": [], "score": []})
             slot["lvl"].append(r.get("levels_completed", 0) or 0)
             if isinstance(score, (int, float)):
                 slot["score"].append(score)
     for w in waves:
+        af_delta = w.get("antifreeze_diag_delta")
+        if af_delta and any(af_delta.values()):
+            print(f"[ab] wave {w['wave']} ({w['arm']}) antifreeze delta: {af_delta}",
+                  flush=True)
         delta = w.get("compact_diag_delta")
         if delta and any(delta.values()):
-            print(f"[ab] wave {w['wave']} ({w['arm']}) compact delta: {delta}", flush=True)
-    for probe_arm in ("C", "D"):
-        if not any(w["arm"] == probe_arm for w in waves):
-            continue
-        print(f"[ab] ---- paired per-game means ({probe_arm} - B) ----", flush=True)
+            print(f"[ab] wave {w['wave']} ({w['arm']}) UNEXPECTED compact delta "
+                  f"(COMPACT pinned 0 in both arms!): {delta}", flush=True)
+
+    # -- PRIMARY pre-registered readout: L1-unlock events on the target games --
+    print("[ab] ---- PRIMARY: target-game L1 unlocks (B-only unlock = signal) ----",
+          flush=True)
+    for stem in _AB_TARGET_GAMES:
+        arms = per_arm.get(stem, {})
+        la = arms.get("A", {}).get("lvl", [])
+        lb = arms.get("B", {}).get("lvl", [])
+        a_unlocked = any(v > 0 for v in la)
+        b_unlocked = any(v > 0 for v in lb)
+        flag = ("B-ONLY UNLOCK" if b_unlocked and not a_unlocked else
+                "A-only unlock" if a_unlocked and not b_unlocked else
+                "both" if a_unlocked else "neither")
+        print(f"[ab] {stem:6} A_levels={la} B_levels={lb} -> {flag}", flush=True)
+
+    if any(w["arm"] == "B" for w in waves):
+        print("[ab] ---- paired per-game means (B - A) [SECONDARY; scores are noise] ----",
+              flush=True)
         dl_sum, ds_sum, n = 0.0, 0.0, 0
         for stem in sorted(per_arm):
             arms = per_arm[stem]
-            if "B" not in arms or probe_arm not in arms:
+            if "A" not in arms or "B" not in arms:
                 continue
+            la = sum(arms["A"]["lvl"]) / max(len(arms["A"]["lvl"]), 1)
             lb = sum(arms["B"]["lvl"]) / max(len(arms["B"]["lvl"]), 1)
-            lx = sum(arms[probe_arm]["lvl"]) / max(len(arms[probe_arm]["lvl"]), 1)
+            sa = sum(arms["A"]["score"]) / max(len(arms["A"]["score"]), 1)
             sb = sum(arms["B"]["score"]) / max(len(arms["B"]["score"]), 1)
-            sx = sum(arms[probe_arm]["score"]) / max(len(arms[probe_arm]["score"]), 1)
-            dl_sum += lx - lb
-            ds_sum += sx - sb
+            dl_sum += lb - la
+            ds_sum += sb - sa
             n += 1
-            print(f"[ab] {stem:6} levels B={lb:.1f} {probe_arm}={lx:.1f} d={lx - lb:+.1f}   "
-                  f"score B={sb:.2f} {probe_arm}={sx:.2f} d={sx - sb:+.2f}", flush=True)
+            print(f"[ab] {stem:6} levels A={la:.1f} B={lb:.1f} d={lb - la:+.1f}   "
+                  f"score A={sa:.2f} B={sb:.2f} d={sb - sa:+.2f}", flush=True)
         if n:
-            print(f"[ab] TOTAL paired delta ({probe_arm}-B) over {n} games: "
+            print(f"[ab] TOTAL paired delta (B-A) over {n} games: "
                   f"levels {dl_sum:+.1f}, score {ds_sum:+.2f}  (A/A noise floor: RMS 0.707 "
-                  f"levels/game-run — read event counts, not small score deltas)", flush=True)
+                  f"levels/game-run — read unlock events, not small score deltas)", flush=True)

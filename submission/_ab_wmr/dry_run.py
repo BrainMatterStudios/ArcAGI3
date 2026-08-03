@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""GPU-free end-to-end dry run of the ab-wmr ROUND 2 kernel logic.
+"""GPU-free end-to-end dry run of the ab-wmr ROUND 3 (playbook) kernel logic.
 
-Mock brain (fixed `python` tool call -> action('UP'), a plan_queue block in the
-assistant text to exercise patch12b, usage counts so the token accounting is
-provable, plus /models and logprobs so the serving assert's endpoint checks
-execute for real) <- REAL duck harness (scratchpad/taaf_scored_ref bundle, per
-the 2026-07-26 audit law) <- REAL CompetitionArcadeServer over repo
-environment_files <- the REAL ab_wave_driver (imported from this directory,
-same file the builder inlines).
+Mock brain (fixed `python` tool call -> action('UP'), a fixed "World model:"
+scientist note so knowledge-carry (patch14's freeze detector input) is
+exercised, usage counts so the token accounting is provable, plus /models and
+logprobs so the serving assert's endpoint checks execute for real) <- REAL
+duck harness (scratchpad/taaf_scored_ref bundle, per the 2026-07-26 audit law)
+<- REAL CompetitionArcadeServer over repo environment_files <- the REAL
+ab_wave_driver (imported from this directory, same file the builder inlines).
 
 duck_patches.py is loaded EXACTLY as the kernel loads it: source exec'd into a
 module namespace with NO __file__ (the builder inlines it into a notebook
@@ -15,17 +15,24 @@ cell), so patch6 declines for want of /kaggle/input/arcagi3-agent here too and
 the dry run exercises the kernel's true patch surface (patch9 SKIP included).
 
 Proves before any GPU minute is spent:
-  * full v6 apply_all() + the expected-SKIP hard gate (patch9, patch6);
-  * per-arm env toggling B/C/D + verification against AB_ARM_ENV;
-  * patch11 activation ONLY in C waves (graph diagnostics rows: nodes/edges/
-    veto/grinder counters), patch12 activation ONLY in D waves
-    (COMPACT_DIAGNOSTICS wave delta: plan accepted + steps drained LLM-free);
-  * NONZERO gen_tokens per row (round-1 defect fixed: tokens are summed from
-    run.history records; the analyzer's usage-fed session counter is captured
-    as a cross-check);
-  * session registry, serving assert path, fresh competition server per wave,
-    watchdog/hud/replay diagnostics, in-run scoring, incremental
-    ab_result.json writes, and the summary table.
+  * full v6 apply_all() (through patch13 playbook + patch14 antifreeze) + the
+    expected-SKIP hard gate (patch9, patch6);
+  * per-arm env toggling A/B + verification against AB_ARM_ENV (now including
+    TAAF_PLAYBOOK and TAAF_ANTIFREEZE);
+  * PLAYBOOK PRESENCE PROOF per wave: the playbook text absent from real
+    sampled system prompts in arm A, present in arm B (pre-wave direct probe
+    + in-run samples, hard-asserted by the driver and re-checked here);
+  * patch14 antifreeze diagnostics plumbing: per-wave ANTIFREEZE_DIAGNOSTICS
+    delta + per-row trigger counters, AND a deterministic direct exercise of
+    the patched _antifreeze_note through the driver's counting wrapper
+    (global trigger counted + attributed to the calling agent);
+  * both arms mechanically identical otherwise: graph state absent and
+    compact counters frozen in BOTH arms (GRAPH=0/COMPACT=0 pins);
+  * NONZERO gen_tokens per row (round-1 defect stays fixed), HUD mask stats
+    per row (mask_cells/confirmed_lines — m0r0 is on the dry panel), session
+    registry, serving assert path, fresh competition server per wave,
+    watchdog/replay diagnostics, in-run scoring, incremental ab_result.json
+    writes (with the pre-registered reading header), and the summary table.
 
 Run:  .venv/bin/python submission/_ab_wmr/dry_run.py
 """
@@ -49,11 +56,13 @@ TAAF_ROOT = REPO / "scratchpad/taaf_scored_ref"
 WORKDIR = Path(os.environ.get("AB_DRY_WORKDIR",
                               str(REPO / "scratchpad" / "ab_dry_run"))) / time.strftime("%H%M%S")
 
-# The assistant text carries a plan_queue block so patch12b's capture/drain
-# path runs for real in D waves (and is provably inert in B/C waves).
+# The assistant text carries a fixed "World model:" scientist note so the
+# agent's knowledge carry is non-empty and constant — the input patch14's
+# freeze detector hashes. (Round 3 pins COMPACT=0 in both arms, so no
+# plan_queue block: compact counters must stay frozen everywhere.)
 MOCK_CONTENT = (
-    "Plan: probe with UP.\n"
-    '{"plan_queue": [{"action": "UP"}, {"action": "UP"}]}'
+    "World model: mock static world for the dry run.\n"
+    "Plan: probe with UP."
 )
 
 MOCK_REPLY = {
@@ -140,8 +149,8 @@ def main() -> int:
         "ARC_ENVIRONMENTS_DIR": str(REPO / "environment_files"),
         "RECORDINGS_DIR": str(WORKDIR / "server_recording"),
         "AB_DRY_RUN": "1",
-        "AB_GAMES": "tu93,ls20",
-        "AB_WAVES": "B,C,D",
+        "AB_GAMES": "ls20,m0r0",   # round-3 panel members; m0r0 = the fixed HUD class
+        "AB_WAVES": "A,B",
         "AB_BUDGET": "60",
         "AB_DEADLINE_S": "3000",
     })
@@ -199,57 +208,94 @@ def main() -> int:
     out = json.loads((WORKDIR / "ab_result.json").read_text())
     assert out["error"] is None, f"driver recorded an error:\n{out['error']}"
     assert out["stage"] == "done", f"stage={out['stage']}"
+    assert out["experiment"] == "ab_round3_playbook", out["experiment"]
+    prr = out.get("pre_registered_reading")
+    assert isinstance(prr, dict) and set(prr) == {"primary", "secondary", "not_a_readout"}, prr
+    assert out["target_games"] == list(drv._AB_TARGET_GAMES), out.get("target_games")
     sa = {c["check"]: c["ok"] for c in out["serving_assert"]["checks"]}
     assert all(sa.values()) and len(sa) == 4, f"serving assert incomplete: {sa}"
+    assert out.get("antifreeze_counter_installed") is True, out
 
     pp = out["patch_proof"]
     for key in ("watchdog_should_stop_patched", "graph_should_stop_patched",
                 "graph_step_env_patched", "hud_or_outer_execute_patched",
                 "play_patched", "plan_queue_analyze_patched",
-                "compaction_history_patched", "compact_prompt_injector_patched"):
+                "compaction_history_patched", "compact_prompt_injector_patched",
+                "playbook_system_prompt_patched", "antifreeze_user_prompt_patched"):
         assert pp.get(key) is True, f"patch proof {key}: {pp}"
 
     waves = out["waves"]
-    assert [w["arm"] for w in waves] == ["B", "C", "D"], waves
+    assert [w["arm"] for w in waves] == ["A", "B"], waves
     for w in waves:
         arm = w["arm"]
         expected = {k: v == "1" for k, v in drv.AB_ARM_ENV[arm].items()}
+        assert set(expected) >= {"TAAF_PLAYBOOK", "TAAF_ANTIFREEZE"}, expected
         assert w["toggles_verified"] == expected, (arm, w["toggles_verified"])
         wp = w["patch_proof_wave"]
         assert all(wp.get(k) is True for k in wp), (arm, wp)
+        assert {"playbook_system_prompt_patched",
+                "antifreeze_user_prompt_patched"} <= set(wp), (arm, sorted(wp))
+
+        # -- round 3: playbook presence proof, both prongs, per wave ----------
+        pb = w["playbook_proof"]
+        want = arm == "B"
+        assert pb["expected_present"] is want, (arm, pb)
+        assert pb["n_prompts_sampled"] >= 1 and pb["n_mismatches"] == 0, (arm, pb)
+        assert pb["probe_before_wave"]["present"] is want, (arm, pb)
+        assert pb["sample_sha256"], (arm, pb)
+
+        # -- round 3: antifreeze diagnostics plumbing --------------------------
+        assert "antifreeze_diag_delta" in w, sorted(w)
+        assert isinstance(w["antifreeze_diag_delta"]["triggers"], int), w
+        assert w["antifreeze_diag_delta"]["triggers"] >= 0, w
+
         assert len(w["rows"]) == 2, f"wave {w['wave']}: {len(w['rows'])} rows"
-        assert "compact_diag_delta" in w, sorted(w)
         delta = w["compact_diag_delta"]
         assert set(delta) == set(drv._COMPACT_DIAG_KEYS), delta
+        # COMPACT=0 and GRAPH=0 in BOTH arms: counters frozen, no graph state.
+        assert not any(delta.values()), f"compact counters moved in arm {arm}: {delta}"
         for r in w["rows"]:
             assert r["source_game"] is not None and r["actions_total"] > 0, r
             assert r["score"] is not None, r
             assert "watchdog" in r and "hud" in r and "trace_len" in r, sorted(r)
+            assert "graph" not in r, f"graph state leaked into arm {arm}: {r}"
+            # HUD mask stats must be collected per row (m0r0 mask readout)
+            hud = r["hud"]
+            assert "error" not in hud, hud
+            assert isinstance(hud.get("mask_cells"), int), hud
+            assert isinstance(hud.get("confirmed_lines"), int), hud
+            # per-row antifreeze trigger counter
+            af = r.get("antifreeze")
+            assert isinstance(af, dict) and "error" not in af, (arm, r)
+            assert isinstance(af["triggers"], int) and af["triggers"] >= 0, af
             # round-1 defect fixed: nonzero token accounting must flow to rows
             assert r["gen_tokens"] > 0, f"gen_tokens still zero: {r}"
             assert r["analyzer_tokens"]["generated"] > 0, r["analyzer_tokens"]
             assert "tokens=" in r["solver_note"], r["solver_note"]
             rp = (r.get("replay") or {}).get("status")
             assert rp in ("skipped", "replayed", "aborted"), f"arm {arm} replay {rp!r}"
-            if arm == "C":
-                g = r.get("graph")
-                assert isinstance(g, dict) and "error" not in g, f"C-wave graph diag: {r}"
-                for key in ("nodes", "edges", "vetoes_issued", "vetoes_capped",
-                            "grinder_engagements", "grinder_actions",
-                            "levels_unlocked_by_grinder"):
-                    assert key in g, (key, g)
-                assert g["nodes"] >= 1, f"graph recorded no nodes in C wave: {g}"
-            else:
-                assert "graph" not in r, f"graph state leaked into arm {arm}: {r}"
-            if arm == "D":
-                assert "compact" in r and "error" not in r["compact"], r.get("compact")
-        if arm == "D":
-            assert delta["queue_plans"] >= 1, f"plan_queue never captured: {delta}"
-            assert delta["queue_steps_executed"] + delta["queue_aborts"] >= 1, delta
-            assert delta["llm_calls_saved"] == delta["queue_steps_executed"], delta
-        else:
-            assert not any(delta.values()), f"compact counters moved in arm {arm}: {delta}"
         assert "behav_cumulative" in w and "behav_raw_cumulative" in w
+
+    # --- deterministic exercise of the antifreeze trigger + counting wrapper ---
+    # (in-wave firing depends on the game board actually freezing; this proves
+    # the trigger path and the driver's per-agent attribution deterministically)
+    mod = drv._ab_patch_module()
+    assert mod is not None and getattr(mod._antifreeze_note, "_ab_counted", False), \
+        "driver's antifreeze counting wrapper is not installed on the patch module"
+    before = mod.ANTIFREEZE_DIAGNOSTICS["triggers"]
+
+    class _FakeAgent:
+        pass
+
+    fake = _FakeAgent()
+    fake._summarized_knowledge = {"world_model": "frozen hypothesis"}
+    notes = [mod._antifreeze_note(fake, None) for _ in range(4)]
+    assert notes[:3] == ["", "", ""] and notes[3], notes
+    assert mod.ANTIFREEZE_DIAGNOSTICS["triggers"] == before + 1, \
+        (before, mod.ANTIFREEZE_DIAGNOSTICS)
+    assert fake.__dict__.get("_ab_antifreeze_triggers") == 1, fake.__dict__
+    print("[dry] antifreeze trigger + per-agent attribution: OK")
+
     assert MockBrain.n_posts > 0
     print(f"\n[dry] PASS — {MockBrain.n_posts} mock-brain calls, "
           f"artifact at {WORKDIR / 'ab_result.json'}")

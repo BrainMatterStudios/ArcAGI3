@@ -1,32 +1,39 @@
 #!/usr/bin/env python3
-"""Build submission/_ab_wmr/ab-wmr.ipynb — ROUND 2: marginal value of patch11
-(frontier graph) and patch12 (compaction + plan queue) over the submitted v6
-config. Round 1 (WMR trio A/B, waves A,B,B,A) is preserved at commit 3c21726;
-its results live in docs/test-artifacts-2026-08-02/AB-WMR-ANALYSIS-2026-08-03.md.
+"""Build submission/_ab_wmr/ab-wmr.ipynb — ROUND 3: the mechanic-archetype
+PLAYBOOK (patch13) as the single variable, on the diagnosis-targeted panel.
+Round 1 (WMR trio, waves A,B,B,A) is preserved at commit 3c21726; round 2
+(graph/compact, waves B,C,D,D,C,B) at commit ae1286b, analysis in
+docs/test-artifacts-2026-08-02/AB-ROUND2-ANALYSIS-2026-08-03.md.
 
 NOT a competition submission. A plain GPU commit kernel on the _rig mechanism
 (submission/_rig/build_rig.py): duck-base notebook, serve forced, run cell
 replaced by the A/B wave driver (ab_wave_driver.py). One vLLM session; arms
-toggle ONLY env pins between counterbalanced waves B,C,D,D,C,B:
-    B = v6 as submitted (WMR trio on, TAAF_GRAPH=0, TAAF_COMPACT=0)
-    C = B + TAAF_GRAPH=1        D = B + TAAF_COMPACT=1
+toggle ONLY env pins between counterbalanced waves A,B,B,A:
+    A = current pins (WMR trio on, TAAF_GRAPH=0, TAAF_COMPACT=0,
+        TAAF_PLAYBOOK=0, TAAF_ANTIFREEZE=1)
+    B = A + TAAF_PLAYBOOK=1
+Both arms inherit the new point-fix defaults in duck_patches.py (HUD
+slow-tick rotation fix, patch14 anti-freeze) so the playbook isolates cleanly.
 
 Every arm gets the IDENTICAL patch layer the submitted v6 kernel installs:
-apply_all() from the CURRENT duck_patches.py (patches 11/12, the
-marker-forwarding fix, grid-burner default OFF, the patch6 no-__file__ fix).
-Expected SKIPs on this bundle, positively asserted by the apply gate:
+apply_all() from the CURRENT duck_patches.py (now through patch14: playbook +
+antifreeze, the HUD rotation fix, marker forwarding, grid-burner default OFF,
+the patch6 no-__file__ fix). Expected SKIPs on this bundle, positively
+asserted by the apply gate:
   * patch9 hud-sandbox — the scored bundle's sandbox bootstrap has no
-    state_hash/diff_frames; patch9 now detects that and declines (round 1 had
-    to exclude it by hand for the same defect).
+    state_hash/diff_frames; patch9 detects that and declines.
   * patch6 tool_agent_analyze — the arcagi3-agent dataset is deliberately NOT
     attached to this kernel (its heuristic prober would own the first 200
-    actions of every game and confound all three arms against round 1).
+    actions of every game and confound both arms against rounds 1-2).
 Anything else SKIP/FAIL/REVIEW aborts before a GPU-minute is spent on games.
 
-Round-2 instrumentation (see ab_wave_driver.py): fixed gen_tokens accounting
-(round 1 read final_generated_tokens, which this bundle's solver never sets;
-the real counts live on run.history records), per-game graph diagnostics in C
-waves, COMPACT_DIAGNOSTICS wave deltas + per-game queue state in D waves.
+Round-3 instrumentation (see ab_wave_driver.py): all round-2 row metrics
+(fixed gen_tokens accounting, HUD mask stats, watchdog/replay), plus per-wave
+playbook presence proof (direct probe before each wave + sampled real system
+prompts after, hard-asserted like the toggle proof), patch14 antifreeze
+trigger counts per wave AND per game, and the pre-registered reading baked
+into the result JSON header (primary = paired L1-unlock events on the 8
+target games; scores are noise at 2 waves/arm).
 
 Output artifact: /kaggle/working/ab_result.json (written after every wave and
 on failure) + a compact summary table at the end of the log.
@@ -57,15 +64,15 @@ RUN_MARKER = "# Build the live competition game list from the gateway's availabl
 
 APPLY_BLOCK = '''
 # --- full v6 patch application (ALL arms, identical) ----------------------------
-# Round 2 installs the SAME layer the submitted v6 kernel installs: apply_all().
-# Arms differ ONLY in env pins the driver sets per wave (each patch reads its
-# switch at call time). Hard gate (rig pack law: an unpatched arm comparison is
-# meaningless): any FAIL/REVIEW aborts, and SKIP is allowed ONLY for the two
-# lines this bundle is EXPECTED to skip —
+# Round 3 installs the SAME layer the submitted v6 kernel installs: apply_all()
+# (now through patch14). Arms differ ONLY in env pins the driver sets per wave
+# (each patch reads its switch at call time). Hard gate (rig pack law: an
+# unpatched arm comparison is meaningless): any FAIL/REVIEW aborts, and SKIP is
+# allowed ONLY for the two lines this bundle is EXPECTED to skip —
 #   patch9: the scored bundle's sandbox bootstrap lacks state_hash/diff_frames
 #           (patch9 self-detects the round-1 measured defect and declines);
 #   patch6: arcagi3-agent is deliberately not attached (its prober would own
-#           the first 200 actions and confound all arms vs round 1).
+#           the first 200 actions and confound both arms vs rounds 1-2).
 # Both are asserted POSITIVELY: if either unexpectedly applied, the bundle
 # under test is not the one this experiment was designed for — abort.
 _ab_patch_results = apply_all()
