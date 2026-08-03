@@ -29,6 +29,11 @@ HUD_REGIONS: dict[str, tuple] = {
     "sk48": ("row", 53), "sb26": ("row", 53),
     "r11l": ("col", 0), "lp85": ("col", 0),
     "ls20": ("rows", (61, 62)),
+    # 2026-08-03: m0r0 was wrongly classified "correctly no HUD" — rows 0 AND 63
+    # are budget bars ticking every ~2-3 actions (verified live + K3 episode
+    # k3_sweep_m0r0_b2). "rows" here means exactly these rows (iterated, not a
+    # range) — see hud_mask() below.
+    "m0r0": ("rows", (0, 63)),
 }
 
 # Measured no-op rate before -> after masking, 1,200 random actions, seed 0.

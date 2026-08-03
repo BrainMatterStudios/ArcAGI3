@@ -469,6 +469,15 @@ def patch_tool_agent_analyze() -> str:
 # on RESET, on level transitions, and on GAME_OVER/WIN screens (all of which
 # repaint or refill). Strips found in any segment are unioned into the game mask.
 #
+# VIRTUAL SEGMENT ROTATION (m0r0 lesson, 2026-08-03): cross-segment confirmation
+# used to accrue segments ONLY at those natural boundaries, so a long boundary-free
+# run could never reach MIN_SEGMENTS — m0r0's rows 0+63 budget bars (ticking every
+# ~2-3 actions) were sighted but never confirmed across a 240-event episode with a
+# single death. The tracker now also rotates to a fresh virtual segment after
+# SEGMENT_ROTATE_STEPS accumulated steps (default 24, TAAF_HUD_ROTATE overrides,
+# 0 disables), long enough that a slow-tick bar still yields >= MIN_LEN once-changed
+# cells per window, so reset-free runs confirm within ~3 windows.
+#
 # UNMASK GUARD (protects the full-edge-strip games sp80/vc33/r11l/s5i5/tu93): if
 # any masked cell changes twice within one segment, real content has entered the
 # strip — the whole region is dropped from the mask permanently for that game.
@@ -506,6 +515,15 @@ class HudMaskTracker:
       * STACK RULE — >= MAX_STACK adjacent parallel confirmed lines with
         overlapping spans are a 2D block, not a bar, and are all rejected
         (2 adjacent lines stay allowed: the ls20 bar is two rows tall).
+
+    Segment supply (the m0r0 lesson): natural boundaries (RESET / level change /
+    GAME_OVER / WIN) are too rare in some real runs to ever reach MIN_SEGMENTS —
+    a slow-tick bar in a boundary-free run was sighted forever but never
+    confirmed. SEGMENT_ROTATE_STEPS therefore banks the live window and starts a
+    fresh virtual segment every N accumulated steps; a budget bar re-satisfies
+    the wavefront statistic in every window, while one-shot content fills do not.
+    24 steps holds >= MIN_LEN once-changed cells for bars ticking as slowly as
+    every ~5-6 actions (a 64-cell bar over a <= ~380-action budget).
     """
 
     MIN_LEN = 4
@@ -513,9 +531,11 @@ class HudMaskTracker:
     MIN_SEGMENT_STEPS = 10
     MIN_SEGMENTS = 3
     MAX_STACK = 2
+    SEGMENT_ROTATE_STEPS = 24  # 0 disables virtual rotation (pre-fix behavior)
 
     def __init__(self, min_segments: int | None = None) -> None:
         import numpy as np
+        import os
 
         self._np = np
         self._prev = None
@@ -534,6 +554,13 @@ class HudMaskTracker:
         self._tto = None
         if min_segments is not None:
             self.MIN_SEGMENTS = int(min_segments)
+        try:
+            rotate = int(os.environ.get("TAAF_HUD_ROTATE", "").strip() or self.SEGMENT_ROTATE_STEPS)
+        except ValueError:
+            rotate = self.SEGMENT_ROTATE_STEPS
+        # A rotation window shorter than the detection minimum could never bank
+        # a strip; clamp instead of silently detecting nothing.
+        self.SEGMENT_ROTATE_STEPS = 0 if rotate <= 0 else max(rotate, self.MIN_SEGMENT_STEPS)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -613,6 +640,13 @@ class HudMaskTracker:
             if self._steps >= self.MIN_SEGMENT_STEPS:
                 self._record_sightings()
                 self._refresh_mask()
+            if self.SEGMENT_ROTATE_STEPS and self._steps >= self.SEGMENT_ROTATE_STEPS:
+                # Virtual segment boundary: the window above was just banked into
+                # `_sightings` under the current id; open a fresh window so long
+                # boundary-free runs still accrue MIN_SEGMENTS independent
+                # confirmations (m0r0-class slow-tick bars).
+                self._segment_id += 1
+                self._reset_segment_stats()
 
         self._prev = g
         return {"raw_changed": raw_changed, "masked_changed": masked_changed}
@@ -713,7 +747,13 @@ class HudMaskTracker:
 
     def _confirmed_lines(self) -> dict[tuple, tuple[int, int]]:
         """Line keys sighted in >= MIN_SEGMENTS distinct segments, with the
-        union span, provided spans from different segments actually overlap."""
+        union span, provided spans from different segments overlap OR touch.
+
+        Overlap covers natural segments (a boundary refills the bar, so each
+        segment re-drains the same span). Touching (gap <= 1) covers virtual
+        rotation windows, which tile a still-draining bar into adjacent disjoint
+        spans — the wavefront continuing across windows IS the bar signature.
+        Spans on the same line in unrelated places stay unconfirmed."""
         confirmed: dict[tuple, tuple[int, int]] = {}
         for line_key, per_segment in self._sightings.items():
             if line_key in self._dead_lines or len(per_segment) < self.MIN_SEGMENTS:
@@ -722,7 +762,7 @@ class HudMaskTracker:
                 continue
             spans = sorted(per_segment.values())
             overlapping = any(
-                a_start <= b_end and b_start <= a_end
+                a_start <= b_end + 1 and b_start <= a_end + 1
                 for (a_start, a_end), (b_start, b_end) in zip(spans, spans[1:])
             ) or len(spans) == 1
             if not overlapping:
@@ -766,33 +806,42 @@ class HudMaskTracker:
         return {k: v for k, v in confirmed.items() if k not in rejected}
 
     def _refresh_mask(self) -> None:
+        """Rasterize confirmed lines, extended to the FULL line.
+
+        A draining bar's newest tick always lands just beyond the last banked
+        span (measured on m0r0: the frontier stays one rotation window ahead of
+        a span-only mask for the entire first drain, so `board_changed` kept
+        flipping every ~2-3 actions). Every validated HUD region is a full row
+        or column, and the unmask guard drops the whole line the moment real
+        content changes twice on it, so full-line masking is the accurate shape.
+        """
         mask = self._np.zeros(self._mask.shape, dtype=bool)
-        for line_key, (start, end) in self._apply_stack_rule(self._confirmed_lines()).items():
+        for line_key in self._apply_stack_rule(self._confirmed_lines()):
             orient, line = line_key[0], line_key[1]
             if orient == "H":
-                mask[line, start : end + 1] = True
+                mask[line, :] = True
             else:
-                mask[start : end + 1, line] = True
+                mask[:, line] = True
         mask &= ~self._dropped
         self._mask = mask
 
     def _drop_regions(self, repeat_mask: Any) -> None:
         """Unmask guard: a masked cell changed twice inside one segment — real
-        content entered the strip. Drop the whole region, permanently."""
+        content entered the strip. Drop the whole (full) line, permanently:
+        the mask is rasterized full-line, so the guard must cover the same area."""
         dropped_any = False
-        for line_key, span in list(self._confirmed_lines().items()):
+        for line_key in list(self._confirmed_lines()):
             orient, line = line_key[0], line_key[1]
-            start, end = span
             if orient == "H":
-                hit = bool(repeat_mask[line, start : end + 1].any())
+                hit = bool(repeat_mask[line, :].any())
             else:
-                hit = bool(repeat_mask[start : end + 1, line].any())
+                hit = bool(repeat_mask[:, line].any())
             if hit:
                 self._dead_lines.add(line_key)
                 if orient == "H":
-                    self._dropped[line, start : end + 1] = True
+                    self._dropped[line, :] = True
                 else:
-                    self._dropped[start : end + 1, line] = True
+                    self._dropped[:, line] = True
                 dropped_any = True
         # Any repeat cell inside the mask is unmaskable from now on, even if no
         # confirmed line claimed it (belt and suspenders).

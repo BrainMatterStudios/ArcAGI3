@@ -38,6 +38,10 @@ HUD_REGIONS = {
     "sk48": ("row", 53), "sb26": ("row", 53),
     "r11l": ("col", 0), "lp85": ("col", 0),
     "ls20": ("rows", (61, 62)),
+    # 2026-08-03: m0r0 was wrongly classified "correctly no HUD" — rows 0 AND 63
+    # are budget bars ticking every ~2-3 actions (verified live + in the K3
+    # episode). "rowset" = exactly these rows, not the range between them.
+    "m0r0": ("rowset", (0, 63)),
 }
 
 
@@ -48,6 +52,9 @@ def region_mask(stem: str) -> np.ndarray:
         region[val, :] = True
     elif kind == "col":
         region[:, val] = True
+    elif kind == "rowset":
+        for r in val:
+            region[r, :] = True
     else:
         region[val[0]: val[1] + 1, :] = True
     return region
@@ -269,6 +276,10 @@ TICKING_EPISODES = [
     ("k3_batch1_vc33", "vc33", 3),
     ("k3_sweep_ka59_a", "ka59", 5),
     ("k3_sweep_bp35_b", "bp35", 5),
+    # m0r0: boundary-free run (one death in 240 events) — only detectable at all
+    # since the virtual-rotation fix; the K3 trace has few true no-ops, so the
+    # bound is low, but pre-fix this was exactly 0.
+    ("k3_sweep_m0r0_b2", "m0r0", 3),
 ]
 
 
@@ -301,6 +312,7 @@ REGION_EPISODES = [
     ("k3_sweep_vc33_a2", "vc33"),
     ("k3_sweep_sp80_b2", "sp80"),
     ("ladder_sb26_k27code", "sb26"),
+    ("k3_sweep_m0r0_b2", "m0r0"),
 ]
 
 
@@ -329,6 +341,130 @@ def test_recorded_level_transitions_never_fully_masked(name: str, stem: str):
                 f"{name}: level completion at action {event.get('action_num')} "
                 "was masked to a no-op"
             )
+
+
+# --- m0r0 class: slow-tick bars in boundary-free runs (virtual rotation) ---------
+
+
+def test_m0r0_recorded_run_confirms_both_edge_bars():
+    """REGRESSION (2026-08-03): m0r0's rows 0+63 tick every ~2-3 actions but the
+    run has almost no natural segment boundaries (one death in 240 events), so
+    the pre-rotation detector banked only 2 segments and NEVER masked (verified:
+    0 mask cells, 0 HUD-only detections). With virtual rotation the mask must
+    confirm early and stay inside rows 0/63."""
+    events = _episode_events("k3_sweep_m0r0_b2")
+    tracker = HudMaskTracker()
+    tracker.seed(events[0]["board"])
+    first_mask_event = None
+    for index, event in enumerate(events[1:], 1):
+        tracker.observe(
+            event["board"],
+            is_reset=(event.get("action_name") == "RESET"),
+            levels_completed=event.get("score"),
+            state_name=event.get("state"),
+        )
+        mask = tracker.mask_array()
+        if first_mask_event is None and mask is not None and mask.any():
+            first_mask_event = index
+    mask = tracker.mask_array()
+    assert mask is not None and int(mask.sum()) >= 100, (
+        f"expected both bars substantially masked, got {int(mask.sum())} cells"
+    )
+    assert mask[0].any() and mask[63].any(), "both edge bars (rows 0 AND 63) must mask"
+    assert not mask[1:63, :].any(), "nothing between the bars may be masked"
+    assert first_mask_event is not None and first_mask_event <= 80, (
+        f"mask must confirm within ~3 rotation windows, first at {first_mask_event}"
+    )
+
+
+def _slow_tick_grid(base: np.ndarray, ticks: int) -> np.ndarray:
+    """Both edge rows drain right-to-left, one cell per tick (m0r0 shape)."""
+    g = base.copy()
+    g[0, :] = 5
+    g[63, :] = 5
+    for row in (0, 63):
+        if ticks > 0:
+            g[row, 64 - ticks:] = 0
+    return g
+
+
+def test_boundary_free_slow_tick_bar_is_confirmed():
+    """Synthetic m0r0 class: tick every 3rd action, ZERO natural boundaries.
+    The changes-exactly-once statistic holds per window; rotation must supply
+    the segments that natural boundaries never do."""
+    tracker = HudMaskTracker()
+    base = _base_grid()
+    tracker.seed(_slow_tick_grid(base, 0))
+    ticks = 0
+    for step in range(1, 121):
+        if step % 3 == 0:
+            ticks += 1
+        tracker.observe(_slow_tick_grid(base, ticks), levels_completed=0,
+                        state_name="NOT_FINISHED")
+    mask = tracker.mask_array()
+    assert mask is not None and mask.any(), "boundary-free slow-tick bar never masked"
+    assert mask[0].any() and mask[63].any()
+    assert not mask[1:63, :].any()
+    # And the mask must actually fire on a pure tick.
+    ticks += 1
+    info = tracker.observe(_slow_tick_grid(base, ticks), state_name="NOT_FINISHED")
+    assert info["raw_changed"] is True and info["masked_changed"] is False
+
+
+def test_rotation_disabled_reproduces_the_pre_fix_miss(monkeypatch):
+    """TAAF_HUD_ROTATE=0 restores boundary-only segmentation (the documented
+    pre-fix behavior): the same boundary-free run must confirm nothing."""
+    monkeypatch.setenv("TAAF_HUD_ROTATE", "0")
+    tracker = HudMaskTracker()
+    assert tracker.SEGMENT_ROTATE_STEPS == 0
+    base = _base_grid()
+    tracker.seed(_slow_tick_grid(base, 0))
+    ticks = 0
+    for step in range(1, 121):
+        if step % 3 == 0:
+            ticks += 1
+        tracker.observe(_slow_tick_grid(base, ticks), levels_completed=0,
+                        state_name="NOT_FINISHED")
+    mask = tracker.mask_array()
+    assert mask is not None and not mask.any(), (
+        "with rotation disabled the boundary-free run must (by design) not confirm"
+    )
+
+
+def test_rotation_env_override_and_clamp(monkeypatch):
+    monkeypatch.setenv("TAAF_HUD_ROTATE", "40")
+    assert HudMaskTracker().SEGMENT_ROTATE_STEPS == 40
+    monkeypatch.setenv("TAAF_HUD_ROTATE", "5")  # below MIN_SEGMENT_STEPS -> clamp
+    assert HudMaskTracker().SEGMENT_ROTATE_STEPS == HudMaskTracker.MIN_SEGMENT_STEPS
+    monkeypatch.setenv("TAAF_HUD_ROTATE", "junk")
+    assert HudMaskTracker().SEGMENT_ROTATE_STEPS == 24
+    monkeypatch.delenv("TAAF_HUD_ROTATE")
+    assert HudMaskTracker().SEGMENT_ROTATE_STEPS == 24
+
+
+def test_disjoint_same_line_strips_across_windows_stay_unconfirmed():
+    """Precision guard for the contiguity relaxation: wavefront-shaped strips on
+    the SAME line with the SAME transition but in unrelated, non-touching places
+    per window (content, not a draining bar) must never confirm."""
+    tracker = HudMaskTracker()
+    base = _base_grid()
+    grid = base.copy()
+    tracker.seed(grid)
+    # Three rotation windows; in each, a 6-cell run on row 30 fills one cell per
+    # step, but each window's run sits far from the previous one (gap >= 5).
+    starts = [0, 20, 40]
+    for window, start in enumerate(starts):
+        for offset in range(6):
+            grid = grid.copy()
+            grid[30, start + offset] = 9
+            tracker.observe(grid, levels_completed=0, state_name="NOT_FINISHED")
+        # pad the window to the rotation length with no-op frames
+        for _ in range(HudMaskTracker.SEGMENT_ROTATE_STEPS - 6):
+            tracker.observe(grid, levels_completed=0, state_name="NOT_FINISHED")
+    mask = tracker.mask_array()
+    assert mask is not None and not mask[30, :].any(), (
+        "disjoint same-line strips must not be confirmed as a bar"
+    )
 
 
 # --- board_changed integration --------------------------------------------------
