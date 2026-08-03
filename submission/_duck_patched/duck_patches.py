@@ -298,19 +298,37 @@ def patch_prompts() -> str:
 
 def patch_tool_agent_analyze() -> str:
     """Intercept the Qwen-27B action generation pipeline to inject TransferExplorer and Retrospective summaries."""
+    import importlib.util
     import sys
     from pathlib import Path
-    
-    # Ensure arcagi3 is in sys.path
+
+    # Ensure arcagi3 is in sys.path. NO bare __file__ here: this module is exec'd
+    # straight into a notebook cell on Kaggle, where __file__ is undefined — the old
+    # `Path(__file__)` fallback raised NameError while building the path list and
+    # aborted the whole patch as FAIL before it had mutated anything.
     possible_paths = [
         Path("/kaggle/input/arcagi3-agent/lib"),
         Path("/kaggle/input/datasets/ahmedmobasher86/arcagi3-agent/lib"),
-        Path(__file__).resolve().parents[2] / "src", # Local fallback for dev
     ]
+    module_file = globals().get("__file__")
+    if module_file:  # imported as a real file (tests / dev): repo-root src fallback
+        possible_paths.append(Path(module_file).resolve().parents[2] / "src")
     for p in possible_paths:
         if p.exists() and str(p) not in sys.path:
             sys.path.insert(0, str(p))
-            
+
+    # Presence-gate the resource instead of failing later per call: without the
+    # arcagi3 package the TransferExplorer probe can never fire, so decline cleanly.
+    try:
+        arcagi3_present = importlib.util.find_spec("arcagi3.transfer_explorer") is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        arcagi3_present = False
+    if not arcagi3_present:
+        return (
+            "patch6 tool_agent_analyze: SKIP (arcagi3.transfer_explorer not importable — "
+            f"searched {[str(p) for p in possible_paths]})"
+        )
+
     from inference.agent import tool_agent
     agent_cls = getattr(tool_agent, "ToolAgent", None)
     if agent_cls is None or not hasattr(agent_cls, "analyze"):

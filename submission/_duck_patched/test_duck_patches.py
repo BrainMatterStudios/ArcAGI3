@@ -208,6 +208,23 @@ def test_animation_producer_never_breaks_an_action(monkeypatch):
     assert payload == {"executed": True}
 
 
+def test_patch6_survives_notebook_exec_without_file():
+    """patch6 exec'd the way the Kaggle hook cell runs (no __file__ in globals).
+
+    The shipped v5 built its arcagi3 path list from Path(__file__) and died with a
+    NameError -> 'patch6 ... FAIL' in every notebook context. It must now either
+    apply or SKIP with an accurate message — never FAIL for this structural reason.
+    """
+    src = (Path(__file__).parent / "duck_patches.py").read_text()
+    ns: dict = {}
+    exec(compile(src, "<hook-cell>", "exec"), ns)  # noqa: S102 - mirrors Kaggle exactly
+    assert "__file__" not in ns
+    line = ns["patch_tool_agent_analyze"]()
+    assert line.startswith("patch6"), line
+    assert "FAIL" not in line, line
+    assert "NameError" not in line, line
+
+
 class _FakeFrame:
     def __init__(self, grid):
         self.grid = grid
