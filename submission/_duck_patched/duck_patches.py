@@ -3331,6 +3331,202 @@ def patch_antifreeze() -> str:
     return "patch14 antifreeze: OK"
 
 
+# --- PATCH 15: animation frames as a code-queryable sandbox global ---------------
+#
+# The engine returns a frame LIST per action; the bundle keeps only frame[-1]
+# (taaf game.py: `GameState.frame = Frame(data=self.raw.frame[-1])` — line 170 in
+# the SCORED bundle, verified against scratchpad/taaf_scored_ref) while the
+# system prompt promises the model "a short multi-frame animation" it never
+# receives. Patch 2 ships animation SCALARS (count/changed/bbox); those did not
+# unlock g50t — the remaining lever is the RAW frames. This patch exposes the
+# discarded intermediate frames to the python tool as `last_animation`: a list
+# of the SAME FrameView objects `current_frame` uses (.ascii / .segmentation /
+# ._grid), delivered through the exact state-payload route patch 9 built for
+# hud_mask (host-side thread-local set in `_execute_action`, injected into the
+# sandbox state payload, materialized by one line in the bootstrap's
+# `_refresh_state`). Near-zero token cost until queried: sandbox globals reach
+# the transcript only when the model prints them; the single system-prompt line
+# below is the only unconditional cost. TAAF_ANIMATION=0 disables at call time
+# (payload empties, prompt line disappears). Presence-gated per the patch-9
+# law: every seam is checked and the patch declines cleanly (SKIP) on a bundle
+# that cannot support it. The scored bundle CAN: its bootstrap carries
+# `_frame_from_payload` and the `last_action_result` refresh anchor even though
+# it lacks patch 9's state_hash/diff_frames helpers.
+
+_ANIM_TLS = _threading.local()
+
+_ANIMATION_PROMPT_LINE = (
+    "The python tool also exposes `last_animation`: the intermediate animation "
+    "frames of the LAST action (same FrameView API as `current_frame`) — motion "
+    "that is invisible in the final frame; inspect it when an action seems to do "
+    "nothing or when objects move and snap back."
+)
+
+_ANIMATION_REFRESH_LINE = (
+    '        runtime_globals["last_animation"] = [\n'
+    "            view\n"
+    "            for view in (\n"
+    "                _frame_from_payload(f)\n"
+    '                for f in (state_payload.get("last_animation") or [])\n'
+    "            )\n"
+    "            if view is not None\n"
+    "        ]\n"
+)
+
+
+def _animation_enabled() -> bool:
+    import os
+
+    return os.environ.get("TAAF_ANIMATION", "1").strip() not in {"0", "false", "False"}
+
+
+def _animation_max_frames() -> int:
+    import os
+
+    try:
+        return max(1, int(os.environ.get("TAAF_ANIMATION_MAX_FRAMES", "16").strip() or "16"))
+    except ValueError:
+        return 16
+
+
+def _animation_current_payload() -> list:
+    """The last action's intermediate frames (host side), [] when disabled/none."""
+    if not _animation_enabled():
+        return []
+    frames = getattr(_ANIM_TLS, "frames", None)
+    return list(frames) if frames else []
+
+
+def patch_animation_sandbox() -> str:
+    """PATCH 15: expose the discarded animation frames as `last_animation`."""
+    from inference.agent import python_tool_sandbox as sandbox_mod
+    from inference.agent import tool_agent
+    from inference.framework import solver
+
+    # -- presence gates (patch-9 law: verify every seam, decline cleanly) ---------
+    try:
+        from taaf import game as taaf_game
+    except Exception:
+        return "patch15 animation: SKIP (taaf.game not importable)"
+    if not isinstance(getattr(taaf_game.GameState, "animation_frames", None), property):
+        return "patch15 animation: SKIP (GameState.animation_frames missing upstream)"
+    session_cls = getattr(solver, "_HarnessGameSession", None)
+    if session_cls is None or not hasattr(session_cls, "_execute_action"):
+        return "patch15 animation: SKIP (_HarnessGameSession._execute_action not found)"
+    bootstrap = getattr(sandbox_mod, "_SANDBOX_BOOTSTRAP", None)
+    if not isinstance(bootstrap, str):
+        return "patch15 animation: SKIP (_SANDBOX_BOOTSTRAP not found)"
+    if "_frame_from_payload" not in bootstrap or _HUD_REFRESH_ANCHOR not in bootstrap:
+        return "patch15 animation: SKIP (bootstrap lacks _frame_from_payload/refresh anchor)"
+    try:
+        from inference.utils.grid_utils import format_grid_ascii
+    except Exception:
+        return "patch15 animation: SKIP (format_grid_ascii not importable)"
+    builder = getattr(tool_agent, "_build_system_prompt", None)
+    if not callable(builder):
+        return "patch15 animation: SKIP (_build_system_prompt not found)"
+    if getattr(session_cls._execute_action, "_animation_sandbox_patched", False):
+        return "patch15 animation: SKIP (already applied)"
+
+    # -- 15a: host-side producer — capture the frames the bundle discards ---------
+    original_exec = session_cls._execute_action
+
+    def _execute_action(self: Any, action: Any, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        payload = original_exec(self, action, *args, **kwargs)
+        try:
+            frames = list(self.game.current_state.animation_frames)
+            cap = _animation_max_frames()
+            if len(frames) > cap:  # keep the END of the animation (settling motion)
+                frames = frames[-cap:]
+            step = int(payload.get("action_num") or 0) if isinstance(payload, dict) else 0
+            level = int(payload.get("level") or 1) if isinstance(payload, dict) else 1
+            captured = []
+            for fr in frames:
+                # plain ints: engine grids are numpy int8, which json.dumps
+                # (the sandbox IPC) rejects.
+                rows = [[int(v) for v in row] for row in _frame_rows(fr)]
+                captured.append(
+                    {
+                        "ascii": format_grid_ascii(rows),
+                        "step": step,
+                        "level": level,
+                        "shape": [len(rows), max((len(r) for r in rows), default=0)],
+                        "grid": rows,
+                    }
+                )
+            _ANIM_TLS.frames = captured
+        except Exception:  # noqa: BLE001 - telemetry must never break an action
+            _ANIM_TLS.frames = []
+        return payload
+
+    # -- clear on game start: a reused worker thread must not leak frames ---------
+    original_play = session_cls.play
+
+    def play(self: Any) -> None:
+        _ANIM_TLS.frames = []
+        return original_play(self)
+
+    # -- 15b: state-payload route into the sandbox (patch 9's hud_mask pattern) ---
+    original_run = sandbox_mod.run_sandboxed_python
+
+    def run_sandboxed_python(
+        *,
+        code: str,
+        timeout_seconds: int,
+        initial_state: dict[str, Any],
+        action_handler: Any,
+    ) -> dict[str, Any]:
+        state = dict(initial_state or {})
+        if "last_animation" not in state:
+            state["last_animation"] = _animation_current_payload()
+
+        def handler(actions: Any) -> dict[str, Any]:
+            out = action_handler(actions)
+            try:
+                refreshed = out.get("state") if isinstance(out, dict) else None
+                if isinstance(refreshed, dict) and "last_animation" not in refreshed:
+                    refreshed["last_animation"] = _animation_current_payload()
+            except Exception:
+                pass
+            return out
+
+        return original_run(
+            code=code,
+            timeout_seconds=timeout_seconds,
+            initial_state=state,
+            action_handler=handler,
+        )
+
+    # -- 15c: one refresh line in the sandbox bootstrap ---------------------------
+    if "last_animation" not in bootstrap:
+        sandbox_mod._SANDBOX_BOOTSTRAP = bootstrap.replace(
+            _HUD_REFRESH_ANCHOR, _HUD_REFRESH_ANCHOR + _ANIMATION_REFRESH_LINE
+        )
+
+    # -- 15d: ONE announcing line on the system prompt (patch 12b/13 seam) --------
+    def _build_system_prompt(*args: Any, **kwargs: Any) -> str:
+        prompt = builder(*args, **kwargs)
+        if _animation_enabled():
+            prompt = f"{prompt}\n\n{_ANIMATION_PROMPT_LINE}"
+        return prompt
+
+    _forward_patch_markers(_execute_action, original_exec)
+    _forward_patch_markers(play, original_play)
+    _forward_patch_markers(run_sandboxed_python, original_run)
+    _forward_patch_markers(_build_system_prompt, builder)
+    _execute_action._animation_sandbox_patched = True  # type: ignore[attr-defined]
+    play._animation_sandbox_play_patched = True  # type: ignore[attr-defined]
+    run_sandboxed_python._animation_sandbox_patched = True  # type: ignore[attr-defined]
+    _build_system_prompt._animation_prompt_patched = True  # type: ignore[attr-defined]
+    session_cls._execute_action = _execute_action
+    session_cls.play = play
+    sandbox_mod.run_sandboxed_python = run_sandboxed_python
+    if getattr(tool_agent, "run_sandboxed_python", None) is not None:
+        tool_agent.run_sandboxed_python = run_sandboxed_python
+    tool_agent._build_system_prompt = _build_system_prompt
+    return "patch15 animation: OK"
+
+
 def apply_all(verbose: bool = True) -> list[str]:
     """Apply every patch. Each is independent; one failing does not block the others."""
     results = []
@@ -3351,6 +3547,7 @@ def apply_all(verbose: bool = True) -> list[str]:
         patch_plan_queue,
         patch_mechanic_playbook,
         patch_antifreeze,
+        patch_animation_sandbox,
     ):
         try:
             results.append(fn())

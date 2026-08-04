@@ -103,7 +103,9 @@ def test_playbook_lands_in_module_system_prompt_when_enabled(monkeypatch):
     monkeypatch.delenv("TAAF_PLAYBOOK", raising=False)  # default ON
     prompt = tool_agent._build_system_prompt(tool_output_tokens=1000)
     assert MARKER in prompt
-    assert prompt.rstrip().endswith(_PLAYBOOK_TEXT.rstrip())
+    # patch 15 (animation) may append its own line after the playbook, so
+    # assert the playbook text lands intact rather than terminally.
+    assert _PLAYBOOK_TEXT.rstrip() in prompt.rstrip()
 
 
 def test_playbook_env_gating_is_call_time(monkeypatch):
