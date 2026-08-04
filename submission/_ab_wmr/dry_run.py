@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""GPU-free end-to-end dry run of the ab-wmr ROUND 4 (adapter eval) logic.
+"""GPU-free end-to-end dry run of the ab-wmr ROUND 5 (K3 run-8 adapter eval)
+logic.
 
 Mock brain (fixed `python` tool call -> action('UP'), a fixed "World model:"
 scientist note, usage counts so the token accounting is provable, /models and
@@ -16,9 +17,14 @@ module namespace with NO __file__ (the builder inlines it into a notebook
 cell), so patch6 declines for want of /kaggle/input/arcagi3-agent here too and
 the dry run exercises the kernel's true patch surface (patch9 SKIP included).
 
-The merge itself cannot run locally (no snapshot/GPU); its script logic and
-paths are validated at build time (ast.parse) and against the sft-synth
-kernel's real output listing (checkpoint-10 verified downloadable 2026-08-04).
+The merge itself cannot run locally (no snapshot/GPU); its script logic is
+validated at build time (ast.parse) and its PATH RESOLUTION block
+(build_ab_wmr.ADAPTER_SELECT) is exec'd here verbatim against a mock
+/kaggle/input reproducing the REAL arc3-sft-k3-ckpts file listing (fetched
+via the kaggle CLI 2026-08-04; trainer_state.json content is the actual
+downloaded run-8 record), plus tampered trees proving every abort path:
+duplicate checkpoint-8, wrong-dataset checkpoint-8, non-run-8 trainer_state,
+wrong adapter byte size, missing corpus.
 
 Proves before any GPU minute is spent:
   * full v6 apply_all() + the expected-SKIP hard gate (patch9, patch6);
@@ -217,11 +223,15 @@ def main() -> int:
     out = json.loads((WORKDIR / "ab_result.json").read_text())
     assert out["error"] is None, f"driver recorded an error:\n{out['error']}"
     assert out["stage"] == "done", f"stage={out['stage']}"
-    assert out["experiment"] == "ab_round4_adapter", out["experiment"]
+    assert out["experiment"] == "ab_round5_k3_adapter", out["experiment"]
     prr = out.get("pre_registered_reading")
     assert isinstance(prr, dict) and set(prr) == {
-        "question", "primary", "secondary", "not_a_readout"}, prr
-    assert "synth-corpus LoRA" in prr["question"], prr["question"]
+        "question", "primary", "secondary", "not_a_readout",
+        "adapter_provenance"}, prr
+    assert "run-8" in prr["question"], prr["question"]
+    assert "gen_tokens" in prr["primary"], prr["primary"]
+    assert "NLL is NOT a criterion" in prr["not_a_readout"], prr["not_a_readout"]
+    assert "checkpoint-8" in prr["adapter_provenance"], prr["adapter_provenance"]
     assert out["target_games"] == list(drv._AB_TARGET_GAMES), out.get("target_games")
     assert set(out["arm_models"]) == {"M", "B"}, out.get("arm_models")
     assert out.get("antifreeze_counter_installed") is True, out
@@ -369,6 +379,86 @@ def main() -> int:
         (before, mod.ANTIFREEZE_DIAGNOSTICS)
     assert fake.__dict__.get("_ab_antifreeze_triggers") == 1, fake.__dict__
     print("[dry] antifreeze trigger + per-agent attribution: OK")
+
+    # --- round 5: ADAPTER PATH RESOLUTION against the real dataset listing -----
+    # Exec build_ab_wmr.ADAPTER_SELECT (the exact block the merge subprocess
+    # runs) against a mock /kaggle/input reproducing the REAL
+    # arc3-sft-k3-ckpts + arc3-sft-k3-corpus listings (kaggle CLI,
+    # 2026-08-04) in the nested mount layout the run-8 kernel log showed
+    # (/kaggle/input/datasets/<owner>/<slug>/...), then against tampered
+    # trees to prove every abort path.
+    import glob as glob_mod
+    spec_b = importlib.util.spec_from_file_location("build_ab_wmr", HERE / "build_ab_wmr.py")
+    bld = importlib.util.module_from_spec(spec_b)
+    spec_b.loader.exec_module(bld)
+
+    RUN8_LOSS8 = 0.7335078716278076   # downloaded trainer_state, 2026-08-04
+    RUN8_BYTES = 467062560            # live listing, 2026-08-04
+
+    def mk_tree(root: Path, *, corpus=True, k3_ckpt=True, synth_ckpt8=False,
+                loss8=RUN8_LOSS8, adapter_bytes=RUN8_BYTES) -> Path:
+        snap = root / "datasets/driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot"
+        snap.mkdir(parents=True)
+        (snap / "config.json").write_text(json.dumps({"model_type": "qwen3_5"}))
+        if corpus:
+            corp = root / "datasets/ahmedmobasher86/arc3-sft-k3-corpus"
+            (corp / "tokenizer_bundle").mkdir(parents=True)
+            (corp / "train.jsonl").write_text("{}\n")
+            (corp / "sft_common.py").write_text("# mock\n")
+            # present in the real listing; must NOT be picked as MODEL
+            (corp / "tokenizer_bundle/config.json").write_text(
+                json.dumps({"model_type": "qwen3_5"}))
+        if k3_ckpt:
+            ck = root / "datasets/ahmedmobasher86/arc3-sft-k3-ckpts/sft_out/checkpoint-8"
+            ck.mkdir(parents=True)
+            (ck / "trainer_state.json").write_text(json.dumps(
+                {"global_step": 8, "max_steps": 15,
+                 "log_history": [{"step": 8, "loss": loss8}]}))
+            with open(ck / "adapter_model.safetensors", "wb") as f:
+                f.truncate(adapter_bytes)   # sparse file with the real size
+            # sibling step-15 artifact from the real listing; must NOT be selected
+            sa = ck.parents[1] / "sft_adapter"
+            sa.mkdir(exist_ok=True)
+            (sa / "adapter_config.json").write_text("{}")
+        if synth_ckpt8:  # a second sft_out tree, as if sft-synth were still mounted
+            ck = root / "notebooks/ahmedmobasher86/arc-agi-3-sft-synth-v1/sft_out/checkpoint-8"
+            ck.mkdir(parents=True)
+            (ck / "trainer_state.json").write_text(json.dumps({"global_step": 8}))
+        return root
+
+    def run_select(root: Path) -> dict:
+        ns = {"glob": glob_mod, "json": json, "os": os}
+        exec(bld.ADAPTER_SELECT.replace("/kaggle/input", str(root)), ns)
+        return ns
+
+    sel_root = WORKDIR / "kmock"
+    ns = run_select(mk_tree(sel_root / "ok"))
+    assert ns["CKPT"].endswith("arc3-sft-k3-ckpts/sft_out/checkpoint-8"), ns["CKPT"]
+    assert ns["CORPUS"].endswith("arc3-sft-k3-corpus"), ns["CORPUS"]
+    assert ns["MODEL"].endswith("vrfai-qwen3-6-27b-fp8-hf-snapshot"), ns["MODEL"]
+    print("[dry] adapter select: run-8 checkpoint-8 resolved from the real "
+          "listing shape (sft_adapter + tokenizer_bundle correctly ignored): OK")
+
+    def expect_abort(root: Path, needle: str):
+        try:
+            run_select(root)
+        except AssertionError as e:
+            assert needle in str(e), (needle, repr(e))
+            return
+        raise AssertionError(f"ADAPTER_SELECT failed to abort ({needle!r}) for {root}")
+
+    expect_abort(mk_tree(sel_root / "dup", synth_ckpt8=True),
+                 "expected exactly one sft_out/checkpoint-8")
+    expect_abort(mk_tree(sel_root / "wrongds", k3_ckpt=False, synth_ckpt8=True),
+                 "not from the arc3-sft-k3-ckpts dataset")
+    expect_abort(mk_tree(sel_root / "wrongloss", loss8=0.5551234),
+                 "does not match the verified run-8 record")
+    expect_abort(mk_tree(sel_root / "wrongsize", adapter_bytes=123),
+                 "run-8 recorded 467062560")
+    expect_abort(mk_tree(sel_root / "nocorpus", corpus=False),
+                 "expected exactly one k3-corpus train.jsonl")
+    print("[dry] adapter select abort paths: duplicate ckpt-8, wrong-dataset "
+          "ckpt-8, non-run-8 trainer_state, wrong byte size, missing corpus: OK")
 
     assert MockBrain.n_posts > 0
     print(f"\n[dry] PASS — {MockBrain.n_posts} mock-brain calls, "

@@ -1,21 +1,26 @@
 # ============================================================================
-# A/B wave driver — ROUND 4: the BEHAVIORAL ADAPTER EVAL. The served WEIGHTS
-# are the single variable; duck config is identical (v7 pins) in both arms.
+# A/B wave driver — ROUND 5: the K3 RUN-8 ADAPTER BEHAVIORAL EVAL. The served
+# WEIGHTS are the single variable; duck config is identical (v7 pins) in both
+# arms. Mirror of round 4 (synth adapter, commit 6cde0c8), different adapter.
 #
 # Arms (env pins IDENTICAL — WMR trio + rotation fix + patch14 antifreeze ON,
 # graph/compact/playbook OFF, exactly the v7 config):
-#   M = vLLM serves /tmp/merged_sft = base Qwen3.6-27B + sft-synth-v1
-#       checkpoint-10 LoRA, merged in-kernel via the PROVEN duck-sft v4 recipe
+#   M = vLLM serves /tmp/merged_sft = base Qwen3.6-27B + K3 run-8
+#       checkpoint-8 LoRA (arc3-sft-k3-ckpts v2; identity hard-asserted in
+#       the merge cell), merged in-kernel via the PROVEN duck-sft v4 recipe
 #       (sub 55160933: dequantize_fp8_inplace + strip_quantization_runtime +
 #       PeftModel merge_and_unload + save_original_format=False).
 #   B = vLLM serves the base FP8 snapshot
 #       (driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot), same config.
 #
 # QUESTION UNDER TEST (pre-registered, baked into the result JSON header):
-# does the stage-2 synth-corpus LoRA change real PLAY vs base? NLL already
-# passed (val -33%, held-out push family -36%) but a style confound is
-# suspected — NLL gains may be prompt-style imitation, not competence. This
-# behavioral A/B is the decisive test. Neither outcome ships anything.
+# does DELIBERATION-SHAPED SFT move real play at 27B? Run-8 trained on
+# corpus_v3 (Kimi-K3 teacher, long-form ~1487-token targets), passed its NLL
+# gate (-12.5% val) and Gate 0 (merge +13.51% NLL, 98.2% retained) but was
+# never behaviorally validated (its one submission, 55160933, errored).
+# Round 4's synth adapter FAILED behaviorally by under-deliberating (~30%
+# gen_tokens drop — short templated targets); run-8's data has the right
+# style, so this is the cleanest test. Neither outcome ships anything.
 #
 # Design (wave mechanism carried from rounds 1-3, commit 28e253a):
 #   * The MODEL differs between arms -> vLLM is RESTARTED at every arm switch
@@ -66,8 +71,9 @@ AB_ARM_ENV = {"M": dict(_AB_V7_PINS), "B": dict(_AB_V7_PINS)}
 AB_MERGED_PATH = "/tmp/merged_sft"
 _AB_BASE_SNAPSHOT_TOKEN = "qwen3-6-27b-fp8"   # must appear in the base --model path
 
-# Panel (10 games) — round 4: 2 newly-unlocking targets + 3 never-unlocked
-# targets + 5 unlock-sensitive continuity games.
+# Panel (10 games) — round 4's exact panel, carried UNCHANGED into round 5
+# for direct synth-vs-k3 comparability: 2 newly-unlocking targets + 3
+# never-unlocked targets + 5 unlock-sensitive continuity games.
 _AB_NEWLY_UNLOCKING = ("lf52", "cn04")
 _AB_NEVER_UNLOCKED = ("wa30", "m0r0", "g50t")
 _AB_TARGET_GAMES = _AB_NEWLY_UNLOCKING + _AB_NEVER_UNLOCKED
@@ -95,17 +101,22 @@ _AB_FINGERPRINTS = {}           # arm -> first-seen logprob fingerprint (identit
 # analysis cannot quietly move the goalposts after the data lands.
 AB_PREREGISTERED_READING = {
     "question": (
-        "Does the stage-2 synth-corpus LoRA (sft-synth-v1 checkpoint-10; NLL "
-        "val -33%, held-out push family -36%) change real PLAY vs base? A "
-        "style confound is suspected: the NLL gains may be prompt-style "
-        "imitation, not competence. This behavioral A/B is the decisive test."
+        "Does DELIBERATION-SHAPED SFT move real play at 27B? The K3 run-8 "
+        "checkpoint-8 LoRA (corpus_v3, Kimi-K3 teacher, long-form ~1487-token "
+        "targets; NLL val -12.5%; Gate 0 merge +13.51%, 98.2% retained) was "
+        "never behaviorally validated. Round 4's synth adapter failed by "
+        "under-deliberating (~30% gen_tokens drop, learned-short style); "
+        "run-8's data has the right style — this is the cleanest test."
     ),
     "primary": (
-        "Paired per-game LEVELS + event texture, M (merged adapter) vs B "
-        f"(base): unlock events on the newly-unlocking targets "
+        "Paired per-game LEVELS + gen_tokens/game (the DELIBERATION "
+        "SIGNATURE: the synth adapter showed a ~30% token drop vs base; "
+        "run-8 should NOT if the style hypothesis is right), M (merged "
+        "adapter) vs B (base). Unlock events on the newly-unlocking targets "
         f"{list(_AB_NEWLY_UNLOCKING)} and never-unlocked targets "
-        f"{list(_AB_NEVER_UNLOCKED)}, plus actions_per_level, gen_tokens and "
-        "watchdog/HUD/replay texture on the full 10-game panel."
+        f"{list(_AB_NEVER_UNLOCKED)}: an M-only unlock on a never-unlocked "
+        "game = signal. Plus actions_per_level and watchdog/HUD/replay "
+        "texture on the full 10-game panel."
     ),
     "secondary": (
         f"Continuity games {list(_AB_CONTINUITY_GAMES)} for unlock-sensitive "
@@ -114,9 +125,21 @@ AB_PREREGISTERED_READING = {
         "every wave record."
     ),
     "not_a_readout": (
-        "Score deltas at 2 waves/arm are noise (A/A floor RMS 0.707 "
-        "levels/game-run) — do not headline them. Neither outcome ships "
-        "anything by itself."
+        "NLL is NOT a criterion (round 4 disqualified NLL-only gates: NLL "
+        "said +36% transfer, play said -47% levels). Score deltas at 2 "
+        "waves/arm are noise (A/A floor RMS 0.707 levels/game-run) — do not "
+        "headline them. Neither outcome ships anything by itself."
+    ),
+    "adapter_provenance": (
+        "Dataset ahmedmobasher86/arc3-sft-k3-ckpts, current version = the "
+        "2026-07-26 v2 upload (run 8, the FIRST VALID run; runs 1-5 trained "
+        "on a corrupted base and their v1 upload is fully superseded), path "
+        "sft_out/checkpoint-8 — the checkpoint pre-registered by "
+        "docs/A1-PROTOCOL-2026-08.md par.3 (ties break toward ckpt-8) and the "
+        "only artifact that passed Gate 0 (serve-verify-k3 v9, 2026-08-01). "
+        "Identity hard-asserted at merge time: trainer_state global_step 8 / "
+        "max_steps 15 / step-8 loss 0.7335078716278076, adapter 467062560 "
+        "bytes (verified against the live listing 2026-08-04)."
     ),
 }
 
@@ -828,10 +851,10 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
     t0 = notebook_start if notebook_start is not None else _ab_time.time()
     stage = {"s": "init"}
     result = {
-        "experiment": "ab_round4_adapter",
+        "experiment": "ab_round5_k3_adapter",
         "pre_registered_reading": AB_PREREGISTERED_READING,
         "arms": AB_ARM_ENV,
-        "arm_models": {"M": "merged(base + sft-synth-v1 checkpoint-10) at "
+        "arm_models": {"M": "merged(base + k3 run-8 checkpoint-8) at "
                             + AB_MERGED_PATH,
                        "B": "base fp8 snapshot"},
         "games": AB_GAMES,

@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Build submission/_ab_wmr/ab-wmr.ipynb — ROUND 4: the BEHAVIORAL ADAPTER
-EVAL. The served WEIGHTS are the single variable; the duck config (v7 pins) is
-identical in both arms. Round 1 (WMR trio) is preserved at commit 3c21726;
-round 2 (graph/compact) at ae1286b; round 3 (playbook) at 28e253a, artifacts
-in docs/test-artifacts-2026-08-02/ (ab_round3_result.json + ab_round3_kernel/).
+"""Build submission/_ab_wmr/ab-wmr.ipynb — ROUND 5: the K3 RUN-8 ADAPTER
+BEHAVIORAL EVAL. The served WEIGHTS are the single variable; the duck config
+(v7 pins) is identical in both arms. Round 1 (WMR trio) is preserved at commit
+3c21726; round 2 (graph/compact) at ae1286b; round 3 (playbook) at 28e253a;
+round 4 (synth adapter — FAILED behaviorally by under-deliberating, ~30%
+gen_tokens drop) at 6cde0c8, result in
+docs/test-artifacts-2026-08-02/ADAPTER-BEHAVIORAL-EVAL-2026-08-04.md.
 
 NOT a competition submission. A plain GPU commit kernel on the _rig mechanism:
 duck-base notebook, serve forced, run cell replaced by the A/B wave driver
 (ab_wave_driver.py). Waves M,B,B,M:
-    M = vLLM serves /tmp/merged_sft = base + sft-synth-v1 checkpoint-10 LoRA
+    M = vLLM serves /tmp/merged_sft = base + K3 RUN-8 checkpoint-8 LoRA
     B = vLLM serves the base FP8 snapshot
 The merge runs in a NEW notebook cell inserted before the serve cell, an
 adapted copy of the PROVEN duck-sft v4 recipe (sub 55160933: subprocess
@@ -20,18 +22,45 @@ duck-sft MODEL_PATH_ANCHOR override so the FIRST server start (wave 0 = M)
 already serves the merged tree; the driver restarts vLLM at every arm switch
 and re-runs the full serving assert with per-arm model-identity checks.
 
-Adapter source: kernel output of ahmedmobasher86/arc-agi-3-sft-synth-v1
-(kernel_sources; v4 run proved it mounts at /kaggle/input/arc-agi-3-sft-synth-v1/
-and the checkpoint-10 asserts passed). sft_common comes from
-ahmedmobasher86/arc3-corpus-synth-v1 (dataset_sources; contains
-dequantize_fp8_inplace/strip_quantization_runtime, byte-identical to the k3
-corpus copy the duck-sft merge used). The merge subprocess additionally
+WHY THIS CHECKPOINT (run-8 sft_out/checkpoint-8) — the pre-registered choice:
+  * Run 8 is the FIRST VALID SFT run (runs 1-5 trained on a corrupted base —
+    FP8 scales stripped unapplied; their poisoned ckpts-dataset v1 is fully
+    superseded by the 2026-07-26 v2 upload, which carries ONLY run-8
+    artifacts: sft_adapter/ (step-15) + sft_out/checkpoint-8/).
+  * docs/A1-PROTOCOL-2026-08.md §3 pre-registers the checkpoint arms as
+    base / checkpoint-8 / sft_adapter(step-15), with ties broken TOWARD
+    ckpt-8 (OOD-peaks-early law). It names no other checkpoint.
+  * Gate 0 (serve-verify-k3 v9, 2026-08-01) PASSED for checkpoint-8
+    SPECIFICALLY: merged NLL gain +13.51% (bar >= 2%), merge retained 98.2%
+    of the adapter's fit. The sft_adapter step-15 arm never ran its gate, so
+    checkpoint-8 is the only serve-verified artifact.
+  * Run-8 lineage (downloaded + verified 2026-08-04): trained on
+    arc3-sft-k3-corpus (corpus_v3, Kimi-K3 teacher, long-form deliberation
+    ~1487-token targets), 392 train / 43 val, VAL target-loss base 0.7781 ->
+    tuned 0.6807 (-12.5%). Behaviorally NEVER validated — its one submission
+    (55160933) errored. Round 4's synth adapter failed by learning a SHORT
+    style; run-8's data has the right style, so this is the cleanest test of
+    whether deliberation-shaped SFT moves play at 27B.
+The merge cell hard-asserts the checkpoint identity at run time
+(trainer_state global_step/max_steps/step-8 loss + adapter byte size, all
+recorded from the live dataset listing 2026-08-04) — kernels always mount
+the LATEST dataset version, so a surprise re-upload fails loudly instead of
+silently swapping the artifact.
+
+Adapter source: dataset ahmedmobasher86/arc3-sft-k3-ckpts (dataset_sources;
+current version = the 2026-07-26 v2 run-8 upload, file listing verified via
+the kaggle CLI 2026-08-04: sft_out/checkpoint-8/adapter_model.safetensors,
+467062560 bytes). sft_common comes from ahmedmobasher86/arc3-sft-k3-corpus
+(dataset_sources; the EXACT corpus run-8 trained on and the same
+dequantize_fp8_inplace/strip_quantization_runtime pair the proven duck-sft v4
+merge imported). The merge subprocess additionally
 prepends the arc3-deps-prep kernel output's deps/ dir to sys.path
 (transformers-main 5.14.0.dev0 + peft 0.19.1, torch stripped) because the
 stock image transformers does not know model_type qwen3_5 — the exact
-env-prep sft-synth-v1 itself trained with. vLLM is unaffected: it runs from
-the wheelhouse's vllm-site-packages, which served qwen3_5 in rounds 1-3 and
-served a merged tree in duck-sft v4 (sub 55160933).
+env-prep run-8 itself trained with (its log: deps on path -> transformers
+5.14.0.dev0). vLLM is unaffected: it runs from the wheelhouse's
+vllm-site-packages, which served qwen3_5 in rounds 1-4 and served a merged
+tree in duck-sft v4 (sub 55160933) and ab-wmr v5 (round 4, 4.39h COMPLETE).
 
 Every arm gets the IDENTICAL patch layer the submitted v6 kernel installs:
 apply_all() from the CURRENT duck_patches.py (now through patch14: playbook +
@@ -99,21 +128,58 @@ MODEL_PATH_OVERRIDE = (
     "present, so wave 0 (arm M) would run base weights under a merged label')"
 )
 
+# Path-resolution block for the merge: CORPUS (sft_common), MODEL (base FP8
+# snapshot) and CKPT (the run-8 checkpoint-8 adapter, hard identity asserts).
+# Kept as its own constant so dry_run.py can exec it verbatim against a mock
+# /kaggle/input built from the REAL dataset file listing (and against
+# tampered trees, proving every abort path) without a GPU.
+ADAPTER_SELECT = '''\
+# --- path resolution: corpus, base model, and the RUN-8 CHECKPOINT-8 adapter --
+_corp = sorted(os.path.dirname(p)
+               for p in glob.glob('/kaggle/input/**/train.jsonl', recursive=True)
+               if 'k3-corpus' in p)
+assert len(_corp) == 1, f'expected exactly one k3-corpus train.jsonl under /kaggle/input, got {_corp}'
+CORPUS = _corp[0]
+MODEL = next(os.path.dirname(p) for p in glob.glob('/kaggle/input/**/config.json', recursive=True)
+             if 'tokenizer_bundle' not in p and json.load(open(p)).get('model_type') == 'qwen3_5')
+# Adapter identity chain (values recorded from the LIVE arc3-sft-k3-ckpts
+# listing + downloaded trainer_state, 2026-08-04). The dataset's current
+# version is the 2026-07-26 v2 upload = run 8, the FIRST VALID run (runs 1-5
+# trained on a corrupted base; no artifact of theirs exists in this version).
+# Kernels mount the LATEST dataset version, so these asserts turn any future
+# re-upload into a loud abort instead of a silent artifact swap.
+_ckpts = sorted(glob.glob('/kaggle/input/**/sft_out/checkpoint-8', recursive=True))
+assert len(_ckpts) == 1, f'expected exactly one sft_out/checkpoint-8 under /kaggle/input, got {_ckpts}'
+CKPT = _ckpts[0]
+assert 'k3-ckpts' in CKPT, f'checkpoint-8 is not from the arc3-sft-k3-ckpts dataset: {CKPT}'
+_ts = json.load(open(os.path.join(CKPT, 'trainer_state.json')))
+assert _ts.get('global_step') == 8 and _ts.get('max_steps') == 15, (
+    f"not run-8 checkpoint-8: global_step={_ts.get('global_step')} max_steps={_ts.get('max_steps')}")
+_loss8 = next((h['loss'] for h in _ts.get('log_history', []) if h.get('step') == 8), None)
+assert _loss8 is not None and abs(_loss8 - 0.7335078716278076) < 1e-9, (
+    f'checkpoint-8 trainer_state does not match the verified run-8 record (step-8 loss {_loss8!r})')
+_adapter_bytes = os.path.getsize(os.path.join(CKPT, 'adapter_model.safetensors'))
+assert _adapter_bytes == 467062560, (
+    f'adapter_model.safetensors is {_adapter_bytes} bytes, run-8 recorded 467062560')
+'''
+
 # The merge itself, run via `python -c` in an ISOLATED subprocess so the OS
 # reclaims 100% of the GPU VRAM before vLLM initializes. Byte-for-byte the
-# duck-sft v4 recipe except: checkpoint selection pinned to the sft-synth
-# kernel's sft_out/checkpoint-10, and the corpus glob pinned to the synth
-# corpus (which carries the same sft_common as the k3 corpus).
+# duck-sft v4 recipe except: adapter selection pinned to run-8's
+# sft_out/checkpoint-8 with the identity chain above, and the corpus glob
+# pinned to arc3-sft-k3-corpus (the corpus run-8 trained on — same
+# sft_common the duck-sft v4 merge imported).
 MERGE_INNER = '''\
 import glob, json, os, shutil, sys, time
-# OFFLINE env-prep (sft-synth lineage): the kernel image's stock transformers
-# does not know model_type qwen3_5 (v4 abort: KeyError 'qwen3_5' at
+# OFFLINE env-prep (run-8 lineage): the kernel image's stock transformers
+# does not know model_type qwen3_5 (round-4 v4 abort: KeyError 'qwen3_5' at
 # AutoConfig). The arc3-deps-prep kernel output bundles transformers-main
 # (5.14.0.dev0) + peft 0.19.1 with torch/nvidia/triton stripped, so the
-# image's Blackwell torch is kept — exactly the path sft-synth-v1 trained
-# with. Internet is off; this is the only offline route to a new-enough
-# transformers. Scoped to THIS subprocess: the notebook process and vLLM
-# (which runs from the wheelhouse's own site-packages) are untouched.
+# image's Blackwell torch is kept — exactly the deps run-8 itself trained
+# with (its log: 'deps on path ... arc3-deps-prep/deps', transformers
+# 5.14.0.dev0). Internet is off; this is the only offline route to a
+# new-enough transformers. Scoped to THIS subprocess: the notebook process
+# and vLLM (which runs from the wheelhouse's own site-packages) are untouched.
 _deps = sorted(p for p in glob.glob('/kaggle/input/**/deps', recursive=True)
                if 'deps-prep' in p)
 assert _deps, 'arc3-deps-prep deps dir not found under /kaggle/input'
@@ -124,17 +190,9 @@ print(f'[ab-merge-subprocess] deps on path: {_deps[0]} | '
       f'transformers {transformers.__version__} | torch {torch.__version__}', flush=True)
 assert tuple(int(x) for x in transformers.__version__.split('.')[:2]) >= (5, 6), \\
     f'qwen3_5 needs transformers>=5.6.2, got {transformers.__version__}'
-CORPUS = next(os.path.dirname(p)
-              for p in sorted(glob.glob('/kaggle/input/**/train.jsonl', recursive=True))
-              if 'synth' in p)
+''' + ADAPTER_SELECT + '''\
 sys.path.insert(0, CORPUS)
 from sft_common import dequantize_fp8_inplace, strip_quantization_runtime
-MODEL = next(os.path.dirname(p) for p in glob.glob('/kaggle/input/**/config.json', recursive=True)
-             if 'tokenizer_bundle' not in p and json.load(open(p)).get('model_type') == 'qwen3_5')
-_ckpts = sorted(glob.glob('/kaggle/input/**/sft_out/checkpoint-10', recursive=True))
-assert len(_ckpts) == 1, f'expected exactly one sft_out/checkpoint-10 under /kaggle/input, got {_ckpts}'
-CKPT = _ckpts[0]
-assert 'sft-synth' in CKPT, f'checkpoint-10 is not from the sft-synth kernel output: {CKPT}'
 MERGED = '/tmp/merged_sft'
 print(f'[ab-merge-subprocess] base model: {MODEL} | adapter ckpt: {CKPT}', flush=True)
 
@@ -185,7 +243,9 @@ print(f'[ab-merge-subprocess] successfully merged adapter to {MERGED} in {time.t
 def merge_cell() -> str:
     return (
         "# ============================================================================\n"
-        "# ROUND 4 in-kernel MERGE: base + sft-synth-v1 checkpoint-10 -> /tmp/merged_sft\n"
+        "# ROUND 5 in-kernel MERGE: base + K3 RUN-8 checkpoint-8 -> /tmp/merged_sft\n"
+        "# (arc3-sft-k3-ckpts v2 upload; identity hard-asserted in the subprocess:\n"
+        "# trainer_state global_step 8 / max_steps 15 / step-8 loss + adapter bytes).\n"
         "# Adapted from the PROVEN duck-sft v4 recipe (sub 55160933): the merge runs in\n"
         "# an ISOLATED SUBPROCESS so the OS reclaims 100% of the GPU VRAM before vLLM\n"
         "# initializes. Runs UNCONDITIONALLY: this commit kernel IS the experiment, and\n"
@@ -296,6 +356,7 @@ def main() -> None:
     # The hook/run/merge cells must be valid python on their own (they contain
     # inlined modules) — catch syntax breakage at build time, not on the GPU.
     ast.parse(hook_cell())
+    ast.parse(ADAPTER_SELECT)       # the path-resolution block on its own
     ast.parse(MERGE_INNER)          # the subprocess merge script
     merge_src = merge_cell()
     ast.parse(merge_src)
@@ -384,15 +445,19 @@ def main() -> None:
             "driessmit1/arc3-vllm-h100-wheelhouse-v3",
             "ahmedmobasher86/taaf-src-hybrid",
             "driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot",
-            # round 4: sft_common (dequantize/strip helpers) for the merge
-            "ahmedmobasher86/arc3-corpus-synth-v1",
+            # round 5: the ADAPTER — run-8 sft_out/checkpoint-8 (v2 upload;
+            # identity hard-asserted in the merge subprocess)
+            "ahmedmobasher86/arc3-sft-k3-ckpts",
+            # round 5: sft_common (dequantize/strip helpers) + tokenizer_bundle
+            # fallback — the corpus run-8 trained on (duck-sft v4's source set)
+            "ahmedmobasher86/arc3-sft-k3-corpus",
         ],
         "competition_sources": ["arc-prize-2026-arc-agi-3"],
-        # round 4: the adapter — sft-synth-v1 kernel OUTPUT (sft_out/checkpoint-10)
-        # + arc3-deps-prep — offline transformers-main/peft for the merge
-        # subprocess (v4 abort: stock image transformers lacks qwen3_5)
-        "kernel_sources": ["ahmedmobasher86/arc-agi-3-sft-synth-v1",
-                           "ahmedmobasher86/arc3-deps-prep"],
+        # arc3-deps-prep — offline transformers-main/peft for the merge
+        # subprocess (round-4 abort: stock image transformers lacks qwen3_5).
+        # The sft-synth kernel source is REMOVED so no second sft_out tree can
+        # mount and collide with the checkpoint-8 glob.
+        "kernel_sources": ["ahmedmobasher86/arc3-deps-prep"],
         "model_sources": [],
     }, indent=2) + "\n")
     print(f"wrote {OUT} ({len(nb['cells'])} cells, anchors {sorted(seen)})")
