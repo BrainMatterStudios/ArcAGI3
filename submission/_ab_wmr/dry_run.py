@@ -1,38 +1,41 @@
 #!/usr/bin/env python3
-"""GPU-free end-to-end dry run of the ab-wmr ROUND 3 (playbook) kernel logic.
+"""GPU-free end-to-end dry run of the ab-wmr ROUND 4 (adapter eval) logic.
 
 Mock brain (fixed `python` tool call -> action('UP'), a fixed "World model:"
-scientist note so knowledge-carry (patch14's freeze detector input) is
-exercised, usage counts so the token accounting is provable, plus /models and
-logprobs so the serving assert's endpoint checks execute for real) <- REAL
-duck harness (scratchpad/taaf_scored_ref bundle, per the 2026-07-26 audit law)
-<- REAL CompetitionArcadeServer over repo environment_files <- the REAL
-ab_wave_driver (imported from this directory, same file the builder inlines).
+scientist note, usage counts so the token accounting is provable, /models and
+logprobs so the serving assert's endpoint checks execute for real — and the
+LOGPROB VALUES keyed off AB_MOCK_MODEL, the env var the driver's dry-run serve
+stub publishes, so the M and B fingerprints genuinely differ and the
+weights-identity gate is exercised end-to-end) <- REAL duck harness
+(scratchpad/taaf_scored_ref bundle, per the 2026-07-26 audit law) <- REAL
+CompetitionArcadeServer over repo environment_files <- the REAL ab_wave_driver
+(imported from this directory, same file the builder inlines).
 
 duck_patches.py is loaded EXACTLY as the kernel loads it: source exec'd into a
 module namespace with NO __file__ (the builder inlines it into a notebook
 cell), so patch6 declines for want of /kaggle/input/arcagi3-agent here too and
 the dry run exercises the kernel's true patch surface (patch9 SKIP included).
 
+The merge itself cannot run locally (no snapshot/GPU); its script logic and
+paths are validated at build time (ast.parse) and against the sft-synth
+kernel's real output listing (checkpoint-10 verified downloadable 2026-08-04).
+
 Proves before any GPU minute is spent:
-  * full v6 apply_all() (through patch13 playbook + patch14 antifreeze) + the
-    expected-SKIP hard gate (patch9, patch6);
-  * per-arm env toggling A/B + verification against AB_ARM_ENV (now including
-    TAAF_PLAYBOOK and TAAF_ANTIFREEZE);
-  * PLAYBOOK PRESENCE PROOF per wave: the playbook text absent from real
-    sampled system prompts in arm A, present in arm B (pre-wave direct probe
-    + in-run samples, hard-asserted by the driver and re-checked here);
-  * patch14 antifreeze diagnostics plumbing: per-wave ANTIFREEZE_DIAGNOSTICS
-    delta + per-row trigger counters, AND a deterministic direct exercise of
-    the patched _antifreeze_note through the driver's counting wrapper
-    (global trigger counted + attributed to the calling agent);
-  * both arms mechanically identical otherwise: graph state absent and
-    compact counters frozen in BOTH arms (GRAPH=0/COMPACT=0 pins);
-  * NONZERO gen_tokens per row (round-1 defect stays fixed), HUD mask stats
-    per row (mask_cells/confirmed_lines — m0r0 is on the dry panel), session
-    registry, serving assert path, fresh competition server per wave,
+  * full v6 apply_all() + the expected-SKIP hard gate (patch9, patch6);
+  * ARM SCHEDULING with per-wave serve records: M and B waves resolve to
+    DIFFERENT model paths, the serve stub publishes them, and the per-arm
+    serving assert runs per wave (cmdline check relaxed only for dry run);
+  * WEIGHTS-IDENTITY GATE: M and B fingerprints differ in-run, identical
+    fingerprints raise (direct negative test of the gate function);
+  * both arms mechanically IDENTICAL in config: same env pins verified, the
+    playbook text ABSENT from real sampled system prompts in BOTH arms, graph
+    state absent, compact counters frozen (GRAPH=0/COMPACT=0/PLAYBOOK=0);
+  * patch14 antifreeze diagnostics plumbing (per-wave delta + per-row
+    counters + deterministic direct trigger exercise);
+  * NONZERO gen_tokens per row, HUD mask stats per row (m0r0 on the dry
+    panel), session registry, fresh competition server per wave,
     watchdog/replay diagnostics, in-run scoring, incremental ab_result.json
-    writes (with the pre-registered reading header), and the summary table.
+    writes (with the pre-registered QUESTION header), and the summary table.
 
 Run:  .venv/bin/python submission/_ab_wmr/dry_run.py
 """
@@ -65,27 +68,33 @@ MOCK_CONTENT = (
     "Plan: probe with UP."
 )
 
-MOCK_REPLY = {
-    "id": "cmpl-mock", "object": "chat.completion", "model": "mock-27b",
-    "choices": [{
-        "index": 0,
-        "finish_reason": "tool_calls",
-        "message": {
-            "role": "assistant",
-            "content": MOCK_CONTENT,
-            "tool_calls": [{
-                "id": "call_1", "type": "function",
-                "function": {"name": "python",
-                             "arguments": json.dumps({"code": "action('UP')"})},
-            }],
-        },
-        "logprobs": {"content": [
-            {"token": "Plan", "logprob": -0.02, "top_logprobs": []},
-            {"token": ":", "logprob": -0.11, "top_logprobs": []},
-        ]},
-    }],
-    "usage": {"prompt_tokens": 1200, "completion_tokens": 30, "total_tokens": 1230},
-}
+def mock_reply():
+    """Reply with logprobs keyed off AB_MOCK_MODEL (set by the driver's
+    dry-run serve stub): 'merged' weights answer with different numbers than
+    base weights, so the weights-identity gate sees genuinely distinct
+    fingerprints — exactly what a real adapter-vs-base serve would produce."""
+    offset = 0.0 if "merged" in os.environ.get("AB_MOCK_MODEL", "") else -0.5
+    return {
+        "id": "cmpl-mock", "object": "chat.completion", "model": "mock-27b",
+        "choices": [{
+            "index": 0,
+            "finish_reason": "tool_calls",
+            "message": {
+                "role": "assistant",
+                "content": MOCK_CONTENT,
+                "tool_calls": [{
+                    "id": "call_1", "type": "function",
+                    "function": {"name": "python",
+                                 "arguments": json.dumps({"code": "action('UP')"})},
+                }],
+            },
+            "logprobs": {"content": [
+                {"token": "Plan", "logprob": -0.02 + offset, "top_logprobs": []},
+                {"token": ":", "logprob": -0.11 + offset, "top_logprobs": []},
+            ]},
+        }],
+        "usage": {"prompt_tokens": 1200, "completion_tokens": 30, "total_tokens": 1230},
+    }
 
 
 class MockBrain(http.server.BaseHTTPRequestHandler):
@@ -112,7 +121,7 @@ class MockBrain(http.server.BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0) or 0)
         _ = self.rfile.read(n)
         MockBrain.n_posts += 1
-        self._send(MOCK_REPLY)
+        self._send(mock_reply())
 
 
 def load_duck_patches_like_the_kernel() -> types.ModuleType:
@@ -149,8 +158,8 @@ def main() -> int:
         "ARC_ENVIRONMENTS_DIR": str(REPO / "environment_files"),
         "RECORDINGS_DIR": str(WORKDIR / "server_recording"),
         "AB_DRY_RUN": "1",
-        "AB_GAMES": "ls20,m0r0",   # round-3 panel members; m0r0 = the fixed HUD class
-        "AB_WAVES": "A,B",
+        "AB_GAMES": "m0r0,tu93",   # round-4 panel members; m0r0 = the fixed HUD class
+        "AB_WAVES": "M,B",
         "AB_BUDGET": "60",
         "AB_DEADLINE_S": "3000",
     })
@@ -208,12 +217,13 @@ def main() -> int:
     out = json.loads((WORKDIR / "ab_result.json").read_text())
     assert out["error"] is None, f"driver recorded an error:\n{out['error']}"
     assert out["stage"] == "done", f"stage={out['stage']}"
-    assert out["experiment"] == "ab_round3_playbook", out["experiment"]
+    assert out["experiment"] == "ab_round4_adapter", out["experiment"]
     prr = out.get("pre_registered_reading")
-    assert isinstance(prr, dict) and set(prr) == {"primary", "secondary", "not_a_readout"}, prr
+    assert isinstance(prr, dict) and set(prr) == {
+        "question", "primary", "secondary", "not_a_readout"}, prr
+    assert "synth-corpus LoRA" in prr["question"], prr["question"]
     assert out["target_games"] == list(drv._AB_TARGET_GAMES), out.get("target_games")
-    sa = {c["check"]: c["ok"] for c in out["serving_assert"]["checks"]}
-    assert all(sa.values()) and len(sa) == 4, f"serving assert incomplete: {sa}"
+    assert set(out["arm_models"]) == {"M", "B"}, out.get("arm_models")
     assert out.get("antifreeze_counter_installed") is True, out
 
     pp = out["patch_proof"]
@@ -225,7 +235,8 @@ def main() -> int:
         assert pp.get(key) is True, f"patch proof {key}: {pp}"
 
     waves = out["waves"]
-    assert [w["arm"] for w in waves] == ["A", "B"], waves
+    assert [w["arm"] for w in waves] == ["M", "B"], waves
+    fps = {}
     for w in waves:
         arm = w["arm"]
         expected = {k: v == "1" for k, v in drv.AB_ARM_ENV[arm].items()}
@@ -236,12 +247,23 @@ def main() -> int:
         assert {"playbook_system_prompt_patched",
                 "antifreeze_user_prompt_patched"} <= set(wp), (arm, sorted(wp))
 
-        # -- round 3: playbook presence proof, both prongs, per wave ----------
+        # -- round 4: per-wave serve record + per-arm serving assert ----------
+        srv_rec = w["serve"]
+        assert srv_rec["dry_run"] is True and srv_rec["restarted"] is False, srv_rec
+        want_model = "merged_sft" if arm == "M" else "qwen3-6-27b-fp8"
+        assert want_model in srv_rec["desired_model"], (arm, srv_rec)
+        assert w["served_model"] == srv_rec["desired_model"], (arm, w["served_model"])
+        sa = {c["check"]: c["ok"] for c in w["serving_assert"]["checks"]}
+        assert all(sa.values()) and len(sa) == 4, f"arm {arm} serving assert: {sa}"
+        fp = w["weights_fingerprint"]
+        assert fp and fp["tokens"] and fp["logprobs"], (arm, fp)
+        fps[arm] = fp
+
+        # -- playbook ABSENCE proof: OFF in BOTH arms this round --------------
         pb = w["playbook_proof"]
-        want = arm == "B"
-        assert pb["expected_present"] is want, (arm, pb)
+        assert pb["expected_present"] is False, (arm, pb)
         assert pb["n_prompts_sampled"] >= 1 and pb["n_mismatches"] == 0, (arm, pb)
-        assert pb["probe_before_wave"]["present"] is want, (arm, pb)
+        assert pb["probe_before_wave"]["present"] is False, (arm, pb)
         assert pb["sample_sha256"], (arm, pb)
 
         # -- round 3: antifreeze diagnostics plumbing --------------------------
@@ -275,6 +297,58 @@ def main() -> int:
             rp = (r.get("replay") or {}).get("status")
             assert rp in ("skipped", "replayed", "aborted"), f"arm {arm} replay {rp!r}"
         assert "behav_cumulative" in w and "behav_raw_cumulative" in w
+
+    # --- round 4: weights-identity gate ---------------------------------------
+    # In-run: the M and B fingerprints must genuinely differ (the mock keys its
+    # logprobs off the served model path, as real weights would).
+    assert not drv._ab_fingerprints_identical(fps["M"], fps["B"]), \
+        f"M and B fingerprints identical in dry run: {fps}"
+    # Direct negative test: identical fingerprints across arms must ABORT.
+    fa = {"tokens": ["x", "y"], "logprobs": [-0.1, -0.2]}
+    assert drv._ab_fingerprints_identical(fa, json.loads(json.dumps(fa)))
+    saved = dict(drv._AB_FINGERPRINTS)
+    drv._AB_FINGERPRINTS.clear()
+    drv._AB_FINGERPRINTS["B"] = fa
+    try:
+        drv._ab_fingerprint_gate("M", dict(fa))
+        raise AssertionError("identity gate FAILED to raise on identical fingerprints")
+    except RuntimeError as e:
+        assert "WEIGHTS-IDENTITY GATE" in str(e), e
+    drv._AB_FINGERPRINTS.clear()
+    drv._AB_FINGERPRINTS.update(saved)
+    print("[dry] weights-identity gate: fingerprints differ in-run, "
+          "identical fingerprints raise: OK")
+
+    # --- round 4: serving-assert ABORT path ------------------------------------
+    # A dead endpoint must raise (mis-served wave aborts before burning its
+    # hour), not degrade to a warning.
+    real_url = os.environ["LOCAL_ANALYZER_BASE_URL"]
+    os.environ["LOCAL_ANALYZER_BASE_URL"] = "http://127.0.0.1:9/v1"  # nothing listens
+    os.environ["OPENAI_BASE_URL"] = "http://127.0.0.1:9/v1"
+    try:
+        drv.ab_serving_assert(WORKDIR, "M")
+        raise AssertionError("serving assert FAILED to raise on a dead endpoint")
+    except RuntimeError as e:
+        assert "serving assert FAILED" in str(e), e
+    finally:
+        os.environ["LOCAL_ANALYZER_BASE_URL"] = real_url
+        os.environ["OPENAI_BASE_URL"] = real_url
+    print("[dry] serving-assert abort on dead endpoint: OK")
+
+    # --- round 4: deadline guard skips TRAILING waves ---------------------------
+    # With an exhausted budget every wave is skipped as 'deadline' (the guard
+    # drops from the tail because elapsed only grows — M,B,B,M degrades to
+    # M,B,B, never to an unpaired design).
+    guard_dir = WORKDIR / "guard"
+    guard_dir.mkdir(exist_ok=True)
+    guard = asyncio.run(drv.ab_main(
+        bm=bm, target=None, working_dir=guard_dir,
+        notebook_start=time.time() - (drv.AB_DEADLINE_S + 60),
+        behav_report=behav_probe.report, behav_raw=behav_raw))
+    assert guard["error"] is None, guard["error"]
+    skipped = [(w.get("wave"), w.get("arm"), w.get("skipped")) for w in guard["waves"]]
+    assert all(s == "deadline" for _, _, s in skipped) and len(skipped) == 2, skipped
+    print("[dry] deadline guard skip path: OK", skipped)
 
     # --- deterministic exercise of the antifreeze trigger + counting wrapper ---
     # (in-wave firing depends on the game board actually freezing; this proves

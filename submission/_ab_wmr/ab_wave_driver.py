@@ -1,45 +1,47 @@
 # ============================================================================
-# A/B wave driver — ROUND 3: the mechanic-archetype PLAYBOOK (patch13) as the
-# single variable, on the real bundled Qwen3.6-27B duck.
+# A/B wave driver — ROUND 4: the BEHAVIORAL ADAPTER EVAL. The served WEIGHTS
+# are the single variable; duck config is identical (v7 pins) in both arms.
 #
-# Arms (env pins only; the patch layer is identical everywhere — apply_all(),
-# exactly what the submitted v6 kernel installs, now including patch13/14):
-#   A = current pins: WMR trio ON, TAAF_GRAPH=0, TAAF_COMPACT=0,
-#       TAAF_PLAYBOOK=0, TAAF_ANTIFREEZE=1 (patch14 point fix, BOTH arms —
-#       like the HUD slow-tick rotation fix it is a default now, so the
-#       playbook isolates cleanly).
-#   B = A + TAAF_PLAYBOOK=1 (patch13: archetype playbook appended to the
-#       system prompt — the 2026-08-03 unlock diagnosis's #1 intervention).
+# Arms (env pins IDENTICAL — WMR trio + rotation fix + patch14 antifreeze ON,
+# graph/compact/playbook OFF, exactly the v7 config):
+#   M = vLLM serves /tmp/merged_sft = base Qwen3.6-27B + sft-synth-v1
+#       checkpoint-10 LoRA, merged in-kernel via the PROVEN duck-sft v4 recipe
+#       (sub 55160933: dequantize_fp8_inplace + strip_quantization_runtime +
+#       PeftModel merge_and_unload + save_original_format=False).
+#   B = vLLM serves the base FP8 snapshot
+#       (driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot), same config.
 #
-# Design (mechanism carried wholesale from rounds 1-2, commits 3c21726/ae1286b):
-#   * ONE kernel session, ONE vLLM server. duck_patches.py provably reads every
-#     switch AT CALL TIME (_playbook_enabled/_antifreeze_enabled/
-#     _watchdog_enabled/... all read os.environ per call), so toggling between
-#     waves in one process is a genuine arm switch. Analyzers (ToolAgent) are
-#     constructed per game INSIDE each wave, so patch13's system-prompt
-#     injection follows the wave's env.
-#   * Waves A,B,B,A (mirrored counterbalance): each arm's two runs average to
-#     the same mean wave index (A:1.5, B:1.5), cancelling linear server drift
-#     deterministically. Realized order is logged (law 5).
+# QUESTION UNDER TEST (pre-registered, baked into the result JSON header):
+# does the stage-2 synth-corpus LoRA change real PLAY vs base? NLL already
+# passed (val -33%, held-out push family -36%) but a style confound is
+# suspected — NLL gains may be prompt-style imitation, not competence. This
+# behavioral A/B is the decisive test. Neither outcome ships anything.
+#
+# Design (wave mechanism carried from rounds 1-3, commit 28e253a):
+#   * The MODEL differs between arms -> vLLM is RESTARTED at every arm switch
+#     (_ab_ensure_served): SIGTERM the old server, wait for the GPU to drain,
+#     start the new one with --model pointed at the arm's weights, identical
+#     flags otherwise (same served alias, so the duck client is unchanged).
+#   * The FULL serving assert re-runs after EVERY restart and before EVERY
+#     wave: /models + real generation with finite logprobs + the server
+#     process's own --model cmdline arg resolved against the arm's expected
+#     tree (merged-tree check for M: /tmp/merged_sft with an index file and a
+#     quantization-free config; base-snapshot check for B). A mis-served wave
+#     ABORTS before burning its hour.
+#   * WEIGHTS-IDENTITY GATE: each wave records a temperature-0 logprob
+#     fingerprint from the serving assert's generation. If M's and B's
+#     fingerprints are numerically identical, the merged tree is serving base
+#     weights (a silent no-op merge, the 2026-07-31 failure class) -> ABORT.
+#   * Waves M,B,B,M (mirrored counterbalance, arm mean wave index 1.5 each).
+#     The deadline guard drops TRAILING waves first, so a slow merge degrades
+#     to M,B,B — never to an unpaired design.
 #   * Per the A/A noise floor (RMS 0.707 levels/game-run), score deltas at
-#     2 waves/arm are NOISE — see pre_registered_reading in the result JSON:
-#     primary readout is paired per-game L1-UNLOCK EVENTS on the 8 target
-#     games, secondary is antifreeze triggers + m0r0 mask confirmation.
-#   * "An env toggle is not a shipped arm": every wave logs positive runtime
-#     proof of its toggle state, a patch-proof snapshot, AND a playbook
-#     presence proof (the playbook text asserted present/absent in real
-#     system prompts built during the wave — direct probe BEFORE the wave,
-#     sampled in-run prompts after). The serving assert proves the 27B is
-#     genuinely served BEFORE any game runs.
+#     2 waves/arm are NOISE — primary readout is paired per-game LEVELS +
+#     event texture (see pre_registered_reading).
 #
-# Round-3 instrumentation additions (on top of round 2's fixed gen_tokens
-# accounting, HUD/watchdog/replay diagnostics, compact/graph counters):
-#   * patch14 antifreeze diagnostics: per-wave ANTIFREEZE_DIAGNOSTICS delta +
-#     per-game trigger counts (module-global _antifreeze_note is wrapped to
-#     attribute triggers to the calling agent; tr87 is the predicted site).
-#   * HUD mask stats were already per-row (mask_cells/confirmed_lines); the
-#     slow-tick rotation fix should now confirm masks on m0r0.
-#   * playbook presence proof per wave (see above), logged like toggle proof.
+# Instrumentation carried from round 3: fixed gen_tokens accounting, HUD
+# mask stats, watchdog/replay diags, antifreeze trigger attribution, playbook
+# ABSENCE proof (playbook off in both arms), incremental ab_result.json.
 #
 # This file is BOTH inlined into the kernel's run cell by build_ab_wmr.py AND
 # imported by dry_run.py for the GPU-free local test. Edit here, then rebuild.
@@ -48,30 +50,28 @@ import glob as _ab_glob
 import hashlib as _ab_hashlib
 import json as _ab_json
 import os as _ab_os
+import signal as _ab_signal
+import subprocess as _ab_subprocess
 import sys as _ab_sys
 import time as _ab_time
 import traceback as _ab_traceback
 import urllib.request as _ab_urlreq
 
-_AB_WMR_TRIO = {"TAAF_WATCHDOG": "1", "TAAF_HUD_MASK": "1", "TAAF_WIN_REPLAY": "1",
-                "TAAF_GRID_BURNER": "0"}
-# A is the current pin set: v6 EXPERIMENT_ENV (GRAPH=0 COMPACT=0 PLAYBOOK=0)
-# plus the two point fixes both arms inherit as defaults (HUD rotation fix has
-# no switch; patch14 antifreeze pinned ON explicitly for the toggle proof).
-_AB_ROUND3_BASE = {**_AB_WMR_TRIO, "TAAF_GRAPH": "0", "TAAF_COMPACT": "0",
-                   "TAAF_ANTIFREEZE": "1"}
-AB_ARM_ENV = {
-    "A": {**_AB_ROUND3_BASE, "TAAF_PLAYBOOK": "0"},
-    "B": {**_AB_ROUND3_BASE, "TAAF_PLAYBOOK": "1"},
-}
+# v7 pin set, IDENTICAL in both arms: WMR trio + antifreeze ON;
+# graph/compact/playbook OFF; grid burner OFF. The ONLY delta is the weights.
+_AB_V7_PINS = {"TAAF_WATCHDOG": "1", "TAAF_HUD_MASK": "1", "TAAF_WIN_REPLAY": "1",
+               "TAAF_GRID_BURNER": "0", "TAAF_GRAPH": "0", "TAAF_COMPACT": "0",
+               "TAAF_PLAYBOOK": "0", "TAAF_ANTIFREEZE": "1"}
+AB_ARM_ENV = {"M": dict(_AB_V7_PINS), "B": dict(_AB_V7_PINS)}
+AB_MERGED_PATH = "/tmp/merged_sft"
+_AB_BASE_SNAPSHOT_TOKEN = "qwen3-6-27b-fp8"   # must appear in the base --model path
 
-# Panel (10 games) — NEW for round 3, diagnosis-targeted (docs/test-artifacts-
-# 2026-08-02/UNLOCK-DIAGNOSIS-9-GAMES-2026-08-03.md): 8 never-unlocked target
-# games the playbook PREDICTS unlocks on (sk48 also gets its first
-# post-ACTION7-fix measurement) + 2 continuity games from rounds 1-2.
-# dc22 deliberately EXCLUDED: capability-blocked (the K3 teacher fails it too).
-_AB_TARGET_GAMES = ("cn04", "lf52", "ls20", "m0r0", "wa30", "g50t", "tr87", "sk48")
-_AB_CONTINUITY_GAMES = ("ft09", "re86")
+# Panel (10 games) — round 4: 2 newly-unlocking targets + 3 never-unlocked
+# targets + 5 unlock-sensitive continuity games.
+_AB_NEWLY_UNLOCKING = ("lf52", "cn04")
+_AB_NEVER_UNLOCKED = ("wa30", "m0r0", "g50t")
+_AB_TARGET_GAMES = _AB_NEWLY_UNLOCKING + _AB_NEVER_UNLOCKED
+_AB_CONTINUITY_GAMES = ("ft09", "re86", "tu93", "vc33", "su15")
 AB_DEFAULT_GAMES = ",".join(_AB_TARGET_GAMES + _AB_CONTINUITY_GAMES)
 
 
@@ -80,35 +80,43 @@ def _ab_cfg(name: str, default: str) -> str:
 
 
 AB_GAMES = [s.strip() for s in _ab_cfg("AB_GAMES", AB_DEFAULT_GAMES).split(",") if s.strip()]
-AB_WAVES = [w.strip().upper() for w in _ab_cfg("AB_WAVES", "A,B,B,A").split(",") if w.strip()]
+AB_WAVES = [w.strip().upper() for w in _ab_cfg("AB_WAVES", "M,B,B,M").split(",") if w.strip()]
 AB_BUDGET = float(_ab_cfg("AB_BUDGET", "3600"))          # per-game wall cap, seconds
-AB_DEADLINE_S = float(_ab_cfg("AB_DEADLINE_S", str(int(8 * 3600))))  # from notebook start
-AB_WAVE_OVERHEAD_S = 900.0                               # server start + collect + slack
+AB_DEADLINE_S = float(_ab_cfg("AB_DEADLINE_S", str(int(6 * 3600))))  # from notebook start
+AB_WAVE_OVERHEAD_S = 900.0                               # server (re)start + collect + slack
 AB_DRY_RUN = _ab_os.environ.get("AB_DRY_RUN", "") == "1"
 
 AB_SESSIONS = []                # (wave_index, session) — filled by the registry wrapper
 _AB_SYSPROMPTS = []             # (wave_index, prompt) — filled by the prompt recorder
 _AB_WAVE = {"i": -1}
+_AB_FINGERPRINTS = {}           # arm -> first-seen logprob fingerprint (identity gate)
 
 # Pre-registered reading — written verbatim into the result JSON header so the
 # analysis cannot quietly move the goalposts after the data lands.
 AB_PREREGISTERED_READING = {
+    "question": (
+        "Does the stage-2 synth-corpus LoRA (sft-synth-v1 checkpoint-10; NLL "
+        "val -33%, held-out push family -36%) change real PLAY vs base? A "
+        "style confound is suspected: the NLL gains may be prompt-style "
+        "imitation, not competence. This behavioral A/B is the decisive test."
+    ),
     "primary": (
-        "Paired per-game L1-unlock events on the 8 target games "
-        f"{list(_AB_TARGET_GAMES)}: B unlocking a target game A never does = "
-        "signal. The diagnosis predicts lf52/wa30/cn04 reachable and the ls20 "
-        "rate up; g50t/tr87/sk48 are stretch; dc22 is excluded as "
-        "capability-blocked (the K3 teacher fails it too)."
+        "Paired per-game LEVELS + event texture, M (merged adapter) vs B "
+        f"(base): unlock events on the newly-unlocking targets "
+        f"{list(_AB_NEWLY_UNLOCKING)} and never-unlocked targets "
+        f"{list(_AB_NEVER_UNLOCKED)}, plus actions_per_level, gen_tokens and "
+        "watchdog/HUD/replay texture on the full 10-game panel."
     ),
     "secondary": (
-        "patch14 antifreeze trigger counts and any freeze-broken game (tr87 is "
-        "the predicted trigger site); m0r0 HUD mask confirmation "
-        "(mask_cells/confirmed_lines) after the slow-tick rotation fix; sk48's "
-        "first post-ACTION7-fix measurement."
+        f"Continuity games {list(_AB_CONTINUITY_GAMES)} for unlock-sensitive "
+        "regression; which weights actually served each wave (serving-assert "
+        "--model arg + temperature-0 logprob fingerprint) is logged into "
+        "every wave record."
     ),
     "not_a_readout": (
         "Score deltas at 2 waves/arm are noise (A/A floor RMS 0.707 "
-        "levels/game-run) — do not headline them."
+        "levels/game-run) — do not headline them. Neither outcome ships "
+        "anything by itself."
     ),
 }
 
@@ -334,23 +342,225 @@ def _ab_antifreeze_snapshot():
     return {"triggers": int(diag.get("triggers", 0) or 0)}
 
 
-# --- serving assert ------------------------------------------------------------
+# --- round 4: per-arm model paths + vLLM lifecycle -----------------------------
 
 
-def ab_serving_assert(working_dir):
-    """Prove the 27B is actually served BEFORE any game runs (2026-07-31 law).
+def _ab_base_snapshot_path():
+    """The base FP8 snapshot dir, resolved the same way the setup command does
+    (TAAF_KAGGLE_INPUT_PATHS first, /kaggle/input glob as fallback)."""
+    raw = _ab_os.environ.get("TAAF_KAGGLE_INPUT_PATHS", "").strip()
+    if raw:
+        try:
+            mapped = _ab_json.loads(raw).get("driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot")
+            if mapped and _ab_os.path.isdir(str(mapped)):
+                return str(mapped)
+        except Exception:
+            pass
+    for p in _ab_glob.glob("/kaggle/input/**/config.json", recursive=True):
+        if "tokenizer_bundle" in p or _AB_BASE_SNAPSHOT_TOKEN not in p.lower():
+            continue
+        try:
+            if _ab_json.load(open(p)).get("model_type") == "qwen3_5":
+                return _ab_os.path.dirname(p)
+        except Exception:
+            continue
+    raise RuntimeError("base FP8 snapshot dir not found (TAAF_KAGGLE_INPUT_PATHS "
+                       "unset and no qwen3-6-27b-fp8 config under /kaggle/input)")
 
-    Three checks: (1) /models answers with the expected served id; (2) a real
-    chat completion returns non-empty output WITH finite logprobs (the model
-    is generating, not just mounted); (3) the vLLM server process's own
-    cmdline --model argument points at the FP8 snapshot on disk (identity of
-    the loaded weights — the served NAME is a fixed alias and proves nothing).
+
+def _ab_arm_model_path(arm):
+    if AB_DRY_RUN:  # never touch real servers/paths in the dry run
+        return "/dry/merged_sft" if arm == "M" else "/dry/qwen3-6-27b-fp8-hf-snapshot"
+    return AB_MERGED_PATH if arm == "M" else _ab_base_snapshot_path()
+
+
+def _ab_vllm_endpoint():
+    base_url = (_ab_os.environ.get("LOCAL_ANALYZER_BASE_URL")
+                or _ab_os.environ.get("OPENAI_BASE_URL") or "").rstrip("/")
+    host, port = "127.0.0.1", 1234
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(base_url)
+        host, port = parsed.hostname or host, parsed.port or port
+    except Exception:
+        pass
+    return base_url, host, port
+
+
+def _ab_current_model_arg(working_dir):
+    """(pid, --model arg) of the live vLLM server, or (None, None)."""
+    from pathlib import Path
+
+    pid_path = Path(working_dir) / "vllm-openai-server.pid"
+    if not pid_path.exists():
+        return None, None
+    try:
+        pid = int(pid_path.read_text().strip())
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace").split("\0")
+    except Exception:
+        return None, None
+    model_arg = None
+    for i, tok in enumerate(cmdline):
+        if tok == "--model" and i + 1 < len(cmdline):
+            model_arg = cmdline[i + 1]
+    return pid, model_arg
+
+
+def _ab_gpu_mem_used_mib():
+    try:
+        out = _ab_subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+            text=True, timeout=30)
+        return sum(int(x) for x in out.split())
+    except Exception:
+        return None
+
+
+def _ab_gpu_compute_pids():
+    try:
+        out = _ab_subprocess.check_output(
+            ["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader"],
+            text=True, timeout=30)
+        return [int(x) for x in out.split() if x.strip().isdigit()]
+    except Exception:
+        return []
+
+
+def _ab_stop_vllm(working_dir):
+    """SIGTERM the live server, wait for exit AND for the GPU to drain (vLLM
+    spawns engine children that can outlive the api_server; anything still
+    holding VRAM gets SIGKILLed via nvidia-smi's compute-apps list)."""
+    pid, model_arg = _ab_current_model_arg(working_dir)
+    rec = {"pid": pid, "model_arg_before": model_arg}
+    if pid is not None and _ab_os.path.exists(f"/proc/{pid}"):
+        _ab_os.kill(pid, _ab_signal.SIGTERM)
+        t0 = _ab_time.time()
+        while _ab_os.path.exists(f"/proc/{pid}") and _ab_time.time() - t0 < 120:
+            _ab_time.sleep(2)
+        if _ab_os.path.exists(f"/proc/{pid}"):
+            _ab_os.kill(pid, _ab_signal.SIGKILL)
+            _ab_time.sleep(5)
+        rec["terminated"] = not _ab_os.path.exists(f"/proc/{pid}")
+    else:
+        rec["terminated"] = None  # nothing alive to stop
+    # GPU drain gate: a fresh 27B load on a still-occupied GPU would OOM.
+    t0 = _ab_time.time()
+    used = _ab_gpu_mem_used_mib()
+    while used is not None and used > 10_000 and _ab_time.time() - t0 < 300:
+        for zpid in _ab_gpu_compute_pids():
+            try:
+                _ab_os.kill(zpid, _ab_signal.SIGKILL)
+            except Exception:
+                pass
+        _ab_time.sleep(10)
+        used = _ab_gpu_mem_used_mib()
+    rec["gpu_mem_used_mib_after"] = used
+    if used is not None and used > 10_000:
+        raise RuntimeError(f"GPU did not drain after stopping vLLM: {used} MiB still used")
+    return rec
+
+
+def _ab_start_vllm(model_path, working_dir, timeout_s=1800):
+    """Start vLLM on model_path with the EXACT flag set the bundle's setup
+    command uses (same served alias, host, port, parsers, max-model-len), so
+    the arms differ in weights only. Waits until /models answers."""
+    from pathlib import Path
+
+    pid_path = Path(working_dir) / "vllm-openai-server.pid"
+    log_path = Path(working_dir) / "vllm-openai-server.log"
+    base_url, host, port = _ab_vllm_endpoint()
+    served = _ab_os.environ.get("LOCAL_ANALYZER_MODEL_ID", "vrfai/Qwen3.6-27B-FP8")
+    cmd = [
+        _ab_sys.executable, "-m", "vllm.entrypoints.openai.api_server",
+        "--model", str(model_path),
+        "--served-model-name", served,
+        "--host", str(host), "--port", str(port),
+        "--tensor-parallel-size", "1",
+        "--enable-auto-tool-choice", "--tool-call-parser", "qwen3_coder",
+        "--generation-config", "vllm",
+        "--enable-prefix-caching",
+        "--default-chat-template-kwargs", '{"preserve_thinking": true}',
+        "--reasoning-parser", "qwen3",
+        "--max-model-len", "65536",
+    ]
+    log_handle = log_path.open("a", encoding="utf-8")
+    log_handle.write(f"\n===== [ab] restart with: {' '.join(cmd)}\n")
+    log_handle.flush()
+    print(f"[ab] starting vLLM: {' '.join(cmd)}", flush=True)
+    proc = _ab_subprocess.Popen(cmd, env=_ab_os.environ.copy(),
+                                stdout=log_handle, stderr=_ab_subprocess.STDOUT, text=True)
+    pid_path.write_text(str(proc.pid), encoding="utf-8")
+
+    def log_tail(lines=60):
+        try:
+            return "\n".join(log_path.read_text(errors="replace").splitlines()[-lines:])
+        except Exception:
+            return ""
+
+    deadline = _ab_time.time() + timeout_s
+    while _ab_time.time() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(f"vLLM exited rc={proc.returncode} during startup on "
+                               f"{model_path}\n{log_tail()}")
+        try:
+            with _ab_urlreq.urlopen(base_url + "/models", timeout=5) as r:
+                _ = r.read()
+            print(f"[ab] vLLM ready on {model_path} (pid {proc.pid})", flush=True)
+            return {"pid": proc.pid, "model": str(model_path)}
+        except Exception:
+            _ab_time.sleep(5)
+    raise TimeoutError(f"vLLM not ready after {timeout_s}s on {model_path}\n{log_tail()}")
+
+
+def _ab_ensure_served(arm, working_dir):
+    """Make the live server match the arm's weights; restart if it does not.
+    The wave record keeps the full before/after story."""
+    desired = _ab_arm_model_path(arm)
+    rec = {"arm": arm, "desired_model": desired}
+    if AB_DRY_RUN:
+        # No real server: publish the desired path so the mock brain can key
+        # its logprob fingerprint off it (exercises the identity gate).
+        _ab_os.environ["AB_MOCK_MODEL"] = desired
+        rec.update({"restarted": False, "dry_run": True})
+        return rec
+    pid, current = _ab_current_model_arg(working_dir)
+    alive = pid is not None and _ab_os.path.exists(f"/proc/{pid}")
+    same = (current is not None
+            and _ab_os.path.realpath(current) == _ab_os.path.realpath(desired))
+    rec.update({"pid_before": pid, "model_before": current})
+    if alive and same:
+        rec["restarted"] = False
+        return rec
+    t0 = _ab_time.time()
+    rec["stop"] = _ab_stop_vllm(working_dir)
+    rec["start"] = _ab_start_vllm(desired, working_dir)
+    rec["restarted"] = True
+    rec["restart_wall_s"] = round(_ab_time.time() - t0, 1)
+    print(f"[ab] arm {arm}: vLLM restarted onto {desired} "
+          f"in {rec['restart_wall_s']}s", flush=True)
+    return rec
+
+
+# --- serving assert (parametric per arm) + weights-identity gate ---------------
+
+
+def ab_serving_assert(working_dir, arm):
+    """Prove the RIGHT 27B is actually served BEFORE the wave runs.
+
+    Four checks: (1) analyzer base URL configured; (2) /models answers with
+    the expected served alias; (3) a real chat completion returns non-empty
+    output WITH finite logprobs (the model is generating, not just mounted) —
+    its logprob vector doubles as the arm's weights fingerprint; (4) the vLLM
+    server process's own cmdline --model argument resolves to THIS ARM's
+    weights: M -> /tmp/merged_sft (index file present, config free of
+    quantization_config, NOT the fp8 snapshot); B -> the fp8 base snapshot.
     Raises unless every check passes (dry run relaxes only the cmdline check,
     which needs /proc and the kernel's pid file).
     """
     from pathlib import Path
 
     checks = []
+    fingerprint = None
 
     def rec(name, ok, detail):
         checks.append({"check": name, "ok": bool(ok), **detail})
@@ -390,36 +600,75 @@ def ab_serving_assert(working_dir):
         lp = ((choice.get("logprobs") or {}).get("content") or [])
         lp_ok = bool(lp) and all(
             isinstance(t.get("logprob"), (int, float)) and t["logprob"] <= 0.0 for t in lp[:5])
+        fingerprint = {"tokens": [str(t.get("token", "")) for t in lp[:8]],
+                       "logprobs": [round(float(t.get("logprob", 1.0)), 6) for t in lp[:8]]}
         rec("generation_logprobs",
             bool(text or msg.get("tool_calls")) and lp_ok,
             {"text": text[:80], "n_logprobs": len(lp),
-             "first_logprobs": [round(float(t.get("logprob", 1)), 4) for t in lp[:3]]})
+             "first_logprobs": fingerprint["logprobs"][:3]})
     except Exception as e:
         rec("generation_logprobs", False, {"error": f"{type(e).__name__}: {e}"})
 
     pid_path = Path(working_dir) / "vllm-openai-server.pid"
-    if pid_path.exists():
+    if pid_path.exists() and not AB_DRY_RUN:
         try:
-            pid = int(pid_path.read_text().strip())
-            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace").split("\0")
-            model_arg = None
-            for i, tok in enumerate(cmdline):
-                if tok == "--model" and i + 1 < len(cmdline):
-                    model_arg = cmdline[i + 1]
-            ok = (model_arg is not None and Path(model_arg).exists()
-                  and "qwen3-6-27b-fp8" in model_arg.lower())
-            rec("server_model_arg", ok, {"pid": pid, "model_arg": model_arg})
+            pid, model_arg = _ab_current_model_arg(working_dir)
+            detail = {"pid": pid, "model_arg": model_arg, "arm": arm}
+            if model_arg is None:
+                ok = False
+            elif arm == "M":
+                merged = Path(model_arg)
+                cfg = {}
+                try:
+                    cfg = _ab_json.loads((merged / "config.json").read_text())
+                except Exception:
+                    pass
+                ok = (_ab_os.path.realpath(model_arg) == _ab_os.path.realpath(AB_MERGED_PATH)
+                      and (merged / "model.safetensors.index.json").exists()
+                      and "quantization_config" not in cfg
+                      and _AB_BASE_SNAPSHOT_TOKEN not in model_arg.lower())
+                detail["merged_index_present"] = (merged / "model.safetensors.index.json").exists()
+                detail["config_quant_free"] = "quantization_config" not in cfg
+            else:
+                ok = (Path(model_arg).exists()
+                      and _AB_BASE_SNAPSHOT_TOKEN in model_arg.lower()
+                      and _ab_os.path.realpath(model_arg) != _ab_os.path.realpath(AB_MERGED_PATH))
+            rec("server_model_arg", ok, detail)
         except Exception as e:
             rec("server_model_arg", False, {"error": f"{type(e).__name__}: {e}"})
     else:
         rec("server_model_arg", AB_DRY_RUN,
-            {"pid_file": "absent", "relaxed_for_dry_run": AB_DRY_RUN})
+            {"pid_file": "absent", "relaxed_for_dry_run": AB_DRY_RUN,
+             "expected_model": _ab_arm_model_path(arm), "arm": arm})
 
     if not all(c["ok"] for c in checks) or len(checks) < 4:
         raise RuntimeError("serving assert FAILED — refusing to burn GPU hours on an "
-                           "unproven serve: %s" % checks)
-    print("=" * 20 + " AB SERVING-ASSERT PASS " + "=" * 20, flush=True)
-    return {"checks": checks}
+                           "unproven serve (arm %s): %s" % (arm, checks))
+    print("=" * 16 + f" AB SERVING-ASSERT PASS (arm {arm}) " + "=" * 16, flush=True)
+    return {"checks": checks, "fingerprint": fingerprint}
+
+
+def _ab_fingerprints_identical(fa, fb, tol=1e-4):
+    """Same tokens AND numerically identical logprobs => same weights."""
+    if not fa or not fb or not fa.get("logprobs") or not fb.get("logprobs"):
+        return False
+    if fa["tokens"] != fb["tokens"] or len(fa["logprobs"]) != len(fb["logprobs"]):
+        return False
+    return max(abs(x - y) for x, y in zip(fa["logprobs"], fb["logprobs"])) < tol
+
+
+def _ab_fingerprint_gate(arm, fp):
+    """ABORT if this arm's temp-0 fingerprint equals the OTHER arm's: that
+    means the merged tree is serving base weights (silent no-op merge, the
+    2026-07-31 failure class) and every further GPU-hour would be wasted."""
+    other = "B" if arm == "M" else "M"
+    prev = _AB_FINGERPRINTS.get(other)
+    if prev is not None and _ab_fingerprints_identical(prev, fp):
+        raise RuntimeError(
+            f"WEIGHTS-IDENTITY GATE: arm {arm} logprob fingerprint is identical to "
+            f"arm {other}'s ({fp}) — the two arms are serving the SAME weights; "
+            "the merge was a silent no-op. Aborting.")
+    _AB_FINGERPRINTS.setdefault(arm, fp)
 
 
 # --- scoring (mirrors scratchpad/ideas/score_rig.py exactly) -------------------
@@ -579,11 +828,16 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
     t0 = notebook_start if notebook_start is not None else _ab_time.time()
     stage = {"s": "init"}
     result = {
-        "experiment": "ab_round3_playbook",
+        "experiment": "ab_round4_adapter",
         "pre_registered_reading": AB_PREREGISTERED_READING,
         "arms": AB_ARM_ENV,
+        "arm_models": {"M": "merged(base + sft-synth-v1 checkpoint-10) at "
+                            + AB_MERGED_PATH,
+                       "B": "base fp8 snapshot"},
         "games": AB_GAMES,
         "target_games": list(_AB_TARGET_GAMES),
+        "newly_unlocking_games": list(_AB_NEWLY_UNLOCKING),
+        "never_unlocked_games": list(_AB_NEVER_UNLOCKED),
         "continuity_games": list(_AB_CONTINUITY_GAMES),
         "waves_planned": AB_WAVES,
         "per_game_budget_s": AB_BUDGET,
@@ -591,7 +845,6 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
         "dry_run": AB_DRY_RUN,
         "stage": "init",
         "error": None,
-        "serving_assert": None,
         "patch_proof": None,
         "config": None,
         "waves": [],
@@ -632,12 +885,9 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
             raise RuntimeError("antifreeze counter could not install — patch module "
                                "namespace lacks _antifreeze_note (patch14 missing?)")
 
-        # -- serving assert (hard gate) ----------------------------------------
-        stage["s"] = "serving_assert"
-        result["serving_assert"] = ab_serving_assert(working_dir)
-        dump()
-
         # -- resolve games ------------------------------------------------------
+        # (round 4: the serving assert is PER WAVE — the served weights change
+        # between arms, so a single up-front assert would prove nothing.)
         stage["s"] = "resolve_games"
         import arc_agi
         import taaf.benchmark
@@ -665,6 +915,10 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
 
         # -- waves --------------------------------------------------------------
         for wi, arm in enumerate(AB_WAVES):
+            # Deadline guard: elapsed only grows, so waves that no longer fit
+            # are always the TRAILING ones — with order M,B,B,M a slow merge
+            # degrades to M,B,B (the LAST wave is skipped first), never to an
+            # unpaired design.
             elapsed = _ab_time.time() - t0
             if elapsed + AB_BUDGET + AB_WAVE_OVERHEAD_S > AB_DEADLINE_S:
                 print(f"[ab] SKIPPING wave {wi} ({arm}): elapsed {elapsed:.0f}s + budget "
@@ -684,6 +938,13 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
             probe = _ab_playbook_probe(arm)   # raises on mismatch BEFORE the wave runs
             print(f"[ab] === wave {wi} arm {arm} toggles {toggles} "
                   f"playbook_probe={probe} elapsed {elapsed:.0f}s ===", flush=True)
+
+            # -- round 4: serve THIS ARM's weights, then prove it (hard gates) --
+            stage["s"] = f"wave{wi}_{arm}_serve"
+            serve_rec = _ab_ensure_served(arm, working_dir)
+            serving = ab_serving_assert(working_dir, arm)   # raises on any failure
+            fingerprint = serving.get("fingerprint")
+            _ab_fingerprint_gate(arm, fingerprint)          # raises if arms share weights
 
             stage["s"] = f"wave{wi}_{arm}_server"
             compact_before = _ab_compact_snapshot()
@@ -787,6 +1048,10 @@ async def ab_main(bm, target, working_dir, notebook_start=None,
 
                 wave_rec = {
                     "wave": wi, "arm": arm, "env": dict(AB_ARM_ENV[arm]),
+                    "served_model": serve_rec.get("desired_model"),
+                    "serve": serve_rec,
+                    "serving_assert": serving,
+                    "weights_fingerprint": fingerprint,
                     "toggles_verified": toggles,
                     "patch_proof_wave": _ab_wave_patch_proof(),
                     "playbook_proof": playbook_proof,
@@ -875,38 +1140,51 @@ def _ab_print_summary(result):
             print(f"[ab] wave {w['wave']} ({w['arm']}) UNEXPECTED compact delta "
                   f"(COMPACT pinned 0 in both arms!): {delta}", flush=True)
 
-    # -- PRIMARY pre-registered readout: L1-unlock events on the target games --
-    print("[ab] ---- PRIMARY: target-game L1 unlocks (B-only unlock = signal) ----",
-          flush=True)
-    for stem in _AB_TARGET_GAMES:
-        arms = per_arm.get(stem, {})
-        la = arms.get("A", {}).get("lvl", [])
-        lb = arms.get("B", {}).get("lvl", [])
-        a_unlocked = any(v > 0 for v in la)
-        b_unlocked = any(v > 0 for v in lb)
-        flag = ("B-ONLY UNLOCK" if b_unlocked and not a_unlocked else
-                "A-only unlock" if a_unlocked and not b_unlocked else
-                "both" if a_unlocked else "neither")
-        print(f"[ab] {stem:6} A_levels={la} B_levels={lb} -> {flag}", flush=True)
+    # -- which weights served each wave (identity trail) -----------------------
+    print("[ab] ---- served weights per wave ----", flush=True)
+    for w in waves:
+        fp = w.get("weights_fingerprint") or {}
+        print(f"[ab] wave {w['wave']} ({w['arm']}): model={w.get('served_model')} "
+              f"restarted={(w.get('serve') or {}).get('restarted')} "
+              f"fingerprint_logprobs={fp.get('logprobs')}", flush=True)
 
-    if any(w["arm"] == "B" for w in waves):
-        print("[ab] ---- paired per-game means (B - A) [SECONDARY; scores are noise] ----",
+    # -- PRIMARY pre-registered readout: paired per-game levels, M vs B --------
+    print("[ab] ---- PRIMARY: paired levels per game "
+          "(M=merged adapter, B=base; M-only unlock = signal) ----", flush=True)
+    category = {**{g: "newly-unlocking" for g in _AB_NEWLY_UNLOCKING},
+                **{g: "never-unlocked" for g in _AB_NEVER_UNLOCKED},
+                **{g: "continuity" for g in _AB_CONTINUITY_GAMES}}
+    for stem in (s.split("-")[0] for s in AB_GAMES):
+        arms = per_arm.get(stem, {})
+        lm = arms.get("M", {}).get("lvl", [])
+        lb = arms.get("B", {}).get("lvl", [])
+        m_unlocked = any(v > 0 for v in lm)
+        b_unlocked = any(v > 0 for v in lb)
+        flag = ("M-ONLY UNLOCK" if m_unlocked and not b_unlocked else
+                "B-only unlock (REGRESSION?)" if b_unlocked and not m_unlocked else
+                "both" if m_unlocked else "neither")
+        print(f"[ab] {stem:6} [{category.get(stem, '?'):15}] "
+              f"M_levels={lm} B_levels={lb} -> {flag}", flush=True)
+
+    if any(w["arm"] == "M" for w in waves) and any(w["arm"] == "B" for w in waves):
+        print("[ab] ---- paired per-game means (M - B) [scores are noise at n=2] ----",
               flush=True)
         dl_sum, ds_sum, n = 0.0, 0.0, 0
         for stem in sorted(per_arm):
             arms = per_arm[stem]
-            if "A" not in arms or "B" not in arms:
+            if "M" not in arms or "B" not in arms:
                 continue
-            la = sum(arms["A"]["lvl"]) / max(len(arms["A"]["lvl"]), 1)
+            lm = sum(arms["M"]["lvl"]) / max(len(arms["M"]["lvl"]), 1)
             lb = sum(arms["B"]["lvl"]) / max(len(arms["B"]["lvl"]), 1)
-            sa = sum(arms["A"]["score"]) / max(len(arms["A"]["score"]), 1)
+            sm = sum(arms["M"]["score"]) / max(len(arms["M"]["score"]), 1)
             sb = sum(arms["B"]["score"]) / max(len(arms["B"]["score"]), 1)
-            dl_sum += lb - la
-            ds_sum += sb - sa
+            dl_sum += lm - lb
+            ds_sum += sm - sb
             n += 1
-            print(f"[ab] {stem:6} levels A={la:.1f} B={lb:.1f} d={lb - la:+.1f}   "
-                  f"score A={sa:.2f} B={sb:.2f} d={sb - sa:+.2f}", flush=True)
+            print(f"[ab] {stem:6} levels M={lm:.1f} B={lb:.1f} d={lm - lb:+.1f}   "
+                  f"score M={sm:.2f} B={sb:.2f} d={sm - sb:+.2f}", flush=True)
         if n:
-            print(f"[ab] TOTAL paired delta (B-A) over {n} games: "
+            print(f"[ab] TOTAL paired delta (M-B) over {n} games: "
                   f"levels {dl_sum:+.1f}, score {ds_sum:+.2f}  (A/A noise floor: RMS 0.707 "
-                  f"levels/game-run — read unlock events, not small score deltas)", flush=True)
+                  f"levels/game-run — read unlock events + texture, not small score deltas)",
+                  flush=True)
