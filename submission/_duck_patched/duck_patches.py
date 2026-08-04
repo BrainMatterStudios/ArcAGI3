@@ -1569,10 +1569,16 @@ def patch_win_replay() -> str:
 #      first TAAF_GRAPH_VETO_MIN_LEVEL_ACTIONS actions of a level (state-gated
 #      buttons), and at most TAAF_GRAPH_VETO_CAP vetoes per level.
 #
-#   3. STALL GRINDER (grind-to-UNLOCK only) — when patch 7's watchdog machinery
-#      shows a stall (no progress for stall_s, read from the SAME _watchdog_state
-#      the recovery RESET uses — no second stall detector) on a level with zero
-#      completions this run, hand control to a scripted frontier walk at engine
+#   3. GRINDER (grind-to-UNLOCK only) — two triggers, one machine:
+#      (a) STALL (original): patch 7's watchdog machinery shows a stall (no
+#      progress for stall_s, read from the SAME _watchdog_state the recovery
+#      RESET uses — no second stall detector). Verified dormant in every A/B:
+#      an always-emitting LLM never trips the timer (grinder_engagements=0).
+#      (b) LEVEL-AGE (2026-08-04 amendment): the current level has accumulated
+#      >= TAAF_GRAPH_GRIND_AGE_ACTIONS scored actions (default 120) OR
+#      >= TAAF_GRAPH_GRIND_AGE_TURNS LLM turns (default 10) with 0 completions
+#      this run — progress-free churn the stall timer is blind to.
+#      Either trigger hands control to a scripted frontier walk at engine
 #      speed: execute untested plans at the current node, else BFS through known
 #      edges to the nearest node with untested plans. Stops immediately on level
 #      transition (unlock achieved), GAME_OVER (existing recovery handles it), or
@@ -1583,10 +1589,18 @@ def patch_win_replay() -> str:
 #      and engages at most TAAF_GRAPH_GRIND_MAX_PER_LEVEL times per level so the
 #      watchdog's RESET/kill path stays reachable behind it).
 #
+#   4. WIN-PATH NARRATION (2026-08-04 amendment) — after a grinder UNLOCK, the
+#      next user prompt carries the last TAAF_GRAPH_NARRATE_K (default 12)
+#      actions that led across the level boundary. This is the lever's actual
+#      value: grind-won levels themselves score ~0 under squared efficiency —
+#      the mechanic knowledge the model can extract from the win path is what
+#      transfers to the following levels.
+#
 # Diagnostics: session._graph_state["diag"] + graph_diagnostics(session) expose
 # {nodes, edges, vetoes_issued, vetoes_capped, grinder_engagements,
-#  grinder_actions, levels_unlocked_by_grinder} the way patches 7/8/10 expose
-# theirs (read by the A/B kernel's per-session collector).
+#  grinder_age_triggers, grinder_actions, levels_unlocked_by_grinder,
+#  narrations_injected} the way patches 7/8/10 expose theirs (read by the A/B
+# kernel's per-session collector).
 #
 # TAAF_GRAPH=0 disables everything at call time (recording included).
 
@@ -1876,12 +1890,15 @@ def _graph_session_state(session: Any) -> dict[str, Any]:
             "grinds_per_level": {},
             "grind_exhausted": set(),   # levels whose reachable frontier is empty
             "grinding": False,
+            "age_marks": {},            # level -> {actions, step} age baseline
             "diag": {
                 "vetoes_issued": 0,
                 "vetoes_capped": 0,
                 "grinder_engagements": 0,
+                "grinder_age_triggers": 0,
                 "grinder_actions": 0,
                 "levels_unlocked_by_grinder": 0,
+                "narrations_injected": 0,
             },
         }
         session._graph_state = gs
@@ -1988,8 +2005,50 @@ def _graph_maybe_veto(session: Any, arguments: dict[str, Any]) -> dict[str, Any]
     }
 
 
+# Session-thread channel for the grinder's win-path narration: the grind runs on
+# the session's worker thread, and ToolAgent builds its prompts on that same
+# thread (the patch 8/9/15 thread-local precedent).
+_GRAPH_TLS = _threading.local()
+
+
+def _graph_level_age(session: Any, gs: dict[str, Any], level: int) -> tuple[int, int]:
+    """(scored actions, LLM turns) spent on `level` since entry or last grind.
+
+    The baseline mark is laid down the first time the level is observed and
+    re-laid after every grind on it, so a 2000-action grind cannot instantly
+    re-satisfy its own trigger."""
+    step = int(getattr(session, "analysis_step", 0) or 0)
+    actions = int(gs["level_actions"].get(level, 0))
+    mark = gs["age_marks"].get(level)
+    if mark is None:
+        mark = {"actions": actions, "step": step}
+        gs["age_marks"][level] = mark
+    return actions - mark["actions"], step - mark["step"]
+
+
+def _graph_reset_age_mark(session: Any, gs: dict[str, Any], level: int) -> None:
+    gs["age_marks"][level] = {
+        "actions": int(gs["level_actions"].get(level, 0)),
+        "step": int(getattr(session, "analysis_step", 0) or 0),
+    }
+
+
 def _graph_maybe_grind(session: Any) -> None:
-    """Engage the frontier grinder iff patch 7's watchdog state shows a stall."""
+    """Engage the frontier grinder on a watchdog stall OR on level-age.
+
+    Trigger 1 (2026-08-02, original): patch 7's stall timer. Verified dormant
+    in every A/B — an always-emitting LLM never trips it (grinder_engagements=0
+    across all rounds), so the grinder needed a second trigger.
+    Trigger 2 (2026-08-04, level-age): the current level has accumulated
+    >= TAAF_GRAPH_GRIND_AGE_ACTIONS scored actions (default 120) OR
+    >= TAAF_GRAPH_GRIND_AGE_TURNS LLM turns (default 10) with no completion —
+    the model is grinding itself without progress even though it keeps
+    emitting. Age counts from level entry (or last grind on the level; a
+    grind's own engine actions never re-satisfy the trigger). Either
+    threshold set to 0 disables that criterion. All the original guards
+    (completed-level disengage-forever, exhausted frontier, per-level
+    engagement cap, budget) apply identically to both triggers.
+    """
     import threading
     import time
 
@@ -2003,8 +2062,6 @@ def _graph_maybe_grind(session: Any) -> None:
     gs = _graph_session_state(session)
     if gs["grinding"]:
         return
-    if (time.monotonic() - wd["t_progress"]) < wd["stall_s"]:
-        return
 
     game = session.game
     run = getattr(game, "game_run", None)
@@ -2014,6 +2071,23 @@ def _graph_maybe_grind(session: Any) -> None:
         return
     if solver._is_run_complete(game) or solver._is_engine_game_over(game):
         return
+
+    trigger = None
+    if (time.monotonic() - wd["t_progress"]) >= wd["stall_s"]:
+        trigger = "stall"
+    else:
+        level_now = solver._level_number(game)
+        if level_now not in gs["completed_levels"]:
+            actions_since, turns_since = _graph_level_age(session, gs, level_now)
+            age_actions = _graph_env_int("TAAF_GRAPH_GRIND_AGE_ACTIONS", 120)
+            age_turns = _graph_env_int("TAAF_GRAPH_GRIND_AGE_TURNS", 10)
+            if (age_actions > 0 and actions_since >= age_actions) or (
+                age_turns > 0 and turns_since >= age_turns
+            ):
+                trigger = "level_age"
+    if trigger is None:
+        return
+
     if session.runtime_limit_reached():
         return
     if (
@@ -2033,10 +2107,14 @@ def _graph_maybe_grind(session: Any) -> None:
         return  # keep the watchdog's RESET/kill path reachable behind the grinder
     gs["grinds_per_level"][level] = gs["grinds_per_level"].get(level, 0) + 1
     gs["diag"]["grinder_engagements"] += 1
-    _graph_grind(session, gs, level)
+    if trigger == "level_age":
+        gs["diag"]["grinder_age_triggers"] += 1
+    _graph_grind(session, gs, level, trigger=trigger)
+    # Re-baseline the age so a re-trigger needs FRESH turns/actions on the level.
+    _graph_reset_age_mark(session, gs, level)
 
 
-def _graph_grind(session: Any, gs: dict[str, Any], level: int) -> None:
+def _graph_grind(session: Any, gs: dict[str, Any], level: int, trigger: str = "stall") -> None:
     """Scripted frontier walk at engine speed. Free on never-completed levels."""
     import time
     from collections import deque
@@ -2052,7 +2130,7 @@ def _graph_grind(session: Any, gs: dict[str, Any], level: int) -> None:
     budget = max(1, _graph_env_int("TAAF_GRAPH_GRIND_BUDGET", 2000))
     start_levels = int(game.current_state.levels_completed)
     print(
-        f"[graph] {game_id}: stall on level {level} (0 completions this run) — "
+        f"[graph] {game_id}: {trigger} on level {level} (0 completions this run) — "
         f"frontier grind, budget {budget}",
         flush=True,
     )
@@ -2060,6 +2138,10 @@ def _graph_grind(session: Any, gs: dict[str, Any], level: int) -> None:
     executed = 0
     stop_reason = "budget"
     plan_queue: deque = deque()
+    # Rolling window of executed actions: on an unlock, the tail IS the win path
+    # (the lever's actual value — grind-won levels themselves score ~0 under the
+    # squared-efficiency formula; the mechanic knowledge is what transfers).
+    recent_actions: deque = deque(maxlen=max(1, _graph_env_int("TAAF_GRAPH_NARRATE_K", 12)))
     try:
         while executed < budget:
             if session.stop_event.is_set():
@@ -2144,6 +2226,10 @@ def _graph_grind(session: Any, gs: dict[str, Any], level: int) -> None:
                 continue
             executed += 1
             gs["diag"]["grinder_actions"] += 1
+            try:
+                recent_actions.append(solver._format_action_display(plan[0], data))
+            except Exception:  # noqa: BLE001
+                recent_actions.append(str(plan[0]))
 
             level_up = int(game.current_state.levels_completed) != start_levels
             game_over = bool(payload.get("game_over")) if isinstance(payload, dict) else False
@@ -2165,6 +2251,23 @@ def _graph_grind(session: Any, gs: dict[str, Any], level: int) -> None:
             if level_up:
                 gs["diag"]["levels_unlocked_by_grinder"] += 1
                 stop_reason = "level_unlocked"
+                # Stage the win-path narration for the NEXT prompt build on this
+                # session's thread (read+cleared by the patch-11 prompt seam).
+                try:
+                    seq = ", ".join(str(item) for item in recent_actions)
+                    _GRAPH_TLS.narration = {
+                        "text": (
+                            f"[GRINDER UNLOCK] Level {level} was just unlocked by an "
+                            "automated exhaustive search, NOT by your plan. The final "
+                            f"{len(recent_actions)} engine actions before the level "
+                            f"boundary, in order: {seq}. The LAST action crossed the "
+                            "boundary. Infer this game's mechanic from that sequence "
+                            "and apply it deliberately on the current level."
+                        ),
+                        "diag": gs["diag"],
+                    }
+                except Exception:  # noqa: BLE001
+                    pass
                 break
             if game_over:
                 stop_reason = "game_over"
@@ -2206,6 +2309,11 @@ def patch_frontier_graph() -> str:
     import arcengine
 
     from inference.framework import solver
+
+    try:
+        from inference.agent import tool_agent as tool_agent_mod
+    except Exception:  # noqa: BLE001 - narration is optional; grinder still installs
+        tool_agent_mod = None
 
     session_cls = getattr(solver, "_HarnessGameSession", None)
     if session_cls is None:
@@ -2333,9 +2441,37 @@ def patch_frontier_graph() -> str:
     session_cls.step_env = step_env
     session_cls.should_stop = should_stop
 
+    # -- win-path narration seam (2026-08-04 amendment): after a grinder UNLOCK,
+    # the next user prompt carries the action tail that crossed the boundary.
+    narration_note = ""
+    agent_cls = getattr(tool_agent_mod, "ToolAgent", None) if tool_agent_mod else None
+    if agent_cls is None or not hasattr(agent_cls, "_build_user_prompt"):
+        narration_note = " (narration unavailable — ToolAgent._build_user_prompt missing)"
+    elif not getattr(agent_cls._build_user_prompt, "_graph_narration_patched", False):
+        original_build_user = agent_cls._build_user_prompt
+
+        def _build_user_prompt(self: Any, *args: Any, **kwargs: Any) -> str:
+            prompt = original_build_user(self, *args, **kwargs)
+            if not _graph_enabled():
+                return prompt
+            try:
+                staged = getattr(_GRAPH_TLS, "narration", None)
+                if staged:
+                    _GRAPH_TLS.narration = None
+                    staged["diag"]["narrations_injected"] += 1
+                    print("[graph] win-path narration injected into next prompt", flush=True)
+                    return prompt + "\n" + staged["text"]
+            except Exception:  # noqa: BLE001 - narration must never break a turn
+                pass
+            return prompt
+
+        _forward_patch_markers(_build_user_prompt, original_build_user)
+        _build_user_prompt._graph_narration_patched = True  # type: ignore[attr-defined]
+        agent_cls._build_user_prompt = _build_user_prompt
+
     if getattr(original_should_stop, "_watchdog_patched", False):
-        return "patch11 graph: OK"
-    return "patch11 graph: OK (grinder dormant — watchdog patch absent)"
+        return "patch11 graph: OK" + narration_note
+    return "patch11 graph: OK (grinder dormant — watchdog patch absent)" + narration_note
 
 
 # --- PATCH 12: compaction-on-evict + LLM-free plan queue -------------------------

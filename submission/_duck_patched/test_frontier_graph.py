@@ -518,9 +518,220 @@ def test_diagnostics_dict_shape(patched_solver, tmp_path, monkeypatch):
     diag = duck_patches.graph_diagnostics(session)
     assert set(diag) == {
         "nodes", "edges", "vetoes_issued", "vetoes_capped",
-        "grinder_engagements", "grinder_actions", "levels_unlocked_by_grinder",
+        "grinder_engagements", "grinder_age_triggers", "grinder_actions",
+        "levels_unlocked_by_grinder", "narrations_injected",
     }
     assert all(isinstance(value, int) for value in diag.values())
+
+
+# --- level-age retrigger + win-path narration (2026-08-04 amendment) --------------
+
+
+def _fresh_watchdog(session):
+    """Patch-7 state with NO stall (timer just fed): only level-age can engage."""
+    session._watchdog_state = {
+        "stall_s": 900.0,
+        "wall_cap_s": 0.0,
+        "max_resets": 1,
+        "progress": None,
+        "t_progress": time.monotonic(),
+        "resets_done": 0,
+        "in_reset": False,
+        "killed": None,
+        "thread_id": threading.get_ident(),
+    }
+    return session._watchdog_state
+
+
+def test_age_trigger_fires_on_turns_without_stall(patched_solver, tmp_path, monkeypatch):
+    monkeypatch.setenv("TAAF_GRAPH", "1")
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_BUDGET", "50")
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_AGE_TURNS", "3")
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_AGE_ACTIONS", "0")  # criterion disabled
+    game, session = _scripted_session(patched_solver, tmp_path)
+    _fresh_watchdog(session)
+
+    session.analysis_step = 5
+    session.should_stop()  # lays the age baseline at step 5 — must not engage
+    assert duck_patches.graph_diagnostics(session)["grinder_engagements"] == 0
+
+    session.analysis_step = 7  # 2 turns on the level: still under threshold
+    session.should_stop()
+    assert duck_patches.graph_diagnostics(session)["grinder_engagements"] == 0
+
+    session.analysis_step = 8  # 3 turns: level-age trigger
+    session.should_stop()
+    diag = duck_patches.graph_diagnostics(session)
+    assert diag["grinder_engagements"] == 1, diag
+    assert diag["grinder_age_triggers"] == 1, diag
+    assert game.levels == 1, "the age-triggered grind must have unlocked the level"
+
+
+def test_age_trigger_fires_on_actions_without_stall(patched_solver, tmp_path, monkeypatch):
+    monkeypatch.setenv("TAAF_GRAPH", "1")
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_BUDGET", "50")
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_AGE_TURNS", "0")  # criterion disabled
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_AGE_ACTIONS", "4")
+    game, session = _scripted_session(patched_solver, tmp_path)
+    _fresh_watchdog(session)
+
+    session.should_stop()  # baseline at 0 actions
+    for _ in range(3):
+        session.step_env({"action": "ACTION1"})
+    session.should_stop()
+    assert duck_patches.graph_diagnostics(session)["grinder_engagements"] == 0
+
+    session.step_env({"action": "ACTION1"})  # 4th scored action on the level
+    session.should_stop()
+    diag = duck_patches.graph_diagnostics(session)
+    assert diag["grinder_engagements"] == 1, diag
+    assert diag["grinder_age_triggers"] == 1, diag
+
+
+def test_age_retrigger_needs_fresh_age(patched_solver, tmp_path, monkeypatch):
+    """A grind's own engine actions must not re-satisfy the age trigger."""
+    monkeypatch.setenv("TAAF_GRAPH", "1")
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_BUDGET", "3")
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_AGE_TURNS", "0")
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_AGE_ACTIONS", "4")
+    # After the first grind ACTION1 is a KNOWN no-op edge; keep the veto out so
+    # the fresh scored actions actually execute and age the level.
+    monkeypatch.setenv("TAAF_GRAPH_VETO_MIN_LEVEL_ACTIONS", "999")
+    game = ScriptedGame(unlock_cell=None, danger_cell=None)
+    game, session = _scripted_session(patched_solver, tmp_path, game=game)
+    _fresh_watchdog(session)
+
+    session.should_stop()  # baseline
+    for _ in range(4):
+        session.step_env({"action": "ACTION1"})
+    session.should_stop()  # first age grind (budget 3, no unlock possible)
+    diag = duck_patches.graph_diagnostics(session)
+    assert diag["grinder_engagements"] == 1, diag
+    assert diag["grinder_actions"] == 3, diag
+
+    # Immediately after the grind: its 3 engine actions were re-baselined away,
+    # so the very next poll must NOT re-engage.
+    session.should_stop()
+    assert duck_patches.graph_diagnostics(session)["grinder_engagements"] == 1
+
+    # Fresh age (4 new scored actions) re-engages, up to the per-level cap (2).
+    for _ in range(4):
+        session.step_env({"action": "ACTION1"})
+    session.should_stop()
+    assert duck_patches.graph_diagnostics(session)["grinder_engagements"] == 2
+
+    # Cap reached: no third engagement no matter how much age accumulates.
+    for _ in range(4):
+        session.step_env({"action": "ACTION1"})
+    session.should_stop()
+    assert duck_patches.graph_diagnostics(session)["grinder_engagements"] == 2
+
+
+def test_age_trigger_respects_completed_level_guard(patched_solver, tmp_path, monkeypatch):
+    monkeypatch.setenv("TAAF_GRAPH", "1")
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_AGE_TURNS", "1")
+    game, session = _scripted_session(patched_solver, tmp_path)
+
+    # Complete level 1 for real, then simulate replaying it (post-WIN replay).
+    session.step_env({"action": "MOUSE", "row": 2, "col": 2})
+    assert 1 in session._graph_state["completed_levels"]
+    game.levels = 0
+    game.game_run.levels_completed = 0
+    game._refresh()
+    _fresh_watchdog(session)
+
+    session.analysis_step = 100  # plenty of level-age
+    session.should_stop()
+    session.analysis_step = 200
+    session.should_stop()
+    assert duck_patches.graph_diagnostics(session)["grinder_engagements"] == 0, (
+        "grinding a completed level's counter destroys its score — never"
+    )
+
+
+def _narration_agent():
+    from inference.agent.tool_agent import ToolAgent
+    from inference.agent.runtime_state import Frame
+
+    agent = ToolAgent(model="stub-model", base_url="http://127.0.0.1:9/v1")
+    agent._session_runtime_dir = Path("/tmp/graph-narration-test")
+    frame = Frame(grid=((1, 2), (3, 4)), step=1, level=1)
+    return agent, frame
+
+
+def test_win_path_narration_lands_in_next_real_prompt(patched_solver, tmp_path, monkeypatch):
+    """Age-triggered unlock -> the NEXT ToolAgent user prompt (real
+    _build_user_prompt, same thread) carries the win-path tail exactly once."""
+    monkeypatch.setenv("TAAF_GRAPH", "1")
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_BUDGET", "50")
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_AGE_TURNS", "1")
+    duck_patches._GRAPH_TLS.narration = None
+    game, session = _scripted_session(patched_solver, tmp_path)
+    _fresh_watchdog(session)
+
+    session.analysis_step = 1
+    session.should_stop()
+    session.analysis_step = 2
+    session.should_stop()  # age grind -> unlock -> narration staged
+    diag = duck_patches.graph_diagnostics(session)
+    assert diag["levels_unlocked_by_grinder"] == 1, diag
+    staged = getattr(duck_patches._GRAPH_TLS, "narration", None)
+    assert staged and "GRINDER UNLOCK" in staged["text"], staged
+
+    agent, frame = _narration_agent()
+    prompt = agent._build_user_prompt(1, valid_actions=["ACTION1"], current_frame=frame)
+    assert "GRINDER UNLOCK" in prompt, "narration must land in the next prompt"
+    assert "Level 1" in prompt
+    # The unlocking action itself (the scripted unlock cell click) is in the tail.
+    assert "2" in prompt.split("GRINDER UNLOCK", 1)[1]
+    assert duck_patches.graph_diagnostics(session)["narrations_injected"] == 1
+
+    # Injected ONCE: the following prompt is clean.
+    prompt2 = agent._build_user_prompt(1, valid_actions=["ACTION1"], current_frame=frame)
+    assert "GRINDER UNLOCK" not in prompt2
+    assert duck_patches.graph_diagnostics(session)["narrations_injected"] == 1
+
+
+def test_narration_not_injected_when_graph_disabled(patched_solver, tmp_path, monkeypatch):
+    monkeypatch.setenv("TAAF_GRAPH", "0")
+    duck_patches._GRAPH_TLS.narration = {"text": "[GRINDER UNLOCK] stale", "diag": {
+        "narrations_injected": 0}}
+    try:
+        agent, frame = _narration_agent()
+        prompt = agent._build_user_prompt(1, valid_actions=["ACTION1"], current_frame=frame)
+        assert "GRINDER UNLOCK" not in prompt
+    finally:
+        duck_patches._GRAPH_TLS.narration = None
+
+
+def test_e2e_age_trigger_fires_where_stall_trigger_cannot(patched_solver, tmp_path, monkeypatch):
+    """Stub-brain e2e on the real engine: the brain keeps emitting actions every
+    turn, so the watchdog stall timer NEVER trips (the exact dormancy that made
+    the grinder fire 0 times across all A/Bs) — the level-age trigger must
+    engage the grinder anyway."""
+    monkeypatch.setenv("TAAF_GRAPH", "1")
+    monkeypatch.setenv("TAAF_WATCHDOG", "1")
+    monkeypatch.setenv("TAAF_WATCHDOG_STALL_S", "900")  # stall trigger unreachable
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_BUDGET", "40")
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_MAX_PER_LEVEL", "1")
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_AGE_TURNS", "3")
+    monkeypatch.setenv("TAAF_GRAPH_GRIND_AGE_ACTIONS", "0")
+    monkeypatch.setenv("TAAF_GRAPH_VETO_MIN_LEVEL_ACTIONS", "50")  # keep vetoes out
+
+    stop_event = threading.Event()
+    analyzer = _NoopClickAnalyzer(stop_event, turns=8)
+    game, session = _real_session(tmp_path, analyzer, patched_solver)
+    session.stop_event = stop_event
+
+    session.play()
+
+    diag = duck_patches.graph_diagnostics(session)
+    assert diag["grinder_engagements"] >= 1, diag
+    assert diag["grinder_age_triggers"] >= 1, diag
+    assert diag["grinder_actions"] >= 1, diag
+    wd = session._watchdog_state
+    assert wd["killed"] is None, "no stall was ever detected — age did the work"
+    assert game.game_run.final_score is not None
 
 
 # --- end-to-end over the real engine (stub-brain harness driver) -----------------
