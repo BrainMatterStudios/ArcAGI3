@@ -21,11 +21,17 @@ already serves the merged tree; the driver restarts vLLM at every arm switch
 and re-runs the full serving assert with per-arm model-identity checks.
 
 Adapter source: kernel output of ahmedmobasher86/arc-agi-3-sft-synth-v1
-(kernel_sources; mounts under /kaggle/input/notebooks/<owner>/<slug>/ —
-verified from that kernel's own log resolving arc3-deps-prep). sft_common
-comes from ahmedmobasher86/arc3-corpus-synth-v1 (dataset_sources; contains
+(kernel_sources; v4 run proved it mounts at /kaggle/input/arc-agi-3-sft-synth-v1/
+and the checkpoint-10 asserts passed). sft_common comes from
+ahmedmobasher86/arc3-corpus-synth-v1 (dataset_sources; contains
 dequantize_fp8_inplace/strip_quantization_runtime, byte-identical to the k3
-corpus copy the duck-sft merge used).
+corpus copy the duck-sft merge used). The merge subprocess additionally
+prepends the arc3-deps-prep kernel output's deps/ dir to sys.path
+(transformers-main 5.14.0.dev0 + peft 0.19.1, torch stripped) because the
+stock image transformers does not know model_type qwen3_5 — the exact
+env-prep sft-synth-v1 itself trained with. vLLM is unaffected: it runs from
+the wheelhouse's vllm-site-packages, which served qwen3_5 in rounds 1-3 and
+served a merged tree in duck-sft v4 (sub 55160933).
 
 Every arm gets the IDENTICAL patch layer the submitted v6 kernel installs:
 apply_all() from the CURRENT duck_patches.py (now through patch14: playbook +
@@ -100,7 +106,24 @@ MODEL_PATH_OVERRIDE = (
 # corpus (which carries the same sft_common as the k3 corpus).
 MERGE_INNER = '''\
 import glob, json, os, shutil, sys, time
+# OFFLINE env-prep (sft-synth lineage): the kernel image's stock transformers
+# does not know model_type qwen3_5 (v4 abort: KeyError 'qwen3_5' at
+# AutoConfig). The arc3-deps-prep kernel output bundles transformers-main
+# (5.14.0.dev0) + peft 0.19.1 with torch/nvidia/triton stripped, so the
+# image's Blackwell torch is kept — exactly the path sft-synth-v1 trained
+# with. Internet is off; this is the only offline route to a new-enough
+# transformers. Scoped to THIS subprocess: the notebook process and vLLM
+# (which runs from the wheelhouse's own site-packages) are untouched.
+_deps = sorted(p for p in glob.glob('/kaggle/input/**/deps', recursive=True)
+               if 'deps-prep' in p)
+assert _deps, 'arc3-deps-prep deps dir not found under /kaggle/input'
+sys.path.insert(0, _deps[0])
 import torch
+import transformers
+print(f'[ab-merge-subprocess] deps on path: {_deps[0]} | '
+      f'transformers {transformers.__version__} | torch {torch.__version__}', flush=True)
+assert tuple(int(x) for x in transformers.__version__.split('.')[:2]) >= (5, 6), \\
+    f'qwen3_5 needs transformers>=5.6.2, got {transformers.__version__}'
 CORPUS = next(os.path.dirname(p)
               for p in sorted(glob.glob('/kaggle/input/**/train.jsonl', recursive=True))
               if 'synth' in p)
@@ -366,7 +389,10 @@ def main() -> None:
         ],
         "competition_sources": ["arc-prize-2026-arc-agi-3"],
         # round 4: the adapter — sft-synth-v1 kernel OUTPUT (sft_out/checkpoint-10)
-        "kernel_sources": ["ahmedmobasher86/arc-agi-3-sft-synth-v1"],
+        # + arc3-deps-prep — offline transformers-main/peft for the merge
+        # subprocess (v4 abort: stock image transformers lacks qwen3_5)
+        "kernel_sources": ["ahmedmobasher86/arc-agi-3-sft-synth-v1",
+                           "ahmedmobasher86/arc3-deps-prep"],
         "model_sources": [],
     }, indent=2) + "\n")
     print(f"wrote {OUT} ({len(nb['cells'])} cells, anchors {sorted(seen)})")
