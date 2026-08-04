@@ -71,13 +71,19 @@ AB_ARM_ENV = {"M": dict(_AB_V7_PINS), "B": dict(_AB_V7_PINS)}
 AB_MERGED_PATH = "/tmp/merged_sft"
 _AB_BASE_SNAPSHOT_TOKEN = "qwen3-6-27b-fp8"   # must appear in the base --model path
 
-# Panel (10 games) — round 4's exact panel, carried UNCHANGED into round 5
-# for direct synth-vs-k3 comparability: 2 newly-unlocking targets + 3
-# never-unlocked targets + 5 unlock-sensitive continuity games.
+# Panel (10 games) — round 4's panel with ONE decontamination swap (2026-08-04):
+# vc33 OUT (it is in run-8's training corpus), dc22 IN (uncontaminated
+# never-unlocked target, one of the four frontier-teacher census games).
+# Panel = 2 newly-unlocking targets + 4 never-unlocked targets + 4
+# unlock-sensitive continuity games. NOTE the wider contamination finding
+# (see AB_PREREGISTERED_READING["contamination"]): run-8 trained on corpus v1
+# (20 of 25 dev games), so only m0r0 and dc22 in this panel are fully clean —
+# the swap removes the worst case (vc33, 35+3 training rows) and adds a clean
+# generalization probe, but trained-on games remain and must be read as such.
 _AB_NEWLY_UNLOCKING = ("lf52", "cn04")
-_AB_NEVER_UNLOCKED = ("wa30", "m0r0", "g50t")
+_AB_NEVER_UNLOCKED = ("wa30", "m0r0", "g50t", "dc22")
 _AB_TARGET_GAMES = _AB_NEWLY_UNLOCKING + _AB_NEVER_UNLOCKED
-_AB_CONTINUITY_GAMES = ("ft09", "re86", "tu93", "vc33", "su15")
+_AB_CONTINUITY_GAMES = ("ft09", "re86", "tu93", "su15")
 AB_DEFAULT_GAMES = ",".join(_AB_TARGET_GAMES + _AB_CONTINUITY_GAMES)
 
 
@@ -102,7 +108,8 @@ _AB_FINGERPRINTS = {}           # arm -> first-seen logprob fingerprint (identit
 AB_PREREGISTERED_READING = {
     "question": (
         "Does DELIBERATION-SHAPED SFT move real play at 27B? The K3 run-8 "
-        "checkpoint-8 LoRA (corpus_v3, Kimi-K3 teacher, long-form ~1487-token "
+        "checkpoint-8 LoRA (corpus v1 — NOT v3, label corrected 2026-08-04; "
+        "Kimi-K3 teacher, long-form deliberation "
         "targets; NLL val -12.5%; Gate 0 merge +13.51%, 98.2% retained) was "
         "never behaviorally validated. Round 4's synth adapter failed by "
         "under-deliberating (~30% gen_tokens drop, learned-short style); "
@@ -115,8 +122,31 @@ AB_PREREGISTERED_READING = {
         "adapter) vs B (base). Unlock events on the newly-unlocking targets "
         f"{list(_AB_NEWLY_UNLOCKING)} and never-unlocked targets "
         f"{list(_AB_NEVER_UNLOCKED)}: an M-only unlock on a never-unlocked "
-        "game = signal. Plus actions_per_level and watchdog/HUD/replay "
-        "texture on the full 10-game panel."
+        "game = signal — STRONGEST on the clean games m0r0/dc22 (not in "
+        "run-8's training corpus); on trained-on games it is "
+        "memorization-confounded (see 'contamination'). Plus "
+        "actions_per_level and watchdog/HUD/replay texture on the full "
+        "10-game panel."
+    ),
+    "contamination": (
+        "PANEL DECONTAMINATION (2026-08-04). Run-8 trained on corpus v1 "
+        "(dataset arc3-sft-k3-corpus, uploaded 2026-07-24 — the only version "
+        "of that slug in existence when run 8 trained on 2026-07-26; row "
+        "counts 392 train / 43 val match this build's verified lineage "
+        "note exactly, whereas corpus_v3 is 379/56). Corpus v1 has a "
+        "ROW-level split covering 20 of 25 dev games, so the contamination "
+        "is far wider than the 'vc33/sc25/lp85' trio previously recorded: "
+        "panel games IN the training set = lf52(6), cn04(18), wa30(18), "
+        "g50t(21), ft09(21), re86(20), tu93(13), su15(29) train rows each — "
+        "and vc33(35), the worst case, which this round REMOVES from the "
+        "panel (replaced by dc22; sc25/lp85 were never panel members). The "
+        "only dev games absent from corpus v1 are dc22, m0r0, sk48, tn36, "
+        "tr87; of these, dc22 was chosen (target-class, 6 levels, "
+        "frontier-teacher census game; sk48/tn36 similar but census-aligned "
+        "dc22 preferred; tr87 excluded — perception-confounded at "
+        "upscale 4). READING RULE: level gains on trained-on games do NOT "
+        "demonstrate generalization; the generalization readout is "
+        "m0r0 + dc22 only."
     ),
     "secondary": (
         f"Continuity games {list(_AB_CONTINUITY_GAMES)} for unlock-sensitive "

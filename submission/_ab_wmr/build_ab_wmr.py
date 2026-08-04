@@ -34,11 +34,16 @@ WHY THIS CHECKPOINT (run-8 sft_out/checkpoint-8) — the pre-registered choice:
     SPECIFICALLY: merged NLL gain +13.51% (bar >= 2%), merge retained 98.2%
     of the adapter's fit. The sft_adapter step-15 arm never ran its gate, so
     checkpoint-8 is the only serve-verified artifact.
-  * Run-8 lineage (downloaded + verified 2026-08-04): trained on
-    arc3-sft-k3-corpus (corpus_v3, Kimi-K3 teacher, long-form deliberation
-    ~1487-token targets), 392 train / 43 val, VAL target-loss base 0.7781 ->
-    tuned 0.6807 (-12.5%). Behaviorally NEVER validated — its one submission
-    (55160933) errored. Round 4's synth adapter failed by learning a SHORT
+  * Run-8 lineage (downloaded + verified 2026-08-04; corpus version
+    CORRECTED 2026-08-04): trained on arc3-sft-k3-corpus **v1** (uploaded
+    2026-07-24, the only version of that slug when run 8 trained; the row
+    counts 392 train / 43 val match v1 exactly — corpus_v3 is 379/56, so the
+    earlier "corpus_v3" label here was wrong). Kimi-K3 teacher, long-form
+    deliberation targets, VAL target-loss base 0.7781 -> tuned 0.6807
+    (-12.5%). v1 uses a ROW-level split over 20 of 25 dev games — hence the
+    round-5 panel decontamination (vc33 out, dc22 in; see
+    ab_wave_driver.py AB_PREREGISTERED_READING["contamination"]).
+    Behaviorally NEVER validated — its one submission (55160933) errored. Round 4's synth adapter failed by learning a SHORT
     style; run-8's data has the right style, so this is the cleanest test of
     whether deliberation-shaped SFT moves play at 27B.
 The merge cell hard-asserts the checkpoint identity at run time

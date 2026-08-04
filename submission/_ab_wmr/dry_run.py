@@ -227,8 +227,12 @@ def main() -> int:
     prr = out.get("pre_registered_reading")
     assert isinstance(prr, dict) and set(prr) == {
         "question", "primary", "secondary", "not_a_readout",
-        "adapter_provenance"}, prr
+        "adapter_provenance", "contamination"}, prr
     assert "run-8" in prr["question"], prr["question"]
+    # decontamination swap (2026-08-04): vc33 out, dc22 in, reason recorded
+    assert "vc33" in prr["contamination"] and "dc22" in prr["contamination"], prr
+    assert "vc33" not in out["games"], out["games"]
+    assert "dc22" in out["never_unlocked_games"], out["never_unlocked_games"]
     assert "gen_tokens" in prr["primary"], prr["primary"]
     assert "NLL is NOT a criterion" in prr["not_a_readout"], prr["not_a_readout"]
     assert "checkpoint-8" in prr["adapter_provenance"], prr["adapter_provenance"]
