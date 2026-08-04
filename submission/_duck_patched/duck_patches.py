@@ -1093,9 +1093,20 @@ def patch_hud_sandbox() -> str:
 # of failed submissions "stuck silently"). Three mechanisms, all cooperative:
 #
 #   1. STALL DETECTION — progress is (scored action count, levels completed). If
-#      neither moves for TAAF_WATCHDOG_STALL_S seconds (default 900) the game is
+#      neither moves for TAAF_WATCHDOG_STALL_S seconds (default 600) the game is
 #      stalled: the analyzer is wedged in a retry/parse loop, the endpoint died,
 #      or the model deliberates forever without acting.
+#      WHY 600 (2026-08-04): the competition gateway auto-closes a scorecard
+#      after DEFAULT_STALE_MINUTES=15 idle (arc_agi/scorecard.py:24; cleanup
+#      thread polls every 60s, api.py scorecard_cleanup_loop) and ANY engine
+#      action — including the recovery RESET, which hits the game server even
+#      during a vLLM wedge — bumps the card's last_update
+#      (scorecard.py Scorecard.update_scorecard). The old 900s default EQUALS
+#      the 15-min threshold, so a wedge raced the server close with zero
+#      margin; 600s makes the watchdog a heartbeat with a 300s margin (>> the
+#      60s close granularity + any should_stop polling delay). The LIVE
+#      gateway's actual threshold is UNVERIFIED (the scorecard_timeout param
+#      path is unclamped) — 600s protects against the documented default.
 #   2. RESET-AND-CONTINUE — the first TAAF_WATCHDOG_MAX_RESETS stalls (default 1)
 #      are answered with one engine RESET (level reset under ONLY_RESET_LEVELS;
 #      costs 1 scored action) and a fresh timer, which un-wedges games stuck in a
@@ -1132,7 +1143,7 @@ def _watchdog_state(session: Any) -> dict[str, Any]:
     wd = getattr(session, "_watchdog_state", None)
     if wd is None:
         wd = {
-            "stall_s": max(1.0, _watchdog_env_float("TAAF_WATCHDOG_STALL_S", 900.0)),
+            "stall_s": max(1.0, _watchdog_env_float("TAAF_WATCHDOG_STALL_S", 600.0)),
             "wall_cap_s": _watchdog_env_float("TAAF_WATCHDOG_WALL_CAP_S", 7200.0),
             "max_resets": int(_watchdog_env_float("TAAF_WATCHDOG_MAX_RESETS", 1.0)),
             "progress": None,
