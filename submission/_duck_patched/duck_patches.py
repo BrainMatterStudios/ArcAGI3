@@ -532,6 +532,15 @@ class HudMaskTracker:
     MIN_SEGMENTS = 3
     MAX_STACK = 2
     SEGMENT_ROTATE_STEPS = 24  # 0 disables virtual rotation (pre-fix behavior)
+    # A confirmed bar can REFILL mid-level with no reset/level/state boundary
+    # (ls20: rows 61-62 repaint cols 13-54 in one frame at ~step 86). The repaint
+    # makes many already-ticked cells hit nchg>=2 at once, which used to trip the
+    # unmask guard and kill the line permanently. A refill's signature is exactly
+    # that simultaneity: >= REFILL_MIN_CELLS of one confirmed line changing in a
+    # SINGLE frame, while genuine bar ticks touch 1-2 cells and content entering
+    # a strip changes sparsely across frames. Such a frame is treated as a
+    # per-line segment restart (stats cleared, confirmations kept, mask kept).
+    REFILL_MIN_CELLS = 4
 
     def __init__(self, min_segments: int | None = None) -> None:
         import numpy as np
@@ -633,6 +642,7 @@ class HudMaskTracker:
                 self._tfrom[newly] = self._prev[newly]
                 self._tto[newly] = g[newly]
                 self._nchg[diff] += 1
+                self._clear_refilled_lines(diff, g)
                 repeat = (self._nchg >= 2) & self._mask
                 if repeat.any():
                     self._drop_regions(repeat)
@@ -824,6 +834,62 @@ class HudMaskTracker:
                 mask[:, line] = True
         mask &= ~self._dropped
         self._mask = mask
+
+    def _clear_refilled_lines(self, diff: Any, grid: Any) -> None:
+        """Refill-aware guard shield. A bar refill has TWO simultaneous
+        signatures on a confirmed line: >= REFILL_MIN_CELLS of the line change
+        in THIS single frame, AND >= 90% of those cells are restored to the
+        bar's own pre-tick color (a `from_color` of the line's confirmed
+        sightings). Content repaints hit the first signature routinely but not
+        the second (measured: bp35 content rows repaint to content colors).
+        On a refill, the line's per-cell segment stats are cleared so the
+        repaint never reaches the repeat/unmask guard; confirmation history and
+        the mask are untouched. Anything failing the color test falls through
+        to the guard exactly as before."""
+        np = self._np
+        lines: dict[tuple[str, int], dict] = {}
+        for line_key, span in self._confirmed_lines().items():
+            if line_key in self._dead_lines:
+                continue
+            entry = lines.setdefault(
+                (line_key[0], line_key[1]), {"colors": set(), "lo": span[0], "hi": span[1]}
+            )
+            entry["colors"].add(int(line_key[2]))
+            entry["lo"] = min(entry["lo"], span[0])
+            entry["hi"] = max(entry["hi"], span[1])
+        for (orient, line), entry in lines.items():
+            if orient == "H":
+                line_diff = diff[line, :]
+                line_vals = grid[line, :]
+            else:
+                line_diff = diff[:, line]
+                line_vals = grid[:, line]
+            n_changed = int(line_diff.sum())
+            if n_changed < self.REFILL_MIN_CELLS:
+                continue
+            changed_vals = line_vals[line_diff]
+            restored = int(np.isin(changed_vals, sorted(entry["colors"])).sum())
+            if restored < 0.9 * n_changed:
+                continue
+            # A refill repaints the drained SPAN, not a fragment of it: require
+            # the restoring frame to cover most of the confirmed span. Content
+            # vacating a strip restores only object-sized patches (bp35 row 36,
+            # measured) and falls through to the guard.
+            span_len = entry["hi"] - entry["lo"] + 1
+            changed_idx = np.flatnonzero(line_diff)
+            in_span = int(((changed_idx >= entry["lo"]) & (changed_idx <= entry["hi"])).sum())
+            if span_len < self.REFILL_MIN_CELLS or in_span < 0.6 * span_len:
+                continue
+            if orient == "H":
+                self._nchg[line, :] = 0
+                self._tchg[line, :] = -1
+                self._tfrom[line, :] = -1
+                self._tto[line, :] = -1
+            else:
+                self._nchg[:, line] = 0
+                self._tchg[:, line] = -1
+                self._tfrom[:, line] = -1
+                self._tto[:, line] = -1
 
     def _drop_regions(self, repeat_mask: Any) -> None:
         """Unmask guard: a masked cell changed twice inside one segment — real
