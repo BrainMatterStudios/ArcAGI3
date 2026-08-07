@@ -76,6 +76,37 @@ def test_every_code_cell_compiles(tmp_path):
                         flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT, dont_inherit=True)
 
 
+def test_dry_run_emits_classifiable_pair(tmp_path):
+    """GPU-free end-to-end: both arms through the REAL harness + mock brain,
+    emitting the exact result schema the classifier freezes. Runs dry_run.py
+    in a SUBPROCESS (the standalone form the runbook uses) so its kernel-like
+    module surgery — synthetic duck_patches, scored-ref sys.path — cannot
+    pollute this shared pytest process. Equal levels are expected (identical
+    mock policy in both arms), so the verdict must be NO_GO — the dry run
+    must never encode a forced GO."""
+    import os
+    import subprocess
+
+    from patch_closure_config import classify_result
+
+    proc = subprocess.run(
+        [sys.executable, str(Path(__file__).parent / "dry_run.py")],
+        env={**os.environ, "PC_DRY_WORKDIR": str(tmp_path)},
+        capture_output=True, text=True, timeout=1800)
+    assert proc.returncode == 0, f"dry run failed:\n{proc.stdout[-4000:]}\n{proc.stderr[-4000:]}"
+    assert "state=NO_GO" in proc.stdout, proc.stdout[-2000:]
+
+    workroot = next(p for p in sorted(tmp_path.iterdir()) if p.is_dir())
+    base = json.loads((workroot / "base" / "patch_closure_result.json").read_text())
+    candidate = json.loads((workroot / "candidate" / "patch_closure_result.json").read_text())
+    assert base["schema_version"] == candidate["schema_version"] == 1
+    assert base["arm"] == "base" and candidate["arm"] == "candidate"
+    assert base["stage"] == candidate["stage"] == "done"
+    out = classify_result(base, candidate)
+    assert out["state"] in {"GO", "NO_GO"}
+    assert out["state"] == "NO_GO"
+
+
 def test_arm_env_is_pinned_immediately_before_apply_all(tmp_path):
     for arm, env in (("base", BASE_ENV), ("candidate", CANDIDATE_ENV)):
         nb = json.loads(build_arm(arm, output_root=tmp_path).read_text())
