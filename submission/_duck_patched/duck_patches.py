@@ -1144,6 +1144,11 @@ def patch_hud_sandbox() -> str:
             action_handler=handler,
         )
 
+    # Forward predecessors' markers (patch-7 law): without this, a patch 18
+    # applied BEFORE patch 9 loses its `_run_probe_patched` marker under this
+    # wrap, and a later apply_all re-wraps it — the double probe handler then
+    # routes probe steps into patch 21's plan channel (found 2026-08-09).
+    _forward_patch_markers(run_sandboxed_python, original_run)
     run_sandboxed_python._hud_patched = True  # type: ignore[attr-defined]
     sandbox_mod.run_sandboxed_python = run_sandboxed_python
     # tool_agent imported the function by name; rebind its reference too.
@@ -4039,6 +4044,11 @@ def _diff_record_action(action: Any, payload: Any, pre_grid: Any, post_grid: Any
     """Bank one executed action's change lines into the per-thread log."""
     if not isinstance(payload, dict) or not payload.get("executed"):
         return
+    # Patch 21 (autopsy law: ONE report, ONE place): a plan-executed step is
+    # already differ'd into the PLAN REPORT — banking it here too made the one
+    # package-screen adopter read the same lines twice and quit the channel.
+    if getattr(_STRUCT_TLS, "in_plan", False) and _struct_enabled():
+        return
     is_reset = getattr(getattr(action, "id", None), "name", "") == "RESET"
     if (
         is_reset
@@ -4299,7 +4309,9 @@ def _wiggle_move_cells(a: Any, b: Any, move: dict) -> list[tuple[int, int]]:
     return cells
 
 
-def _wiggle_jump_move(a: Any, b: Any, core: Any) -> dict[str, Any] | None:
+def _wiggle_jump_move(
+    a: Any, b: Any, core: Any, require_cover: bool = True
+) -> dict[str, Any] | None:
     """Unbounded-displacement translation for slot-cursor games (tr87 class).
 
     Patch 16's detector searches shifts within +-8 cells; tr87's selection
@@ -4351,9 +4363,44 @@ def _wiggle_jump_move(a: Any, b: Any, core: Any) -> dict[str, Any] | None:
     for color in moved:
         explained |= (a == color) != (b == color)
     n_core = int(core.sum())
-    if n_core == 0 or int((explained & core).sum()) / n_core < _DIFF_COVER_MIN:
+    if n_core == 0:
+        return None
+    # `require_cover=False` (autopsy repair b, 2026-08-09): a conserved mover
+    # that does NOT explain the whole diff is still an avatar candidate when
+    # the remainder is terrain morphing under it (ka59/bp35 class). The caller
+    # only relaxes this after the covered detectors have failed.
+    if require_cover and int((explained & core).sum()) / n_core < _DIFF_COVER_MIN:
         return None
     return {"dy": dy, "dx": dx, "colors": sorted(moved), "cells": cells}
+
+
+def _wiggle_coupled_shift(a: Any, b: Any, core: Any) -> dict[str, Any] | None:
+    """Coupled-motion detector (autopsy repair c, 2026-08-09: tu93/wa30 class).
+
+    Herd evidence: EVERY changed component translates by ONE shared non-zero
+    displacement, and the ensemble is too big or too plural to be an avatar
+    (a clean small avatar move was already claimed by the covered detectors
+    upstream). Cursors steer ONE thing; herds move EVERYTHING together.
+    """
+    comps = _diff_components(core)
+    if not comps:
+        return None
+    shifts: set[tuple[int, int]] = set()
+    total = 0
+    for comp in comps:
+        cand = _diff_detect_translation(a, b, comp)
+        if cand is None:
+            return None
+        shifts.add((int(cand["dy"]), int(cand["dx"])))
+        if len(shifts) > 1:
+            return None
+        total += len(comp)
+    (dy, dx) = next(iter(shifts))
+    if (dy, dx) == (0, 0):
+        return None
+    if len(comps) < 3 and total <= _WIGGLE_MAX_AVATAR_CELLS:
+        return None  # small and singular enough to be avatar territory
+    return {"dy": dy, "dx": dx, "components": len(comps), "cells": total}
 
 
 def wiggle_observe_transition(
@@ -4398,7 +4445,23 @@ def wiggle_observe_transition(
             stats["noops"] += 1
             state.consecutive_noops += 1
             return {"kind": "noop", "action": name}
+        # Autopsy repair c (2026-08-09): coupled motion — EVERY changed
+        # component sharing one displacement, too big/plural for an avatar —
+        # is HERD evidence (tu93/wa30). Checked BEFORE per-component move
+        # detection: a herd's largest member would otherwise read as an
+        # avatar move and fake a translation lock.
+        coupled = _wiggle_coupled_shift(a, b2, core)
+        if coupled is not None:
+            stats["herds"] = stats.get("herds", 0) + 1
+            state.consecutive_noops = 0
+            return {
+                "kind": "herd",
+                "action": name,
+                "sign": (int(np.sign(coupled["dy"])), int(np.sign(coupled["dx"]))),
+                "n_cells": coupled["cells"],
+            }
         move = None
+        terrain_morph = False
         for comp in _diff_components(core):  # largest first
             cand = _diff_detect_translation(a, b2, comp)
             if cand is None:
@@ -4411,6 +4474,15 @@ def wiggle_observe_transition(
             jump = _wiggle_jump_move(a, b2, core)
             if jump is not None:
                 move = (jump, jump["cells"])
+        if move is None:
+            # Autopsy repair b: subtract a conserved moving component from the
+            # diff; if one exists, this press is a MOVE whose remainder is the
+            # terrain morphing under the mover (ka59/bp35 class), not an
+            # ARROW-MORPH.
+            relaxed = _wiggle_jump_move(a, b2, core, require_cover=False)
+            if relaxed is not None:
+                move = (relaxed, relaxed["cells"])
+                terrain_morph = True
         if move is None:
             if len(changed) <= _WIGGLE_TICK_CELLS:
                 # The battery runs before patch 8's tracker can confirm a mask
@@ -4434,6 +4506,7 @@ def wiggle_observe_transition(
                 "dx": int(cand["dx"]),
                 "cells": cells,
                 "colors": [int(c) for c in cand["colors"]],
+                "terrain_morph": terrain_morph,
             }
         )
         return {"kind": "move", "action": name, "sign": sign, "n_cells": len(cells)}
@@ -4506,16 +4579,85 @@ def _wiggle_lock_evidence(state: WiggleState) -> dict[str, Any] | None:
     }
 
 
+def _wiggle_cursor_demotion(
+    state: WiggleState, lock: dict[str, Any]
+) -> tuple[bool, str]:
+    """Autopsy repair a (2026-08-09): cursors are not avatars.
+
+    A translation lock whose displacement dwarfs the body, or whose entire
+    evidence is one action moving one direction, is a cursor/selector
+    (tr87/re86/cn04 class) — steerable, but the avatar playbook misleads.
+    """
+    cells = [tuple(c) for c in lock.get("cells") or []]
+    if cells:
+        ys = [c[0] for c in cells]
+        xs = [c[1] for c in cells]
+        extent = max(max(ys) - min(ys) + 1, max(xs) - min(xs) + 1)
+    else:
+        extent = 1
+    shift = max(abs(int(lock.get("dy", 0))), abs(int(lock.get("dx", 0))))
+    if shift > max(3, 2 * extent):
+        return True, (
+            f"translation lock demoted to CURSOR: displacement "
+            f"({lock.get('dy')},{lock.get('dx')}) >> body extent {extent} — "
+            "a selector jump, not an avatar step"
+        )
+    moved_actions = [
+        n for n in _WIGGLE_DIRECTIONALS if state.press_stats.get(n, {}).get("moves")
+    ]
+    signs = {
+        tuple(m["sign"])
+        for n in moved_actions
+        for m in state.press_stats[n]["moves"]
+    }
+    # Single-direction-only demotes ONLY once other directions were actually
+    # TRIED (>= 2 presses) and never moved it — a mid-battery same-action lock
+    # with untested directions is incomplete evidence, not a cursor verdict
+    # (the validated same-action-repeat rule stands until the battery says
+    # otherwise).
+    other_presses = sum(
+        state.press_stats.get(n, {}).get("presses", 0)
+        for n in _WIGGLE_DIRECTIONALS
+        if n not in moved_actions
+    )
+    if len(moved_actions) == 1 and len(signs) == 1 and other_presses >= 2:
+        return True, (
+            "translation lock demoted to CURSOR: single-direction-only evidence "
+            f"(only {moved_actions[0]} ever moved it while "
+            f"{other_presses} presses of the other directions did not)"
+        )
+    return False, ""
+
+
 def wiggle_verdict(state: WiggleState) -> tuple[str, str]:
-    """(mode, reason) per the archetype dispatch spec."""
+    """(mode, reason) per the archetype dispatch spec + 2026-08-09 repairs."""
     if state.directionals_at_start is not None and not state.directionals_at_start:
         return "CLICK", "no directional actions offered (0 presses spent)"
     presses = sum(s["presses"] for s in state.press_stats.values())
     noops = sum(s["noops"] for s in state.press_stats.values())
     morphs = sum(s["morphs"] for s in state.press_stats.values())
     moves = sum(len(s["moves"]) for s in state.press_stats.values())
-    if _wiggle_lock_evidence(state) is not None:
+    herds = sum(s.get("herds", 0) for s in state.press_stats.values())
+    lock = _wiggle_lock_evidence(state)
+    if lock is not None:
+        demoted, why = _wiggle_cursor_demotion(state, lock)
+        if demoted:
+            return "CURSOR", why
+        if any(
+            m.get("terrain_morph")
+            for s in state.press_stats.values()
+            for m in s["moves"]
+        ):
+            return "AVATAR", (
+                f"translation lock, terrain morphs under the mover "
+                f"({presses} presses)"
+            )
         return "AVATAR", f"shape-verified translation lock ({presses} presses)"
+    if herds >= 2:
+        return "HERD", (
+            f"coupled motion: every changed object shares one displacement per "
+            f"press ({herds} herd presses of {presses})"
+        )
     if presses > 0 and noops == presses:
         return "CLICK", f"all {presses} directional presses were masked no-ops"
     if morphs > 0 and moves == 0:
@@ -4535,7 +4677,7 @@ def wiggle_verdict(state: WiggleState) -> tuple[str, str]:
 def _wiggle_apply_verdict(state: WiggleState) -> None:
     mode, reason = wiggle_verdict(state)
     state.mode, state.mode_reason = mode, reason
-    if mode == "AVATAR":
+    if mode in ("AVATAR", "CURSOR"):
         lock = _wiggle_lock_evidence(state)
         if lock is not None:
             state.avatar_cells = [tuple(c) for c in lock["cells"]]
@@ -4795,8 +4937,21 @@ def _wiggle_prompt_block() -> str:
             f"GAME MODE: ARROW-MORPH — {state.mode_reason}. Arrows transform the "
             "board in place (rotate/recolor/morph); they do not steer an avatar."
         )
+    elif state.mode == "CURSOR" and state.avatar_cells:
+        lines.append(
+            f"GAME MODE: CURSOR — {state.mode_reason}. The directional actions "
+            f"jump a {len(state.avatar_cells)}-cell '{state.avatar_color}' "
+            f"cursor/selector at {_wiggle_span(state.avatar_cells)}; treat it as "
+            "a selection pointer (position it, then act), NOT a player to steer."
+        )
+    elif state.mode == "HERD":
+        lines.append(
+            f"GAME MODE: HERD — {state.mode_reason}. The directional actions "
+            "move ALL objects together by one shared displacement; plan routes "
+            "for the whole flock at once, not for one piece."
+        )
     else:
-        lines.append(f"GAME MODE: UNCLEAR — {state.mode_reason}.")
+        lines.append(f"GAME MODE: {state.mode} — {state.mode_reason}.")
     if state.clicks:
         remote = (
             f" plus {len(state.reactive_remote)} cells from "
@@ -5444,6 +5599,16 @@ def patch_run_probe() -> str:
                 if isinstance(refreshed, dict) and refreshed:
                     state_box["state"] = refreshed
                 return out
+            # -- patch 21 seam: with the structural channel installed and armed,
+            # EVERY plain action() call IS a plan submission (a single action is
+            # a plan of 1) and rides the per-step plan executor. run_probe stays
+            # a separate sentinel route above, so both coexist.
+            if items and _STRUCT_CHANNEL["installed"] and _struct_enabled():
+                out = plan_execute(items, action_handler, state_box["state"])
+                refreshed = out.get("state")
+                if isinstance(refreshed, dict) and refreshed:
+                    state_box["state"] = refreshed
+                return out
             out = action_handler(actions)
             try:
                 refreshed = out.get("state") if isinstance(out, dict) else None
@@ -5475,7 +5640,10 @@ def patch_run_probe() -> str:
     # -- 18d: system-prompt advertisement (patch 12b/13/15 seam, runtime-gated) ----
     def _build_system_prompt(*args: Any, **kwargs: Any) -> str:
         prompt = builder(*args, **kwargs)
-        if _probe_enabled():
+        # patch 21 contract: under TAAF_STRUCT the plan channel is THE way to
+        # act, so the optional run_probe advertisement is withdrawn (the
+        # sandbox global itself stays available for in-sandbox use).
+        if _probe_enabled() and not _struct_enabled():
             prompt = f"{prompt}\n\n{_probe_addendum_text()}"
         return prompt
 
@@ -6078,6 +6246,1010 @@ def patch_verify_at_commit() -> str:
     return "patch20 verify: OK (dormant — opt in with TAAF_VERIFY=1)"
 
 
+# --- PATCHES 21+22: structural action channel + enforced brake & phase gates ------
+#
+# The 2026-08 package screen measured ADOPTION, not capability, as the binding
+# failure: the 27B ignored every ADVERTISED mechanism (run_probe: 1 call in 28
+# games) but fully engaged the one ENFORCED mechanism (wiggle battery, 28/28).
+# PRO-LONG's log-mined contract (94.6% public, zero sub-agents) confirms the
+# shape that works: every turn yields an ordered plan of 1-20 actions, submitted
+# through a designated artifact/submission channel (never parsed out of chat
+# text), executed sequentially with per-step legality checks, with the full
+# per-step effect report fed to the next deliberation — one deliberation buys N
+# observations (the exchange-rate fix).
+#
+# PATCH 21 — mandatory plan-list channel (structural, not advertised):
+#   * the sandbox's native `action(actions)` IPC call IS the submission
+#     artifact: with TAAF_STRUCT=1 every plain action() call is routed through
+#     `plan_execute` (patch 18's executor pattern — one real action per
+#     original-handler call, so patch 8's HUD tracker, patch 16's differ and
+#     patch 17's observer all see every step). A single action auto-wraps to a
+#     1-plan; NOTHING is ever rejected (zero-risk migration).
+#   * LENIENT WHITELIST PARSER (PRO-LONG's load-bearing choice for a small
+#     model): entries that fail the action-name whitelist or a MOUSE row/col
+#     int-cast are SILENTLY DROPPED (counted + reported), never refused;
+#     entries beyond the 1-20 cap are discarded by slicing, and the prompt says
+#     so. Consecutive duplicate RESETs are deduped (incl. across calls).
+#   * SCORE-CHANGE FLUSH (absolute): any score/level change — not just the
+#     terminal flags — flushes the remaining plan and forces a fresh
+#     deliberation on the new board.
+#   * the per-step effect table (patch 16's HUD-masked change lines) returns
+#     from the call AND is repeated in the next analyzer prompt as a PLAN
+#     REPORT; the system prompt states the contract as THE way to act,
+#     REPLACING patch 18's optional run_probe advertisement (the run_probe
+#     sandbox global itself stays available).
+#   * RETRY NUDGE: a turn that submits no valid plan gets one appended prompt
+#     line asking for a plan next turn (capped at TAAF_STRUCT_NUDGE_MAX
+#     consecutive nudges; PRO-LONG's Fable never needed it — a 27B will).
+#   * plan rationale: the contract asks for a 1-2 sentence `Plan:` prefix in
+#     assistant text; the duck's native message history preserves it into the
+#     next deliberation (PRO-LONG's ablation: the plan log is load-bearing).
+#   * AUTOPSY FOLDS (2026-08-09, 28 package-screen transcripts): the contract
+#     lives in the TOOL SCHEMA and the per-turn runtime-globals sentence too —
+#     run_probe died because both surfaces omitted it 1238/1238 turns and the
+#     model concluded it didn't exist; the base "observe-plan-act cycle"
+#     sentence is REPLACED (it reinforces single-stepping), not supplemented;
+#     plan steps are differ'd ONCE (patch 16's banker skips them — the one
+#     adopter quit over verbatim-duplicate reports); report lines stay terse
+#     with no running cost totals (tu93 anxiety loops).
+#   * WIGGLE VERDICT REPAIRS (same autopsy: AVATAR-verdict clones banked 0/11
+#     while CLICK went 9/9): (a) locks with displacement >> body size or
+#     single-direction-only evidence demote to CURSOR (tr87/re86/cn04 were
+#     selectors, not avatars); (b) a conserved mover subtracted from a morph
+#     diff makes the press a MOVE with terrain morphing under it (ka59/bp35
+#     rescue, `require_cover=False`); (c) coupled motion — every changed
+#     component sharing one displacement — is a HERD verdict (tu93/wa30), not
+#     UNCLEAR. CLICK classification is untouched.
+#
+# PATCH 22 — enforcement of validated-but-never-shipped mechanisms:
+#   * A-NOT-B BRAKE (offline-validated 2026-08: 17.3% of the action budget
+#     burned on 0/424-breakthrough repeats): any (masked-state-hash, action)
+#     pair observed at >= TAAF_STRUCT_BRAKE_N (default 3) CONSECUTIVE null
+#     effects is stripped from the advertised action menu AND from submitted
+#     plans, with a report line naming what was stripped and why. HARD only on
+#     HUD-mask-gated games (patch 8's tracker has a non-empty mask, so masked
+#     state identity is trustworthy); SOFT (report-only) elsewhere. MOUSE pairs
+#     are per-coordinate and never strip the MOUSE menu entry.
+#   * PHASE GATE from the human budgets (342-replay study, memory 2026-08-07:
+#     winning humans reach the first level completion in ~20 click / ~31 avatar
+#     actions): each level opens in SCOUT — plans capped at
+#     TAAF_STRUCT_SCOUT_CAP (default 5) to force hypothesis-sized probes —
+#     until first level progress OR the archetype-conditional scout budget
+#     (patch 17's GAME_MODE: CLICK -> TAAF_STRUCT_SCOUT_CLICK=20, else
+#     TAAF_STRUCT_SCOUT_AVATAR=31) is spent; then COMMIT unlocks full 20-action
+#     plans. The current phase is reported in every prompt.
+#
+# One flag arms the whole set: TAAF_STRUCT=1 (default OFF — no behavior change
+# until A/B'd). Everything observable lands in STRUCT_DIAGNOSTICS.
+
+_STRUCT_TLS = _threading.local()
+
+_STRUCT_CHANNEL = {"installed": False}  # patch 21 applied (module-level, cross-thread)
+_STRUCT_GATES = {"installed": False}  # patch 22 applied
+
+STRUCT_DIAGNOSTICS = {
+    "plans": 0,  # plan submissions (every action() call under STRUCT)
+    "plan_actions": 0,  # real actions executed through the plan channel
+    "wrapped_singles": 0,  # 1-entry submissions auto-wrapped to a 1-plan
+    "plan_lengths": {},  # requested length -> count (the adoption histogram)
+    "invalid_dropped": 0,  # entries silently dropped by the lenient parser
+    "reset_deduped": 0,  # consecutive duplicate RESETs removed
+    "cap_truncations": 0,  # plans sliced to the 20-action cap
+    "scout_truncations": 0,  # plans sliced to the SCOUT cap
+    "score_flushes": 0,  # remaining plan flushed on a score/level change
+    "brake_strips": 0,  # plan steps stripped by the hard A-not-B brake
+    "brake_soft_flags": 0,  # advisory-only brake annotations (soft games)
+    "menu_strips": 0,  # actions stripped from the advertised menu
+    "phase_transitions": 0,  # SCOUT<->COMMIT transitions (incl. level resets)
+    "reports_injected": 0,  # PLAN REPORT blocks delivered to the next prompt
+    "nudges": 0,  # retry-nudge lines appended
+    "turns_without_plan": 0,  # prompts rendered with no plan since the last one
+}
+
+_STRUCT_REPORT_KEEP = 2  # banked plan tables kept for the next prompt
+_STRUCT_STEP_MAX_LINES = 3  # change lines rendered per plan step
+_STRUCT_DIRECTIONAL_MODELS = ("UP", "DOWN", "LEFT", "RIGHT")
+
+_STRUCT_CONTRACT_HEADER = "PLAN CONTRACT — how you act"
+_STRUCT_REPORT_HEADER = (
+    "PLAN REPORT — per-step effect table from your last plan "
+    "(computed by code, not by eye)."
+)
+_STRUCT_NUDGE_LINE = (
+    "Your previous response did not produce a valid plan. Act by calling "
+    "`action([...])` from the python tool with an ordered plan of 1-20 actions "
+    "(a single action is fine — it executes as a plan of 1)."
+)
+
+# -- autopsy law (2026-08-09): every capability must live in the TOOL SCHEMA and
+# the per-turn runtime-globals sentence, not just prompt prose — the 27B
+# concluded run_probe "doesn't exist" because those two surfaces omitted it
+# 1238/1238 turns. The three exact upstream sentences the channel rewrites:
+_STRUCT_TOOL_DESC_OLD = (
+    "and `action(actions)` for executing one or more real environment actions. "
+)
+_STRUCT_TOOL_DESC_NEW = (
+    "and `action(plan)` — THE way to act: submit an ordered plan of 1-20 real "
+    "environment actions (a single action is a plan of 1); steps execute "
+    "sequentially with a per-step legality check, stop early on any score "
+    "change, and the call returns a per-step effect table. "
+)
+_STRUCT_TOOL_DESC_APPEND = (
+    "PLAN CONTRACT: act by calling `action([...])` with an ordered plan of "
+    "1-20 actions; the call returns a per-step effect table."
+)
+_STRUCT_USER_LINE_OLD = "and `action(actions)`."
+_STRUCT_USER_LINE_NEW = (
+    "and `action(plan)` — submit your ordered plan of 1-20 actions through it."
+)
+_STRUCT_CYCLE_OLD = (
+    "Treat each turn as one observe-plan-act cycle: re-understand the current "
+    "state from the newest frame, update your working world model in Python, "
+    "choose the next best action or short sequence against the goal as "
+    "currently understood, execute it, and expect to re-evaluate on the next "
+    "turn from the updated state."
+)
+_STRUCT_CYCLE_NEW = (
+    "Treat each turn as one observe-deliberate-plan cycle: re-understand the "
+    "current state from the newest frame and the PLAN REPORT, update your "
+    "working world model in Python, then commit an ORDERED PLAN of 1-20 "
+    "actions in one `action([...])` call; every step's effect comes back "
+    "measured, and you re-plan from the full report on the next turn."
+)
+
+
+def _struct_rewrite_tools(tools: Any) -> Any:
+    """Rewrite the python tool's schema description to carry the plan contract."""
+    import copy
+
+    rewritten = copy.deepcopy(tools)
+    for tool in rewritten if isinstance(rewritten, list) else []:
+        fn = tool.get("function") if isinstance(tool, dict) else None
+        if not isinstance(fn, dict) or fn.get("name") != "python":
+            continue
+        desc = str(fn.get("description") or "")
+        if _STRUCT_TOOL_DESC_OLD in desc:
+            fn["description"] = desc.replace(
+                _STRUCT_TOOL_DESC_OLD, _STRUCT_TOOL_DESC_NEW
+            )
+        elif _STRUCT_TOOL_DESC_APPEND not in desc:
+            fn["description"] = f"{desc.rstrip()} {_STRUCT_TOOL_DESC_APPEND}"
+    return rewritten
+
+
+def _struct_enabled() -> bool:
+    """Opt-in only (TAAF_STRUCT=1). Default OFF — one flag arms patches 21+22."""
+    import os
+
+    return os.environ.get("TAAF_STRUCT", "0").strip() in {"1", "true", "True"}
+
+
+def _struct_env_int(name: str, default: int, minimum: int) -> int:
+    import os
+
+    try:
+        return max(minimum, int(os.environ.get(name, "") or default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _struct_max_plan() -> int:
+    """Per-plan action cap (default 20 — PRO-LONG's proven 1-20 contract)."""
+    return _struct_env_int("TAAF_STRUCT_MAX_PLAN", 20, 1)
+
+
+def _struct_scout_cap() -> int:
+    """Plan-length cap while a level is in SCOUT phase (default 5)."""
+    return _struct_env_int("TAAF_STRUCT_SCOUT_CAP", 5, 1)
+
+
+def _struct_scout_budget_click() -> int:
+    """SCOUT action budget on CLICK games (human median ~20 to first win)."""
+    return _struct_env_int("TAAF_STRUCT_SCOUT_CLICK", 20, 1)
+
+
+def _struct_scout_budget_avatar() -> int:
+    """SCOUT action budget on avatar/other games (human median ~31)."""
+    return _struct_env_int("TAAF_STRUCT_SCOUT_AVATAR", 31, 1)
+
+
+def _struct_brake_threshold() -> int:
+    """Consecutive null effects before a (state, action) pair is braked."""
+    return _struct_env_int("TAAF_STRUCT_BRAKE_N", 3, 2)
+
+
+def _struct_nudge_max() -> int:
+    """Consecutive retry nudges before the channel stops asking (default 3)."""
+    return _struct_env_int("TAAF_STRUCT_NUDGE_MAX", 3, 1)
+
+
+def _struct_tls_state() -> dict[str, Any]:
+    state = getattr(_STRUCT_TLS, "state", None)
+    if state is None:
+        state = {
+            "reports": [],  # banked plan tables, consumed by the next prompt
+            "brake": {},  # (masked-state-hash, action-key) -> consecutive nulls
+            "phase": {
+                "level": None,
+                "phase": "SCOUT",
+                "actions": 0,
+                "reason": "level opening",
+                "transitions": [],
+            },
+            # None = no prompt rendered yet (first turn is never nudged);
+            # False = a prompt went out and no plan has landed since.
+            "plan_seen_since_prompt": None,
+            "nudge_streak": 0,
+            "last_reset": False,  # cross-call consecutive-RESET dedupe
+        }
+        _STRUCT_TLS.state = state
+    return state
+
+
+def _struct_gates_active() -> bool:
+    """Patch 22's enforcement, gated at call time by the one STRUCT flag."""
+    return _STRUCT_GATES["installed"] and _struct_enabled()
+
+
+def _struct_masked_hash(grid: Any) -> str | None:
+    """Stable short hash of a grid with patch 8's HUD cells neutralized."""
+    import hashlib
+
+    if not isinstance(grid, (list, tuple)) or not grid:
+        return None
+    try:
+        rows = [list(r) for r in grid]
+        for y, x in _hud_current_mask_cells():
+            y, x = int(y), int(x)
+            if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
+                rows[y][x] = -1
+        payload = repr([[int(v) for v in r] for r in rows]).encode()
+    except (TypeError, ValueError):
+        return None
+    return hashlib.blake2b(payload, digest_size=8).hexdigest()
+
+
+def _struct_brake_hard() -> bool:
+    """Hard enforcement only where masked state identity is trustworthy:
+    patch 8's tracker has identified a HUD (non-empty mask)."""
+    return bool(_hud_current_mask_cells())
+
+
+def _struct_action_key(engine: str, spec: dict[str, Any]) -> str:
+    """Canonical brake key: model-facing name; MOUSE is per-coordinate."""
+    from inference.agent.action_names import to_model_action
+
+    if engine == "ACTION6":
+        return f"MOUSE@{int(spec.get('row', -1))},{int(spec.get('col', -1))}"
+    return str(to_model_action(engine) or engine)
+
+
+def _struct_game_mode(valid_actions: Any = None) -> str:
+    """Patch 17's measured GAME_MODE, with a menu-shape fallback when the
+    wiggle battery has not run (TAAF_WIGGLE off or pre-battery)."""
+    ws = getattr(_WIGGLE_TLS, "state", None)
+    mode = str(getattr(ws, "mode", "") or "")
+    if mode and mode != "UNCLEAR":
+        return mode
+    names = [str(v).strip().upper() for v in (valid_actions or [])]
+    if names and not any(n in _STRUCT_DIRECTIONAL_MODELS for n in names):
+        return "CLICK"
+    return mode or "UNCLEAR"
+
+
+def _struct_scout_budget(valid_actions: Any = None) -> tuple[int, str]:
+    """Archetype-conditional SCOUT budget: (actions, mode label).
+
+    CLICK and CURSOR (selector) games take the ~20-action human budget;
+    avatar-like modes (AVATAR/HERD/ARROW-MORPH/UNCLEAR) take ~31.
+    """
+    mode = _struct_game_mode(valid_actions)
+    if mode in ("CLICK", "CURSOR"):
+        return _struct_scout_budget_click(), mode
+    return _struct_scout_budget_avatar(), mode
+
+
+def _struct_phase(tls: dict[str, Any], level: int | None) -> dict[str, Any]:
+    """Current phase record, initializing/resetting on level boundaries."""
+    ph = tls["phase"]
+    if level is None:
+        return ph
+    if ph["level"] is None:
+        ph["level"] = level
+    elif level != ph["level"]:
+        if ph["phase"] != "SCOUT" or ph["actions"] > 0:
+            ph["transitions"].append(f"level {ph['level']} -> {level}: SCOUT reopened")
+            STRUCT_DIAGNOSTICS["phase_transitions"] += 1
+        ph.update(
+            {"level": level, "phase": "SCOUT", "actions": 0, "reason": "level opening"}
+        )
+    return ph
+
+
+def _struct_phase_observe(
+    tls: dict[str, Any], level: int | None, progress: bool, valid_actions: Any
+) -> None:
+    """Fold one executed plan step into the phase state."""
+    ph = _struct_phase(tls, level)
+    ph["actions"] += 1
+    if ph["phase"] != "SCOUT":
+        return
+    if progress:
+        ph["phase"] = "COMMIT"
+        ph["reason"] = "first level progress"
+        ph["transitions"].append(f"level {ph['level']}: SCOUT -> COMMIT (progress)")
+        STRUCT_DIAGNOSTICS["phase_transitions"] += 1
+        return
+    budget, mode = _struct_scout_budget(valid_actions)
+    if ph["actions"] >= budget:
+        ph["phase"] = "COMMIT"
+        ph["reason"] = f"scout budget spent ({budget} {mode} actions)"
+        ph["transitions"].append(
+            f"level {ph['level']}: SCOUT -> COMMIT (budget {budget})"
+        )
+        STRUCT_DIAGNOSTICS["phase_transitions"] += 1
+
+
+def _struct_phase_line(tls: dict[str, Any], valid_actions: Any) -> str:
+    """One prompt line naming the phase — the model must never guess it."""
+    ph = tls["phase"]
+    budget, mode = _struct_scout_budget(valid_actions)
+    level = ph["level"] if ph["level"] is not None else "?"
+    if ph["phase"] == "SCOUT":
+        return (
+            f"PHASE: SCOUT — {ph['actions']}/{budget} scout actions used on level "
+            f"{level} ({mode} budget); plans are capped at {_struct_scout_cap()} "
+            "actions until first level progress or budget exhaustion."
+        )
+    return (
+        f"PHASE: COMMIT on level {level} ({ph['reason']}) — full "
+        f"{_struct_max_plan()}-action plans unlocked."
+    )
+
+
+def _struct_parse_plan(
+    raw: list[dict[str, Any]], tls: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """PRO-LONG's lenient whitelist parser: invalid entries are silently
+    dropped (counted + one report line), consecutive RESETs deduped, never a
+    rejection. Returns ([{spec, engine, key}...], plan-level note lines)."""
+    from inference.agent.action_names import to_engine_action
+
+    notes: list[str] = []
+    parsed: list[dict[str, Any]] = []
+    dropped = 0
+    deduped = 0
+    last_was_reset = bool(tls.get("last_reset"))
+    for spec in raw:
+        engine = to_engine_action(spec.get("action"))
+        if engine is None:
+            dropped += 1
+            continue
+        entry = dict(spec)
+        if engine == "ACTION6":
+            try:
+                entry["row"] = max(0, min(63, int(entry.get("row"))))
+                entry["col"] = max(0, min(63, int(entry.get("col"))))
+            except (TypeError, ValueError):
+                dropped += 1
+                continue
+        if engine == "RESET":
+            if last_was_reset:
+                deduped += 1
+                continue
+            last_was_reset = True
+        else:
+            last_was_reset = False
+        parsed.append(
+            {"spec": entry, "engine": engine, "key": _struct_action_key(engine, entry)}
+        )
+    if dropped:
+        STRUCT_DIAGNOSTICS["invalid_dropped"] += dropped
+        notes.append(
+            f"{dropped} invalid entr{'y' if dropped == 1 else 'ies'} dropped "
+            "(not a known action / MOUSE without integer row+col)"
+        )
+    if deduped:
+        STRUCT_DIAGNOSTICS["reset_deduped"] += deduped
+        notes.append(f"{deduped} consecutive duplicate RESET(s) removed")
+    return parsed, notes
+
+
+def plan_execute(
+    actions: Any, action_handler: Any, current_state: Any = None
+) -> dict[str, Any]:
+    """PATCH 21 executor: one plan submission -> sequential real execution.
+
+    Modeled on patch 18's probe_execute (one original-handler call per action,
+    so every installed observer sees every step), with the structural-channel
+    differences: lenient parsing instead of refusal, no per-level call budget,
+    the absolute score-change flush, patch 22's brake/phase gates, and a
+    native-compatible merged result (the last executed step's compact payload
+    plus the per-step effect table) so existing model code keeps working.
+    """
+    tls = _struct_tls_state()
+    state = dict(current_state or {})
+    raw = [
+        dict(item) if isinstance(item, dict) else {"action": str(item)}
+        for item in list(actions or [])
+    ]
+    requested = len(raw)
+    STRUCT_DIAGNOSTICS["plans"] += 1
+    STRUCT_DIAGNOSTICS["plan_lengths"][requested] = (
+        STRUCT_DIAGNOSTICS["plan_lengths"].get(requested, 0) + 1
+    )
+    if requested == 1:
+        STRUCT_DIAGNOSTICS["wrapped_singles"] += 1
+
+    plan, notes = _struct_parse_plan(raw, tls)
+    if plan:
+        tls["plan_seen_since_prompt"] = True
+        tls["nudge_streak"] = 0
+
+    cap = _struct_max_plan()
+    if len(plan) > cap:
+        STRUCT_DIAGNOSTICS["cap_truncations"] += 1
+        notes.append(f"entries beyond the {cap}-action cap were discarded")
+        plan = plan[:cap]
+
+    level = _probe_state_level(state)
+    gates = _struct_gates_active()
+    if gates:
+        ph = _struct_phase(tls, level)
+        scout_cap = _struct_scout_cap()
+        if ph["phase"] == "SCOUT" and len(plan) > scout_cap:
+            STRUCT_DIAGNOSTICS["scout_truncations"] += 1
+            notes.append(
+                f"SCOUT phase: plan truncated to {scout_cap} actions "
+                "(hypothesis-sized probes until first progress or budget spent)"
+            )
+            plan = plan[:scout_cap]
+
+    def result_table(steps: list[dict[str, Any]], stop_reason: str | None) -> dict:
+        executed_count = sum(1 for s in steps if s.get("executed"))
+        table = {
+            "plan": True,
+            "requested": requested,
+            "planned": len(plan),
+            "executed_count": executed_count,
+            # a brake-stripped step was attended to (it appears in steps), so
+            # early-stop means the executor gave up before REACHING an entry
+            "stopped_early": len(steps) < len(plan),
+            "steps": steps,
+            "notes": list(notes),
+        }
+        if gates:
+            table["phase"] = tls["phase"]["phase"]
+        if stop_reason is not None:
+            table["stop_reason"] = stop_reason
+        return table
+
+    if not plan:
+        table = result_table([], "no_valid_actions")
+        table["executed"] = False
+        table["error"] = (
+            "the plan contained no valid actions; nothing was executed"
+        )
+        tls["reports"].append(table)
+        del tls["reports"][: -_STRUCT_REPORT_KEEP]
+        return {"action_result": table, "state": state}
+
+    steps: list[dict[str, Any]] = []
+    stop_reason: str | None = None
+    last_res: dict[str, Any] | None = None
+    total_reward = 0.0
+    prev_score: int | None = None
+    prev_level: int | None = level
+    brake_n = _struct_brake_threshold()
+
+    from inference.agent.action_names import to_model_action
+
+    for entry in plan:
+        spec, engine, key = entry["spec"], entry["engine"], entry["key"]
+        model_name = str(to_model_action(engine) or engine)
+        display = key if engine == "ACTION6" else model_name
+
+        pre_grid = _probe_state_grid(state)
+        pre_hash = _struct_masked_hash(pre_grid) if gates else None
+
+        # -- patch 22 brake: strip a braked pair from the submitted plan --------
+        braked = (
+            gates
+            and pre_hash is not None
+            and tls["brake"].get((pre_hash, key), 0) >= brake_n
+        )
+        soft_brake = False
+        if braked:
+            if _struct_brake_hard():
+                STRUCT_DIAGNOSTICS["brake_strips"] += 1
+                steps.append(
+                    {
+                        "action": display,
+                        "executed": False,
+                        "stripped": True,
+                        "change_lines": [
+                            f"STRIPPED (A-not-B brake): {display} produced no "
+                            f"masked effect {brake_n}x in a row at this exact "
+                            "state — not executed"
+                        ],
+                    }
+                )
+                continue
+            STRUCT_DIAGNOSTICS["brake_soft_flags"] += 1
+            soft_brake = True
+
+        valid = [str(v) for v in (state.get("valid_actions") or [])]
+        if valid and engine != "RESET" and model_name not in valid:
+            stop_reason = f"{model_name} is not in valid_actions right now"
+            break
+        _STRUCT_TLS.in_plan = True  # patch 16's differ: plan steps report ONCE
+        try:
+            out = action_handler([spec])
+        except Exception as exc:  # noqa: BLE001 - a broken step ends the plan, not the game
+            stop_reason = f"action failed ({type(exc).__name__})"
+            break
+        finally:
+            _STRUCT_TLS.in_plan = False
+        res = (out or {}).get("action_result") or {}
+        new_state = (out or {}).get("state")
+        if isinstance(new_state, dict) and new_state:
+            state = new_state
+
+        step: dict[str, Any] = {
+            "action": str(res.get("action_display") or display),
+            "executed": bool(res.get("executed")),
+            "level": res.get("level"),
+            "score": res.get("score"),
+            "reward": res.get("reward"),
+            "board_changed": bool(res.get("board_changed")),
+            "level_completed": bool(res.get("level_completed")),
+            "game_over": bool(res.get("game_over")),
+            "run_complete": bool(res.get("run_complete")),
+        }
+        if not step["executed"]:
+            step["error"] = str(
+                res.get("error") or res.get("stop_detail") or "not executed"
+            )
+            steps.append(step)
+            stop_reason = str(res.get("stop_reason") or "not_executed")
+            break
+
+        last_res = dict(res)
+        STRUCT_DIAGNOSTICS["plan_actions"] += 1
+        tls["last_reset"] = engine == "RESET"
+        try:
+            total_reward += float(res.get("reward") or 0.0)
+        except (TypeError, ValueError):
+            pass
+
+        terminal = (
+            "run_complete"
+            if step["run_complete"]
+            else "game_over"
+            if step["game_over"]
+            else "level_completed"
+            if step["level_completed"]
+            else None
+        )
+        if terminal is not None:
+            step["change_lines"] = [
+                f"{terminal.replace('_', ' ').upper()} — scene repainted, "
+                "per-object diff skipped"
+            ]
+        else:
+            post_grid = _probe_state_grid(state)
+            if pre_grid is not None and post_grid is not None:
+                try:
+                    step["change_lines"] = diff_change_lines(
+                        pre_grid, post_grid, _hud_current_mask_cells()
+                    )
+                except Exception:  # noqa: BLE001 - narration must never break a plan
+                    step["change_lines"] = []
+            else:
+                step["change_lines"] = []
+        if soft_brake:
+            step["change_lines"].append(
+                f"BRAKE (advisory): {display} has now produced no masked effect "
+                f">= {brake_n}x in a row at the same state"
+            )
+
+        # -- patch 22 brake ledger: consecutive masked null effects ------------
+        if gates and pre_hash is not None and engine != "RESET":
+            lines = step.get("change_lines") or []
+            null_effect = (
+                terminal is None
+                and not (step.get("reward") or 0)
+                and bool(lines)
+                and str(lines[0]).startswith("NO CHANGE")
+            )
+            pair = (pre_hash, key)
+            if null_effect:
+                tls["brake"][pair] = tls["brake"].get(pair, 0) + 1
+            elif pair in tls["brake"]:
+                del tls["brake"][pair]
+
+        # -- patch 22 phase bookkeeping ----------------------------------------
+        step_level = step.get("level")
+        try:
+            step_level = int(step_level) if step_level is not None else None
+        except (TypeError, ValueError):
+            step_level = None
+        step_score = step.get("score")
+        try:
+            step_score = int(step_score) if step_score is not None else None
+        except (TypeError, ValueError):
+            step_score = None
+        progress = bool(
+            step["level_completed"]
+            or (step.get("reward") or 0)
+            or (
+                prev_score is not None
+                and step_score is not None
+                and step_score > prev_score
+            )
+        )
+        if gates:
+            _struct_phase_observe(
+                tls, step_level, progress, state.get("valid_actions")
+            )
+
+        steps.append(step)
+
+        if terminal is not None:
+            stop_reason = terminal
+            break
+        # -- absolute score-change flush: a changed score/level means the board
+        # was repainted under the plan's assumptions — force a fresh look.
+        score_changed = (
+            prev_score is not None
+            and step_score is not None
+            and step_score != prev_score
+        )
+        level_changed = (
+            prev_level is not None
+            and step_level is not None
+            and step_level != prev_level
+        )
+        if score_changed or level_changed:
+            if len(steps) < len(plan):
+                STRUCT_DIAGNOSTICS["score_flushes"] += 1
+                stop_reason = "score_changed" if score_changed else "level_changed"
+                break
+        if step_score is not None:
+            prev_score = step_score
+        if step_level is not None:
+            prev_level = step_level
+
+    executed_count = sum(1 for s in steps if s.get("executed"))
+    table = result_table(steps, stop_reason)
+
+    # -- native-compatible merged result: model code reading the usual keys off
+    # an action() return (executed/level/score/game_over/...) keeps working.
+    merged: dict[str, Any] = dict(last_res) if last_res else {}
+    if not merged:
+        merged = {
+            "executed": False,
+            "error": (
+                str(steps[0].get("error"))
+                if steps and steps[0].get("error")
+                else f"no action was executed ({stop_reason or 'plan empty'})"
+            ),
+        }
+    merged["executed"] = executed_count > 0
+    merged["reward"] = total_reward
+    merged["board_changed"] = any(bool(s.get("board_changed")) for s in steps)
+    merged["requested_count"] = requested
+    merged["executed_count"] = executed_count
+    merged["stopped_early"] = table["stopped_early"]
+    merged["executed_actions"] = [
+        str(s.get("action")) for s in steps if s.get("executed")
+    ]
+    merged.update(
+        {k: table[k] for k in ("plan", "planned", "steps", "notes") if k in table}
+    )
+    if "phase" in table:
+        merged["phase"] = table["phase"]
+    if stop_reason is not None:
+        merged["stop_reason"] = stop_reason
+
+    tls["reports"].append(table)
+    del tls["reports"][: -_STRUCT_REPORT_KEEP]
+    return {"action_result": merged, "state": state}
+
+
+def _struct_prompt_block() -> str:
+    """Render (and consume) the banked plan tables; '' when there is nothing."""
+    tls = getattr(_STRUCT_TLS, "state", None)
+    if not tls or not tls.get("reports"):
+        return ""
+    rendered: list[str] = [_STRUCT_REPORT_HEADER]
+    for table in tls["reports"]:
+        head = (
+            f"plan ({table.get('requested', 0)} requested, "
+            f"{table.get('executed_count', 0)} executed"
+        )
+        if table.get("stop_reason"):
+            head += f", stopped: {table['stop_reason']}"
+        rendered.append(head + "):")
+        for index, step in enumerate(table.get("steps") or [], start=1):
+            lines = list(step.get("change_lines") or [])
+            if step.get("error"):
+                lines = [f"REFUSED: {step['error']}"]
+            shown = lines[:_STRUCT_STEP_MAX_LINES]
+            overflow = len(lines) - len(shown)
+            first = shown[0] if shown else "(no observation)"
+            rendered.append(f"  {index}. {step.get('action')}: {first}")
+            rendered.extend(f"     {line}" for line in shown[1:])
+            if overflow > 0:
+                rendered.append(f"     +{overflow} more change lines")
+        if table.get("error"):
+            rendered.append(f"  (plan not executed: {table['error']})")
+        for note in table.get("notes") or []:
+            rendered.append(f"  note: {note}")
+    tls["reports"] = []
+    STRUCT_DIAGNOSTICS["reports_injected"] += 1
+    return "\n".join(rendered)
+
+
+def _struct_contract_text() -> str:
+    """Patch 21's system-prompt contract — the plan channel is THE way to act."""
+    cap = _struct_max_plan()
+    return (
+        f"{_STRUCT_CONTRACT_HEADER}:\n"
+        f"- Your reply executes a PLAN: call `action([...])` from the python tool "
+        f"with an ORDERED LIST of 1-{cap} actions. A single action is a plan of 1. "
+        f"Entries beyond {cap} are discarded; invalid entries are dropped, never "
+        "rejected.\n"
+        "- The plan executes sequentially with a legality check before every "
+        "step; execution stops early at a level completion, game over, or ANY "
+        "score change — the remaining plan is flushed so you can look at the new "
+        "board before spending more actions.\n"
+        "- Every step's effect is measured by code (HUD-masked structured change "
+        "lines): the full per-step effect table is the call's return value AND is "
+        "repeated in your next prompt as a PLAN REPORT — one deliberation buys N "
+        "observations, so ACT IN PLANS, not single actions.\n"
+        "- Doctrine: short plans (1-5) to test hypotheses; long plans (up to "
+        f"{cap}) for proven sequences.\n"
+        "- Before the tool call, state a 1-2 sentence `Plan:` rationale in your "
+        "reply text — it is kept in your history and your future self will need "
+        "it.\n"
+    )
+
+
+def _struct_gates_text() -> str:
+    """Patch 22's system-prompt paragraph: the enforced gates, stated plainly."""
+    return (
+        "ENFORCED GATES (applied by the harness, reported in your prompt):\n"
+        f"- SCOUT phase: each level opens with plans capped at "
+        f"{_struct_scout_cap()} actions (hypothesis-sized probes). After the "
+        "first level progress — or once the scout budget (~"
+        f"{_struct_scout_budget_click()} actions on click games, ~"
+        f"{_struct_scout_budget_avatar()} on avatar games) is spent — COMMIT "
+        f"unlocks full {_struct_max_plan()}-action plans. The current phase is "
+        "shown in your prompt.\n"
+        f"- A-not-B brake: an action that produced no masked effect "
+        f"{_struct_brake_threshold()} times in a row at the SAME exact state is "
+        "stripped from the menu and from submitted plans; the report names what "
+        "was stripped and why. Repeating a proven no-op is never the answer — "
+        "change something.\n"
+    )
+
+
+def _struct_gate_prompt_prep(
+    kwargs: dict[str, Any],
+) -> tuple[list[str], dict[str, Any]]:
+    """Patch 22 prompt prep: phase line + menu-level A-not-B stripping.
+
+    Returns (extra prompt lines, possibly-modified kwargs). The advertised
+    menu is only HARD-stripped on HUD-mask-gated games and never below one
+    remaining action; MOUSE pairs are per-coordinate so they are reported but
+    never remove the MOUSE menu entry.
+    """
+    tls = _struct_tls_state()
+    valid = kwargs.get("valid_actions")
+    valid_list = [str(v) for v in valid] if isinstance(valid, list) else []
+    lines: list[str] = [_struct_phase_line(tls, valid_list)]
+
+    frame = kwargs.get("current_frame")
+    grid = getattr(frame, "grid", None)
+    state_hash = _struct_masked_hash(grid) if grid is not None else None
+    if state_hash is None:
+        return lines, kwargs
+
+    brake_n = _struct_brake_threshold()
+    braked_keys = [
+        key
+        for (h, key), count in tls["brake"].items()
+        if h == state_hash and count >= brake_n
+    ]
+    if not braked_keys:
+        return lines, kwargs
+
+    hard = _struct_brake_hard()
+    menu_braked = [k for k in braked_keys if "@" not in k]
+    mouse_braked = [k for k in braked_keys if "@" in k]
+    if hard and menu_braked and valid_list:
+        remaining = [v for v in valid_list if v not in menu_braked]
+        stripped = [v for v in valid_list if v in menu_braked]
+        if stripped and remaining:
+            kwargs = dict(kwargs)
+            kwargs["valid_actions"] = remaining
+            STRUCT_DIAGNOSTICS["menu_strips"] += len(stripped)
+            for name in stripped:
+                lines.append(
+                    f"A-NOT-B BRAKE: {name} stripped from the menu — no masked "
+                    f"effect {brake_n}x in a row at this exact state."
+                )
+            menu_braked = [k for k in menu_braked if k not in stripped]
+    for key in menu_braked:
+        lines.append(
+            f"BRAKE (advisory): {key} has produced no masked effect {brake_n}x "
+            "in a row at this exact state."
+        )
+    if mouse_braked:
+        shown = ", ".join(k.replace("MOUSE@", "") for k in mouse_braked[:6])
+        more = len(mouse_braked) - min(len(mouse_braked), 6)
+        lines.append(
+            f"A-NOT-B BRAKE: MOUSE clicks at (row,col) {shown}"
+            + (f" +{more} more" if more > 0 else "")
+            + f" are proven no-ops at this state ({brake_n}x) and are stripped "
+            "from plans."
+        )
+    return lines, kwargs
+
+
+def patch_struct_channel() -> str:
+    """PATCH 21: mandatory plan-list channel through the native action() seam."""
+    from inference.agent import python_tool_sandbox as sandbox_mod
+    from inference.agent import tool_agent
+    from inference.framework import solver
+
+    # -- presence gates (patch-9 law: verify every seam, decline cleanly) ---------
+    # The channel rides patch 18's host-side action() interception; without it
+    # there is no seam to route plans through.
+    if not getattr(sandbox_mod.run_sandboxed_python, "_run_probe_patched", False):
+        return "patch21 struct: FAIL (patch18 interception seam not installed)"
+    agent_cls = getattr(tool_agent, "ToolAgent", None)
+    if agent_cls is None or not hasattr(agent_cls, "_build_user_prompt"):
+        return "patch21 struct: FAIL (ToolAgent._build_user_prompt not found)"
+    builder = getattr(tool_agent, "_build_system_prompt", None)
+    if not callable(builder):
+        return "patch21 struct: FAIL (_build_system_prompt not found)"
+    session_cls = getattr(solver, "_HarnessGameSession", None)
+    if session_cls is None or not hasattr(session_cls, "play"):
+        return "patch21 struct: FAIL (_HarnessGameSession.play not found)"
+    original_tools = getattr(agent_cls, "_tools", None)
+    if not callable(original_tools):
+        return "patch21 struct: FAIL (ToolAgent._tools not found)"
+    if getattr(agent_cls._build_user_prompt, "_struct_channel_patched", False):
+        return "patch21 struct: SKIP (already applied)"
+
+    # -- 21a: arm the executor hook inside patch 18's handler (call-time gated) ---
+    _STRUCT_CHANNEL["installed"] = True
+
+    # -- 21b: per-game state reset (reused worker threads must not leak state) ----
+    original_play = session_cls.play
+
+    def play(self: Any) -> None:
+        _STRUCT_TLS.state = None
+        _STRUCT_TLS.in_plan = False
+        return original_play(self)
+
+    # -- 21c: the TOOL SCHEMA carries the contract (autopsy law: the model
+    # plans from the schema and the globals sentence, not from prompt prose) ------
+    def _tools(self: Any, *args: Any, **kwargs: Any) -> Any:
+        tools = original_tools(self, *args, **kwargs)
+        if not _struct_enabled():
+            return tools
+        try:
+            return _struct_rewrite_tools(tools)
+        except Exception:  # noqa: BLE001 - schema rewrite must never break a turn
+            return tools
+
+    # -- 21d: the contract in the system prompt: the observe-plan-act framing is
+    # REPLACED (not supplemented — it reinforces single-stepping), and the
+    # contract block replaces run_probe's advert (suppressed inside patch 18) ----
+    def _build_system_prompt(*args: Any, **kwargs: Any) -> str:
+        prompt = builder(*args, **kwargs)
+        if _struct_enabled():
+            prompt = prompt.replace(_STRUCT_CYCLE_OLD, _STRUCT_CYCLE_NEW)
+            prompt = f"{prompt}\n\n{_struct_contract_text()}"
+        return prompt
+
+    # -- 21e: PLAN REPORT + retry nudge + the per-turn runtime-globals sentence ---
+    original_build = agent_cls._build_user_prompt
+
+    def _build_user_prompt(self: Any, *args: Any, **kwargs: Any) -> str:
+        prompt = original_build(self, *args, **kwargs)
+        if not _struct_enabled():
+            return prompt
+        try:
+            prompt = prompt.replace(_STRUCT_USER_LINE_OLD, _STRUCT_USER_LINE_NEW)
+            tls = _struct_tls_state()
+            blocks: list[str] = []
+            block = _struct_prompt_block()
+            if block:
+                blocks.append(block)
+            # Retry nudge: a rendered prompt whose turn produced no valid plan.
+            if tls["plan_seen_since_prompt"] is False:
+                STRUCT_DIAGNOSTICS["turns_without_plan"] += 1
+                tls["nudge_streak"] += 1
+                if tls["nudge_streak"] <= _struct_nudge_max():
+                    STRUCT_DIAGNOSTICS["nudges"] += 1
+                    blocks.append(_STRUCT_NUDGE_LINE)
+            tls["plan_seen_since_prompt"] = False
+        except Exception:  # noqa: BLE001 - the report must never break a turn
+            return prompt
+        return "\n\n".join([*blocks, prompt]) if blocks else prompt
+
+    _forward_patch_markers(play, original_play)
+    _forward_patch_markers(_tools, original_tools)
+    _forward_patch_markers(_build_system_prompt, builder)
+    _forward_patch_markers(_build_user_prompt, original_build)
+    play._struct_play_patched = True  # type: ignore[attr-defined]
+    _tools._struct_tools_patched = True  # type: ignore[attr-defined]
+    _build_system_prompt._struct_prompt_patched = True  # type: ignore[attr-defined]
+    _build_user_prompt._struct_channel_patched = True  # type: ignore[attr-defined]
+    session_cls.play = play
+    agent_cls._tools = _tools
+    tool_agent._build_system_prompt = _build_system_prompt
+    agent_cls._build_user_prompt = _build_user_prompt
+
+    if _struct_enabled():
+        return "patch21 struct: OK (TAAF_STRUCT=1 — plan channel armed)"
+    return "patch21 struct: OK (dormant — opt in with TAAF_STRUCT=1)"
+
+
+def patch_struct_gates() -> str:
+    """PATCH 22: enforced A-not-B brake + human-budget phase gate."""
+    from inference.agent import tool_agent
+
+    if not _STRUCT_CHANNEL["installed"]:
+        return "patch22 gates: FAIL (needs patch21 structural channel)"
+    agent_cls = getattr(tool_agent, "ToolAgent", None)
+    if agent_cls is None or not hasattr(agent_cls, "_build_user_prompt"):
+        return "patch22 gates: FAIL (ToolAgent._build_user_prompt not found)"
+    builder = getattr(tool_agent, "_build_system_prompt", None)
+    if not callable(builder):
+        return "patch22 gates: FAIL (_build_system_prompt not found)"
+    if getattr(agent_cls._build_user_prompt, "_struct_gates_patched", False):
+        return "patch22 gates: SKIP (already applied)"
+
+    # -- 22a: arm the executor-side gates (brake ledger, phase bookkeeping) -------
+    _STRUCT_GATES["installed"] = True
+
+    # -- 22b: the gates paragraph in the system prompt ----------------------------
+    def _build_system_prompt(*args: Any, **kwargs: Any) -> str:
+        prompt = builder(*args, **kwargs)
+        if _struct_enabled():
+            prompt = f"{prompt}\n\n{_struct_gates_text()}"
+        return prompt
+
+    # -- 22c: phase line + menu-level brake stripping in the analyzer prompt ------
+    original_build = agent_cls._build_user_prompt
+
+    def _build_user_prompt(self: Any, *args: Any, **kwargs: Any) -> str:
+        extra: list[str] = []
+        if _struct_gates_active():
+            try:
+                extra, kwargs = _struct_gate_prompt_prep(kwargs)
+            except Exception:  # noqa: BLE001 - gating must never break a turn
+                extra = []
+        prompt = original_build(self, *args, **kwargs)
+        return "\n".join([*extra, ""]) + prompt if extra else prompt
+
+    _forward_patch_markers(_build_system_prompt, builder)
+    _forward_patch_markers(_build_user_prompt, original_build)
+    _build_system_prompt._struct_gates_prompt_patched = True  # type: ignore[attr-defined]
+    _build_user_prompt._struct_gates_patched = True  # type: ignore[attr-defined]
+    tool_agent._build_system_prompt = _build_system_prompt
+    agent_cls._build_user_prompt = _build_user_prompt
+
+    if _struct_enabled():
+        return "patch22 gates: OK (TAAF_STRUCT=1 — brake + phase gate armed)"
+    return "patch22 gates: OK (dormant — opt in with TAAF_STRUCT=1)"
+
+
 def apply_all(verbose: bool = True) -> list[str]:
     """Apply every patch. Each is independent; one failing does not block the others."""
     results = []
@@ -6116,6 +7288,15 @@ def apply_all(verbose: bool = True) -> list[str]:
         # reset; its executor hook is a static call inside patch 18's
         # probe_execute, gated by TAAF_VERIFY at call time.
         patch_verify_at_commit,
+        # patch 21 after 18 (its plan hook lives inside 18's handler and its
+        # PLAN REPORT prepend must render above the probe report) and after 19
+        # (19 wraps the system prompt via a data descriptor; 21's wrap must be
+        # outermost so the contract lands below the scaffold).
+        patch_struct_channel,
+        # patch 22 LAST: its prompt wrap must be outermost so the PHASE/BRAKE
+        # lines render at the very top and its valid_actions kwarg filter runs
+        # before every inner prompt renderer reads the menu.
+        patch_struct_gates,
     ):
         try:
             results.append(fn())

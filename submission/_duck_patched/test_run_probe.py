@@ -573,10 +573,12 @@ def test_play_resets_probe_budgets(monkeypatch):
     tls = _probe_tls_state()
     tls["actions_total"] = 7
     tls["calls_by_level"][1] = 3
-    # patch 18's play wrapper clears the TLS BEFORE delegating; a hostile stub
-    # makes every downstream wrapper raise immediately after the reset ran.
+    # patch 18's play wrapper clears the TLS BEFORE delegating; the stub gives
+    # sibling wrappers that may sit OUTSIDE 18 in this process (patch 10 reads
+    # `self.game` pre-delegation) enough surface to delegate through, and the
+    # true original play then raises after every wrapper's reset ran.
     try:
-        duck_solver._HarnessGameSession.play(SimpleNamespace())
+        duck_solver._HarnessGameSession.play(SimpleNamespace(game=SimpleNamespace()))
     except Exception:
         pass
     fresh = _probe_tls_state()

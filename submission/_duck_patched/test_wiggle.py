@@ -197,12 +197,16 @@ def test_slot_cursor_jump_beyond_search_radius_is_a_move():
     post = _paint(_board(0, 64), [(y, x + 28) for y, x in marker], 3)
     out = wiggle_observe_transition(state, "ACTION4", {}, pre, post)
     assert out["kind"] == "move" and out["sign"] == (0, 1)
-    # a second identical press locks the cursor as the avatar
+    # a second identical press locks the translation — and the 2026-08-09
+    # autopsy repair demotes it to CURSOR (displacement 28 >> body extent 5;
+    # tr87 WAS this misfire: a selector locked as AVATAR, avatar playbook
+    # misled the model). The motion itself must still be read as a move.
     pre2 = post
     post2 = _paint(_board(0, 64), [(y, x + 42) for y, x in marker], 3)  # jump again
     out2 = wiggle_observe_transition(state, "ACTION4", {}, pre2, post2)
     assert out2["kind"] == "move" and out2["sign"] == (0, 1)
-    assert wiggle_verdict(state)[0] == "AVATAR"
+    mode, reason = wiggle_verdict(state)
+    assert mode == "CURSOR" and "displacement" in reason
 
 
 def test_jump_rejects_shape_change_and_unconserved_colors():
