@@ -94,6 +94,28 @@ Source pinning: the builder refuses to inline a `duck_patches.py` that
 differs from HEAD (uncommitted in-flight patches are the silent-drift failure
 class); pin explicitly with `PC_PATCHES_REF=<ref>` when needed.
 
+## Struct screen (structural plan channel, final kernel of the 2026-08-09 sprint)
+
+Candidate-only screen: `struct/` kernel
+(`ahmedmobasher86/arc-agi-3-struct-screen`), arm env = BASE_ENV +
+`{TAAF_DIFF_LINES,TAAF_WIGGLE,TAAF_DISPATCH,TAAF_STRUCT}=1`
+(`TAAF_RUN_PROBE` unset — superseded by the plan channel; `TAAF_VERIFY`
+unset — one variable at a time). Read against the banked base pair (11/12
+excl-ft09) AND the package screen (10) with `classify_struct.py`; same
+ADVANCE bars. The headline number is ADOPTION:
+`result.adoption.plan_actions_per_llm_turn` (plan-actions per
+ToolAgent.analyze call; banked base ~1.0, cfeb92a mock dry run 4.65). No
+parallel-load probe cell (already measured: +41%/+36%).
+
+```bash
+.venv/bin/python submission/_ab_patch_closure/build_struct_screen.py
+.venv/bin/python submission/_ab_patch_closure/dry_run_struct.py
+kaggle kernels push -p submission/_ab_patch_closure/struct --accelerator NvidiaRtxPro6000
+kaggle kernels output ahmedmobasher86/arc-agi-3-struct-screen -p scratchpad/struct_screen
+.venv/bin/python submission/_ab_patch_closure/classify_struct.py \
+  scratchpad/struct_screen/patch_closure_result.json
+```
+
 ## Reading rules (pre-registered; do not move after the data lands)
 
 - **GO** — >= 2 candidate-only FIRST unlocks on the never-unlocked targets

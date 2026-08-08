@@ -29,6 +29,7 @@ import urllib.request as _pc_urlreq
 PC_SESSIONS = []                 # (run_token, session) — filled by the registry
 _PC_RUN = {"token": None}
 PC_ANIMATION_UPTAKE = {"payload_deliveries": 0, "frames_delivered": 0}
+PC_LLM_TURNS = {"analyze_calls": 0}   # deliberations — the adoption denominator
 
 
 def _pc_patch_module():
@@ -165,6 +166,33 @@ def _pc_install_registry():
     cls.play = play
 
 
+def _pc_install_turn_counter():
+    """Count LLM DELIBERATIONS (ToolAgent.analyze calls) — the denominator of
+    the adoption metric. The behavioural probe's `turns` cannot serve here:
+    under TAAF_STRUCT every plan step executes as its own single-action batch
+    (patch 18's one-action-per-handler-call pattern), so batch_index==1 fires
+    per STEP and probe actions_per_turn reads 1.0 by construction. cfeb92a's
+    adoption dry run used mock-brain POSTs; analyze calls are the kernel-side
+    equivalent (the mock makes exactly one POST per analyze)."""
+    from inference.agent import tool_agent as _ta
+
+    agent_cls = _ta.ToolAgent
+    if getattr(agent_cls.analyze, "_pc_turns_counted", False):
+        return True
+    orig = agent_cls.analyze
+
+    def analyze(self, *args, **kwargs):
+        PC_LLM_TURNS["analyze_calls"] += 1
+        return orig(self, *args, **kwargs)
+
+    for k, v in vars(orig).items():
+        if k.endswith("_patched"):
+            setattr(analyze, k, v)
+    analyze._pc_turns_counted = True
+    agent_cls.analyze = analyze
+    return True
+
+
 def _pc_install_animation_counter():
     """Wrap the patch module's _animation_current_payload (which patch15's
     sandbox route resolves at call time) so every non-empty animation payload
@@ -194,13 +222,16 @@ def _pc_antifreeze_snapshot():
     return {"triggers": int(diag.get("triggers", 0) or 0)} if isinstance(diag, dict) else None
 
 
-# Patches 16-19 (probe-infrastructure package) module counters, snapshotted as
-# deltas like antifreeze/compact. Absent on pre-package patch bytes -> None.
+# Patches 16-22 (probe-infrastructure package + structural channel) module
+# counters, snapshotted as deltas like antifreeze/compact. Absent attrs (older
+# patch bytes) are simply omitted. Values are ints or one level of int->int
+# histogram (STRUCT_DIAGNOSTICS["plan_lengths"]).
 _PC_PACKAGE_DIAG_ATTRS = {
     "diff_lines": "DIFF_LINES_DIAGNOSTICS",
     "wiggle": "WIGGLE_DIAGNOSTICS",
     "run_probe": "RUN_PROBE_DIAGNOSTICS",
     "dispatch": "DISPATCH_DIAGNOSTICS",
+    "struct": "STRUCT_DIAGNOSTICS",
 }
 
 
@@ -211,18 +242,36 @@ def _pc_package_snapshot():
     out = {}
     for key, attr in _PC_PACKAGE_DIAG_ATTRS.items():
         diag = getattr(mod, attr, None)
-        if isinstance(diag, dict):
-            out[key] = {k: int(v or 0) for k, v in diag.items()
-                        if isinstance(v, (int, float))}
+        if not isinstance(diag, dict):
+            continue
+        snap = {}
+        for k, v in diag.items():
+            if isinstance(v, (int, float)):
+                snap[k] = int(v or 0)
+            elif isinstance(v, dict):  # histogram (e.g. plan_lengths)
+                snap[k] = {str(hk): int(hv or 0) for hk, hv in v.items()
+                           if isinstance(hv, (int, float))}
+        out[key] = snap
     return out or None
 
 
 def _pc_package_delta(before, after):
     if before is None or after is None:
         return None
-    return {key: {k: after.get(key, {}).get(k, 0) - before.get(key, {}).get(k, 0)
-                  for k in after.get(key, {})}
-            for key in after}
+    out = {}
+    for key in after:
+        b, a = before.get(key, {}), after[key]
+        d = {}
+        for k, v in a.items():
+            if isinstance(v, dict):
+                bh = b.get(k, {}) if isinstance(b.get(k), dict) else {}
+                d[k] = {hk: v.get(hk, 0) - bh.get(hk, 0)
+                        for hk in set(v) | set(bh)
+                        if v.get(hk, 0) - bh.get(hk, 0)}
+            else:
+                d[k] = v - (b.get(k, 0) if isinstance(b.get(k), (int, float)) else 0)
+        out[key] = d
+    return out
 
 
 def _pc_compact_snapshot():
@@ -498,9 +547,12 @@ async def pc_main(bm, target, working_dir, arm, arm_env, hypothesis, geometry,
 
         stage["s"] = "install_instruments"
         _pc_install_registry()
+        if not _pc_install_turn_counter():
+            raise RuntimeError("[pc] LLM-turn counter could not install")
         if not _pc_install_animation_counter():
             raise RuntimeError("[pc] animation uptake counter could not install "
                                "(_animation_current_payload missing from the patch module)")
+        turns_before = dict(PC_LLM_TURNS)
         anim_before = dict(PC_ANIMATION_UPTAKE)
         antifreeze_before = _pc_antifreeze_snapshot()
         compact_before = _pc_compact_snapshot()
@@ -631,6 +683,22 @@ async def pc_main(bm, target, working_dir, arm, arm_env, hypothesis, geometry,
             result["patch_diagnostics"] = collect_patch_diagnostics(
                 sessions, anim_delta, antifreeze_delta, compact_delta,
                 package_delta=package_delta)
+
+            # -- ADOPTION: real env actions per LLM deliberation ---------------
+            llm_turns = PC_LLM_TURNS["analyze_calls"] - turns_before["analyze_calls"]
+            actions_total_run = sum(int(r.get("actions_total") or 0) for r in rows)
+            struct_d = (package_delta or {}).get("struct") or {}
+            result["adoption"] = {
+                "llm_turns": llm_turns,
+                "actions_total": actions_total_run,
+                "actions_per_llm_turn": (
+                    round(actions_total_run / llm_turns, 2) if llm_turns else None),
+                "plan_actions": int(struct_d.get("plan_actions", 0) or 0),
+                "plan_actions_per_llm_turn": (
+                    round(int(struct_d.get("plan_actions", 0) or 0) / llm_turns, 2)
+                    if llm_turns else None),
+            }
+            print(f"[pc] adoption: {result['adoption']}", flush=True)
             stalls = result["patch_diagnostics"]["watchdog"]["stall_s_observed"]
             identity["watchdog_stall_s_observed"] = stalls
             expected_stall = float(arm_env.get("TAAF_WATCHDOG_STALL_S", "600"))
