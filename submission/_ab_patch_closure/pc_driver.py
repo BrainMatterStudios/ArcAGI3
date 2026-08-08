@@ -194,6 +194,37 @@ def _pc_antifreeze_snapshot():
     return {"triggers": int(diag.get("triggers", 0) or 0)} if isinstance(diag, dict) else None
 
 
+# Patches 16-19 (probe-infrastructure package) module counters, snapshotted as
+# deltas like antifreeze/compact. Absent on pre-package patch bytes -> None.
+_PC_PACKAGE_DIAG_ATTRS = {
+    "diff_lines": "DIFF_LINES_DIAGNOSTICS",
+    "wiggle": "WIGGLE_DIAGNOSTICS",
+    "run_probe": "RUN_PROBE_DIAGNOSTICS",
+    "dispatch": "DISPATCH_DIAGNOSTICS",
+}
+
+
+def _pc_package_snapshot():
+    mod = _pc_patch_module()
+    if mod is None:
+        return None
+    out = {}
+    for key, attr in _PC_PACKAGE_DIAG_ATTRS.items():
+        diag = getattr(mod, attr, None)
+        if isinstance(diag, dict):
+            out[key] = {k: int(v or 0) for k, v in diag.items()
+                        if isinstance(v, (int, float))}
+    return out or None
+
+
+def _pc_package_delta(before, after):
+    if before is None or after is None:
+        return None
+    return {key: {k: after.get(key, {}).get(k, 0) - before.get(key, {}).get(k, 0)
+                  for k in after.get(key, {})}
+            for key in after}
+
+
 def _pc_compact_snapshot():
     mod = _pc_patch_module()
     diag = getattr(mod, "COMPACT_DIAGNOSTICS", None) if mod else None
@@ -246,6 +277,17 @@ def _pc_session_diag(session):
     rp = getattr(session, "_win_replay_result", None)
     if rp is not None:
         d["replay"] = rp
+    ws = getattr(session, "_wiggle_state", None)
+    if ws is not None:  # patch17 per-game controllability record
+        try:
+            d["wiggle"] = {
+                "mode": str(getattr(ws, "mode", "UNCLEAR")),
+                "battery_done": bool(getattr(ws, "battery_done", False)),
+                "battery_presses": int(getattr(ws, "battery_presses", 0) or 0),
+                "reprobe_presses": int(getattr(ws, "reprobe_presses", 0) or 0),
+            }
+        except Exception as e:  # noqa: BLE001
+            d["wiggle"] = {"error": repr(e)}
     if getattr(session, "_graph_state", None) is not None:
         mod = _pc_patch_module()
         try:
@@ -281,13 +323,17 @@ _PC_GRAPH_DIAG_KEYS = (
 )
 
 
-def collect_patch_diagnostics(sessions, animation_delta, antifreeze_delta, compact_delta):
-    """The arm's mechanism-level diagnostics block, frozen shape (the classifier
-    reads animation.payload_deliveries, graph.grinder_*, watchdog.stall_kills)."""
+def collect_patch_diagnostics(sessions, animation_delta, antifreeze_delta, compact_delta,
+                              package_delta=None):
+    """The arm's mechanism-level diagnostics block, frozen shape (the closure
+    classifier reads animation.payload_deliveries, graph.grinder_*,
+    watchdog.stall_kills; the package screen additionally reads diff_lines /
+    wiggle / run_probe / dispatch and the per-session mode histogram)."""
     graph = {k: 0 for k in _PC_GRAPH_DIAG_KEYS}
     graph["sessions_with_graph_state"] = 0
     stall_kills = wall_kills = resets = 0
     stall_s_observed = set()
+    wiggle_modes = {}
     for sess in sessions:
         gs = getattr(sess, "_graph_state", None)
         if gs is not None:
@@ -301,7 +347,11 @@ def collect_patch_diagnostics(sessions, animation_delta, antifreeze_delta, compa
             resets += int(wd.get("resets_done", 0) or 0)
             if wd.get("stall_s") is not None:
                 stall_s_observed.add(float(wd["stall_s"]))
-    return {
+        ws = getattr(sess, "_wiggle_state", None)
+        if ws is not None:
+            mode = str(getattr(ws, "mode", "UNCLEAR"))
+            wiggle_modes[mode] = wiggle_modes.get(mode, 0) + 1
+    out = {
         "animation": dict(animation_delta),
         "graph": graph,
         "watchdog": {"stall_kills": stall_kills, "wall_cap_kills": wall_kills,
@@ -310,6 +360,11 @@ def collect_patch_diagnostics(sessions, animation_delta, antifreeze_delta, compa
         "antifreeze": antifreeze_delta,
         "compact": compact_delta,
     }
+    if package_delta is not None:
+        out.update(package_delta)  # diff_lines / wiggle / run_probe / dispatch
+    if wiggle_modes:
+        out["wiggle_modes_assigned"] = wiggle_modes
+    return out
 
 
 def _pc_row_tokens(gr):
@@ -366,7 +421,7 @@ def pc_load_baselines(env_dir):
 async def pc_main(bm, target, working_dir, arm, arm_env, hypothesis, geometry,
                   source_base_sha256, patch_sha256,
                   behav_report=None, behav_assert=None,
-                  dry_run=False, dry_exercise=None):
+                  dry_run=False, dry_exercise=None, reading=None):
     """Run ONE arm at the given geometry and write patch_closure_result.json.
 
     `dry_exercise(sessions)` is a dry-run-only seam invoked after the wave and
@@ -395,6 +450,11 @@ async def pc_main(bm, target, working_dir, arm, arm_env, hypothesis, geometry,
         "stage": "init",
         "error": None,
     }
+    if reading is not None:
+        # Pre-registered reading contract, written verbatim into the artifact
+        # header so the analysis cannot quietly move the goalposts afterwards
+        # (the _ab_wmr precedent).
+        result["pre_registered_reading"] = reading
 
     def dump():
         result["stage"] = stage["s"]
@@ -444,6 +504,7 @@ async def pc_main(bm, target, working_dir, arm, arm_env, hypothesis, geometry,
         anim_before = dict(PC_ANIMATION_UPTAKE)
         antifreeze_before = _pc_antifreeze_snapshot()
         compact_before = _pc_compact_snapshot()
+        package_before = _pc_package_snapshot()
         dump()
 
         # -- official ids + competition server (the _rig mechanism) -------------
@@ -566,8 +627,10 @@ async def pc_main(bm, target, working_dir, arm, arm_env, hypothesis, geometry,
             compact_delta = (
                 {k: compact_after.get(k, 0) - compact_before.get(k, 0) for k in compact_after}
                 if compact_before is not None and compact_after is not None else None)
+            package_delta = _pc_package_delta(package_before, _pc_package_snapshot())
             result["patch_diagnostics"] = collect_patch_diagnostics(
-                sessions, anim_delta, antifreeze_delta, compact_delta)
+                sessions, anim_delta, antifreeze_delta, compact_delta,
+                package_delta=package_delta)
             stalls = result["patch_diagnostics"]["watchdog"]["stall_s_observed"]
             identity["watchdog_stall_s_observed"] = stalls
             expected_stall = float(arm_env.get("TAAF_WATCHDOG_STALL_S", "600"))

@@ -143,15 +143,47 @@ print("[pc] behavioural probe ACTIVE (identical in both arms)", flush=True)
 '''
 
 
+def _patches_bytes() -> bytes:
+    """duck_patches.py bytes for inlining — SOURCE-PIN AWARE.
+
+    2026-08-09 lesson: the package screen was nearly built from UNCOMMITTED
+    in-flight patch20 edits sitting in the working tree. A kernel must inline
+    bytes traceable to a commit, so:
+      * PC_PATCHES_REF=<git ref>  -> inline that ref's blob (e.g. HEAD);
+      * unset + working file matches HEAD -> working file (status quo);
+      * unset + working file DIRTY -> hard abort naming both shas.
+    """
+    import os
+    import subprocess
+
+    rel = "submission/_duck_patched/duck_patches.py"
+    ref = os.environ.get("PC_PATCHES_REF", "").strip()
+    if ref:
+        return subprocess.check_output(["git", "-C", str(REPO), "show", f"{ref}:{rel}"])
+    working = PATCHES.read_bytes()
+    try:
+        head = subprocess.check_output(["git", "-C", str(REPO), "show", f"HEAD:{rel}"])
+    except Exception:  # noqa: BLE001 - no git (e.g. exported tree): trust the file
+        return working
+    if working != head:
+        raise SystemExit(
+            "duck_patches.py in the working tree differs from HEAD "
+            f"(working sha256 {hashlib.sha256(working).hexdigest()[:12]}, "
+            f"HEAD {hashlib.sha256(head).hexdigest()[:12]}). Refusing to inline "
+            "uncommitted patch bytes into a kernel: commit them, or pin the "
+            "source explicitly with PC_PATCHES_REF=HEAD (or another ref).")
+    return working
+
+
 def _source_hashes() -> tuple[str, str]:
     return (
         hashlib.sha256(BASE_NB.read_bytes()).hexdigest(),
-        hashlib.sha256(PATCHES.read_bytes()).hexdigest(),
+        hashlib.sha256(_patches_bytes()).hexdigest(),
     )
 
 
-def _arm_pin_block(arm: str) -> str:
-    env_literal = json.dumps(ARM_ENV[arm], indent=4)
+def _arm_pin_block(arm: str, arm_env: dict[str, str]) -> str:
+    env_literal = json.dumps(arm_env, indent=4)
     return (
         "\n# --- ARM ENVIRONMENT: pinned IMMEDIATELY BEFORE apply_all() ---------------------\n"
         "# (frozen in patch_closure_config.py; the classifier rejects any drift)\n"
@@ -163,27 +195,30 @@ def _arm_pin_block(arm: str) -> str:
     )
 
 
-def hook_cell(arm: str) -> str:
+def hook_cell(arm: str, arm_env: dict[str, str]) -> str:
     return (
         "# ============================================================================\n"
-        f"# Patch-closure arm: {arm.upper()}. Inlined from\n"
+        f"# Patch-closure machinery, arm: {arm.upper()}. Inlined from\n"
         "# submission/_duck_patched/duck_patches.py and submission/_rig/behav_probe.py\n"
         "# by build_patch_closure.py — edit those and rebuild.\n"
         "# ============================================================================\n"
-        f"{PATCHES.read_text()}\n"
-        f"{_arm_pin_block(arm)}\n"
+        f"{_patches_bytes().decode('utf-8')}\n"
+        f"{_arm_pin_block(arm, arm_env)}\n"
         f"{APPLY_BLOCK}\n"
-        "# --- behavioural probe: identical in both arms, observes only ---\n"
+        "# --- behavioural probe: identical in every arm, observes only ---\n"
         f"{PROBE.read_text()}\n"
         f"{PROBE_BLOCK}"
     )
 
 
-def run_cell(arm: str, source_hash: str, patch_hash: str) -> str:
+def run_cell(arm: str, source_hash: str, patch_hash: str,
+             hypothesis: str, reading: dict | None = None) -> str:
+    reading_line = (
+        f"    reading={json.dumps(reading, sort_keys=True)},\n" if reading is not None else "")
     return (
-        "# patch-closure: competition-simulated single-arm run. Replaces duck-base's\n"
-        "# submission cell (its gateway poll cannot succeed in a commit run).\n"
-        "# NOT a submission; no submission.parquet.\n"
+        "# patch-closure machinery: competition-simulated single-arm run. Replaces\n"
+        "# duck-base's submission cell (its gateway poll cannot succeed in a commit\n"
+        "# run). NOT a submission; no submission.parquet.\n"
         'print((BUNDLE_DIR / "preamble.txt").read_text())\n'
         'os.environ.setdefault("RECORDINGS_DIR", str(WORKING_DIR / "server_recording"))\n'
         "\n"
@@ -192,10 +227,11 @@ def run_cell(arm: str, source_hash: str, patch_hash: str) -> str:
         "_pc_result = await pc_main(\n"
         "    bm=bm, target=target, working_dir=WORKING_DIR,\n"
         "    arm=PC_ARM, arm_env=PC_ARM_ENV,\n"
-        f"    hypothesis={HYPOTHESIS!r},\n"
+        f"    hypothesis={hypothesis!r},\n"
         f"    geometry={json.dumps(GEOMETRY)},\n"
         f"    source_base_sha256={source_hash!r},\n"
         f"    patch_sha256={patch_hash!r},\n"
+        f"{reading_line}"
         "    behav_report=behav_report, behav_assert=behav_assert)\n"
         "if _pc_result[\"error\"] is not None:\n"
         "    raise RuntimeError(f\"[pc] arm run FAILED: {_pc_result['error']}\")\n"
@@ -203,26 +239,45 @@ def run_cell(arm: str, source_hash: str, patch_hash: str) -> str:
 
 
 def build_arm(arm: str, output_root: Path | None = None) -> Path:
-    """Build one arm's notebook + kernel metadata; returns the notebook path."""
+    """Build one closure arm's notebook + kernel metadata (frozen contract)."""
     if arm not in ARM_SLUGS:
         raise ValueError(f"unknown arm {arm!r}")
+    return build_kernel(
+        arm=arm, slug=ARM_SLUGS[arm], arm_env=ARM_ENV[arm], hypothesis=HYPOTHESIS,
+        output_root=output_root)
+
+
+def build_kernel(arm: str, slug: str, arm_env: dict[str, str], hypothesis: str,
+                 reading: dict | None = None, code_stem: str | None = None,
+                 output_root: Path | None = None,
+                 post_run_cell: str | None = None) -> Path:
+    """Parameterized kernel builder shared by the closure arms and the
+    package screen; returns the notebook path.
+
+    `post_run_cell` (optional) is inserted as a NEW code cell immediately
+    AFTER the run cell — it executes only once patch_closure_result.json is
+    written, so it can never contaminate the arm result.
+    """
     source_hash, patch_hash = _source_hashes()
-    hook_src = hook_cell(arm)
-    run_src = run_cell(arm, source_hash, patch_hash)
+    hook_src = hook_cell(arm, arm_env)
+    run_src = run_cell(arm, source_hash, patch_hash, hypothesis, reading)
     # ast.parse, not compile(): IPython executes cells per-statement, so the
     # inlined modules' mid-cell `from __future__` lines are runtime-legal (the
     # COMPLETE ab-wmr kernels carry the same byte pattern) but a strict module
     # compile would reject them. Top-level await is notebook-only: strip it.
     ast.parse(hook_src)
     ast.parse(run_src.replace("await pc_main", "_ = pc_main"))
-
     ast.parse(INSTALL_CELL)
+    if post_run_cell is not None:
+        ast.parse(post_run_cell)
 
     nb = json.loads(BASE_NB.read_text())
     seen = {"serve": False, "hook": False, "run": False, "install": False}
     cells = []
+    originals = []  # original cell per emitted cell (None = inserted)
     for cell in nb["cells"]:
         src = "".join(cell.get("source", []))
+        is_run_cell = False
         if cell["cell_type"] == "code":
             if INSTALL_MARKER in src:
                 src = INSTALL_CELL
@@ -238,17 +293,29 @@ def build_arm(arm: str, output_root: Path | None = None) -> Path:
             elif RUN_MARKER in src:
                 src = run_src
                 seen["run"] = True
+                is_run_cell = True
         out = dict(cell)
         out["source"] = src.splitlines(keepends=True)
         if cell["cell_type"] == "code":
             out["execution_count"] = None
             out["outputs"] = []
         cells.append(out)
+        originals.append(cell)
+        if is_run_cell and post_run_cell is not None:
+            # Inserted AFTER the run cell: executes only once the arm's
+            # patch_closure_result.json is already written.
+            cells.append({
+                "cell_type": "code", "metadata": {}, "execution_count": None,
+                "outputs": [], "source": post_run_cell.splitlines(keepends=True),
+            })
+            originals.append(None)
 
     missing = [k for k, v in seen.items() if not v]
     if missing:
         raise SystemExit(f"never found anchors: {missing}")
-    for i, (before, after) in enumerate(zip(nb["cells"], cells)):
+    for i, (before, after) in enumerate(zip(originals, cells)):
+        if before is None:
+            continue  # inserted post-run cell, built with the standard keys
         lost = set(before) - set(after)
         if lost:
             raise SystemExit(f"cell {i} lost keys {sorted(lost)} — nbconvert will reject this")
@@ -267,9 +334,9 @@ def build_arm(arm: str, output_root: Path | None = None) -> Path:
 
     nb["cells"] = cells
     nb.setdefault("metadata", {})["patch_closure_contract"] = {
-        "hypothesis": HYPOTHESIS,
+        "hypothesis": hypothesis,
         "arm": arm,
-        "arm_env": dict(ARM_ENV[arm]),
+        "arm_env": dict(arm_env),
         "source_base_sha256": source_hash,
         "patch_sha256": patch_hash,
         "geometry": dict(GEOMETRY),
@@ -277,11 +344,11 @@ def build_arm(arm: str, output_root: Path | None = None) -> Path:
 
     arm_dir = (Path(output_root) if output_root is not None else HERE) / arm
     arm_dir.mkdir(parents=True, exist_ok=True)
-    nb_path = arm_dir / f"patch-closure-{arm}.ipynb"
+    nb_path = arm_dir / f"{code_stem or f'patch-closure-{arm}'}.ipynb"
     nb_path.write_text(json.dumps(nb, indent=1))
     (arm_dir / "kernel-metadata.json").write_text(json.dumps({
-        "id": f"ahmedmobasher86/{ARM_SLUGS[arm]}",
-        "title": ARM_SLUGS[arm],
+        "id": f"ahmedmobasher86/{slug}",
+        "title": slug,
         "code_file": nb_path.name,
         "language": "python",
         "kernel_type": "notebook",

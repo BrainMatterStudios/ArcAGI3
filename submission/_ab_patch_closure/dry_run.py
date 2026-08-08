@@ -136,8 +136,14 @@ class MockBrain(http.server.BaseHTTPRequestHandler):
 
 
 def load_duck_patches_like_the_kernel() -> types.ModuleType:
-    """Exec duck_patches.py source with NO __file__, as the inlined cell does."""
-    source = (REPO / "submission/_duck_patched/duck_patches.py").read_text()
+    """Exec duck_patches.py source with NO __file__, as the inlined cell does.
+
+    Sourced through build_patch_closure._patches_bytes() so the dry run
+    exercises EXACTLY the bytes the builder inlines (PC_PATCHES_REF honored;
+    dirty working bytes refused)."""
+    import build_patch_closure as bld
+
+    source = bld._patches_bytes().decode("utf-8")
     mod = types.ModuleType("duck_patches")
     mod.__dict__["__name__"] = "duck_patches"
     assert "__file__" not in mod.__dict__

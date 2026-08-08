@@ -69,6 +69,31 @@ kaggle kernels output ahmedmobasher86/arc-agi-3-patch-closure-candidate -p scrat
   scratchpad/patch_closure/candidate/patch_closure_result.json
 ```
 
+## Package screen (probe infrastructure, approved 2026-08-09)
+
+Candidate-only screen on the same machinery: `package/` kernel
+(`ahmedmobasher86/arc-agi-3-package-screen`), arm env = BASE_ENV + the four
+package flags (`TAAF_DIFF_LINES/TAAF_WIGGLE/TAAF_RUN_PROBE/TAAF_DISPATCH=1`),
+read against the banked closure base pair (11 / 12 levels excl-ft09) with
+`classify_package.py` (ADVANCE bars pre-registered in
+`package_screen_config.py`: >= 18 levels excl-ft09 OR >= 2 target first
+unlocks). A post-benchmark PARALLEL LOAD PROBE cell (28- then 56-stream
+phases against the still-live vLLM endpoint, 5-min hard cap, failure-proof)
+writes `parallel_load.json` for the patch20 verifier premise.
+
+```bash
+.venv/bin/python submission/_ab_patch_closure/build_package_screen.py
+.venv/bin/python submission/_ab_patch_closure/dry_run_package.py
+kaggle kernels push -p submission/_ab_patch_closure/package --accelerator NvidiaRtxPro6000
+kaggle kernels output ahmedmobasher86/arc-agi-3-package-screen -p scratchpad/package_screen
+.venv/bin/python submission/_ab_patch_closure/classify_package.py \
+  scratchpad/package_screen/patch_closure_result.json
+```
+
+Source pinning: the builder refuses to inline a `duck_patches.py` that
+differs from HEAD (uncommitted in-flight patches are the silent-drift failure
+class); pin explicitly with `PC_PATCHES_REF=<ref>` when needed.
+
 ## Reading rules (pre-registered; do not move after the data lands)
 
 - **GO** — >= 2 candidate-only FIRST unlocks on the never-unlocked targets
