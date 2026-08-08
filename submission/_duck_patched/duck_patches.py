@@ -5024,6 +5024,461 @@ def patch_wiggle() -> str:
     return f"patch17 wiggle: OK (dormant — opt in with TAAF_WIGGLE=1){sandbox_note}"
 
 
+# --- PATCH 18: run_probe(actions) — guarded probe-battery macro-action ------------
+#
+# Rank 1 of the 2026-08-07 human-play idea sweep (docs/RESEARCH-2026-08-07-human-
+# play-idea-sweep.md): winning humans interleave short DELIBERATE probe batteries
+# with observation; the duck buys one action per full deliberation. This patch
+# gives the model a probe macro-action in the python tool: `run_probe(actions)`
+# executes a short batch of REAL environment actions as ONE guarded call and
+# returns a per-action effect table (patch 16's structured change lines, level/
+# score, terminal flags), then repeats the table as a PROBE REPORT in the next
+# analyzer prompt.
+#
+# INTEGRATION MECHANISM (the sandbox runs in a SUBPROCESS — how do its calls
+# drive real actions?): the bundle already ships the route. Sandbox code calls
+# `action(actions)`, which serializes the request as a JSON line on stdout; the
+# host loop inside `run_sandboxed_python` (parent process, the session's worker
+# thread) dispatches it to `action_handler` = ToolAgent._run_python_tool's
+# `_handle_action`, which drives `step_env` -> `session._execute_action` and
+# replies with the result + refreshed state. `run_probe` therefore needs NO new
+# IPC surface: it is a sentinel-tagged `action()` call ({"action": "__RUN_PROBE__"}
+# prepended) intercepted host-side by patch 18's `run_sandboxed_python` wrap,
+# which executes the probe plan ONE action per original-handler call. Every probe
+# action rides the real session action path, so patch 8's HUD tracker, patch 16's
+# differ and patch 17's observer all see it; per-action effect capture diffs the
+# consecutive state-payload grids with `diff_change_lines` under the live HUD
+# mask. (The alternative — a PRO-LONG "write a plan, harness executes it before
+# the next deliberation" loop — would need a new seam in the deliberation loop;
+# the native action channel already provides synchronous execution with less new
+# surface, so it wins.)
+#
+# Guards (all enforced HOST-side — sandbox code is model-written and untrusted):
+#   * per-call action cap        TAAF_PROBE_MAX_ACTIONS (default 20; PRO-LONG's
+#                                proven 1-20 contract) — overflow is truncated
+#                                and reported;
+#   * per-level call budget      TAAF_PROBE_MAX_CALLS   (default 3) — further
+#                                calls are refused without executing anything;
+#   * RESET never allowed        a plan containing RESET is refused whole;
+#   * availability respected     each step checks the CURRENT valid_actions
+#                                (refreshed after every action) before executing;
+#   * early stop                 on level_completed / game_over / run_complete /
+#                                a refused or failed action;
+#   * cost transparency          the returned `cost` field carries actions spent
+#                                this call, cumulative probe spend, and calls
+#                                left on this level.
+#
+# TAAF_RUN_PROBE=1 enables (default OFF — no advertisement, no sandbox
+# execution, no prompt injection until A/B'd).
+
+_PROBE_TLS = _threading.local()
+
+RUN_PROBE_DIAGNOSTICS = {"calls": 0, "actions": 0, "refusals": 0}
+
+_PROBE_SENTINEL = "__RUN_PROBE__"
+
+_PROBE_BOOTSTRAP_ANCHOR = '    runtime_globals["action"] = action\n'
+_PROBE_BOOTSTRAP_LINES = (
+    "\n"
+    "    def run_probe(actions):\n"
+    "        items = _normalize_actions(actions)\n"
+    '        return action([{"action": "' + _PROBE_SENTINEL + '"}] + items)\n'
+    "\n"
+    '    runtime_globals["run_probe"] = run_probe\n'
+)
+
+_PROBE_PROMPT_HEADER = (
+    "PROBE REPORT — per-action effect table from your run_probe(...) call "
+    "(computed by code, not by eye)."
+)
+
+_PROBE_REPORT_KEEP = 3  # banked probe tables kept for the next prompt
+_PROBE_STEP_MAX_LINES = 3  # change lines rendered per probe step
+
+
+def _probe_enabled() -> bool:
+    """Opt-in only (TAAF_RUN_PROBE=1). Default OFF."""
+    import os
+
+    return os.environ.get("TAAF_RUN_PROBE", "0").strip() in {"1", "true", "True"}
+
+
+def _probe_env_int(name: str, default: int, minimum: int) -> int:
+    import os
+
+    try:
+        return max(minimum, int(os.environ.get(name, "") or default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _probe_max_actions() -> int:
+    return _probe_env_int("TAAF_PROBE_MAX_ACTIONS", 20, 1)
+
+
+def _probe_max_calls() -> int:
+    return _probe_env_int("TAAF_PROBE_MAX_CALLS", 3, 0)
+
+
+def _probe_tls_state() -> dict[str, Any]:
+    state = getattr(_PROBE_TLS, "state", None)
+    if state is None:
+        state = {"calls_by_level": {}, "actions_total": 0, "reports": []}
+        _PROBE_TLS.state = state
+    return state
+
+
+def _probe_state_grid(state: Any) -> Any:
+    try:
+        grid = (state or {}).get("current_frame", {}).get("grid")
+    except AttributeError:
+        return None
+    if isinstance(grid, list) and grid and isinstance(grid[0], list):
+        return [list(row) for row in grid]
+    return None
+
+
+def _probe_state_level(state: Any) -> int | None:
+    try:
+        return int((state or {}).get("current_frame", {}).get("level"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _probe_cost(tls: dict[str, Any], level: int | None, spent: int) -> dict[str, Any]:
+    used = tls["calls_by_level"].get(level, 0)
+    return {
+        "actions_spent_this_call": spent,
+        "probe_actions_total": tls["actions_total"],
+        "probe_calls_left_this_level": max(0, _probe_max_calls() - used),
+    }
+
+
+def _probe_bank_report(table: dict[str, Any]) -> None:
+    tls = _probe_tls_state()
+    tls["reports"].append(table)
+    del tls["reports"][: -_PROBE_REPORT_KEEP]
+
+
+def probe_execute(
+    actions: Any, action_handler: Any, current_state: Any = None
+) -> dict[str, Any]:
+    """Host-side probe executor: one original-handler call per action.
+
+    Returns the sandbox-host reply shape {"action_result": effect_table,
+    "state": <refreshed state payload>} so the sandbox's `action()` machinery
+    delivers the effect table as `run_probe`'s return value unchanged.
+    """
+    from inference.agent.action_names import to_engine_action, to_model_action
+
+    tls = _probe_tls_state()
+    RUN_PROBE_DIAGNOSTICS["calls"] += 1
+    state = dict(current_state or {})
+    level = _probe_state_level(state)
+    specs: list[dict[str, Any]] = []
+    for item in list(actions or []):
+        specs.append(dict(item) if isinstance(item, dict) else {"action": str(item)})
+    requested = len(specs)
+
+    def refuse(error: str) -> dict[str, Any]:
+        RUN_PROBE_DIAGNOSTICS["refusals"] += 1
+        table = {
+            "probe": True,
+            "executed": False,
+            "error": error,
+            "requested": requested,
+            "executed_count": 0,
+            "steps": [],
+            "cost": _probe_cost(tls, level, 0),
+        }
+        _probe_bank_report(table)
+        return {"action_result": table, "state": state}
+
+    if not _probe_enabled():
+        return refuse("run_probe is not enabled (set TAAF_RUN_PROBE=1).")
+    if requested == 0:
+        return refuse("run_probe requires at least one action.")
+    for spec in specs:
+        if to_engine_action(spec.get("action")) == "RESET":
+            return refuse(
+                "RESET is never allowed inside run_probe; the whole call was refused."
+            )
+    if tls["calls_by_level"].get(level, 0) >= _probe_max_calls():
+        return refuse(
+            f"probe budget exhausted on this level ({_probe_max_calls()} calls); "
+            "act on what you already measured."
+        )
+    tls["calls_by_level"][level] = tls["calls_by_level"].get(level, 0) + 1
+
+    cap = _probe_max_actions()
+    plan = specs[:cap]
+    steps: list[dict[str, Any]] = []
+    stop_reason: str | None = None
+    for spec in plan:
+        model_name = to_model_action(to_engine_action(spec.get("action")) or spec.get("action"))
+        valid = [str(v) for v in (state.get("valid_actions") or [])]
+        if valid and model_name not in valid:
+            stop_reason = f"{model_name} is not in valid_actions right now"
+            break
+        pre_grid = _probe_state_grid(state)
+        try:
+            out = action_handler([spec])
+        except Exception as exc:  # noqa: BLE001 - a broken step ends the probe, not the game
+            stop_reason = f"action failed ({type(exc).__name__})"
+            break
+        res = (out or {}).get("action_result") or {}
+        new_state = (out or {}).get("state")
+        if isinstance(new_state, dict) and new_state:
+            state = new_state
+        step: dict[str, Any] = {
+            "action": str(res.get("action_display") or model_name),
+            "executed": bool(res.get("executed")),
+            "level": res.get("level"),
+            "score": res.get("score"),
+            "reward": res.get("reward"),
+            "board_changed": bool(res.get("board_changed")),
+            "level_completed": bool(res.get("level_completed")),
+            "game_over": bool(res.get("game_over")),
+            "run_complete": bool(res.get("run_complete")),
+        }
+        if not step["executed"]:
+            step["error"] = str(
+                res.get("error") or res.get("stop_detail") or "not executed"
+            )
+            steps.append(step)
+            stop_reason = str(res.get("stop_reason") or "not_executed")
+            break
+        tls["actions_total"] += 1
+        RUN_PROBE_DIAGNOSTICS["actions"] += 1
+        terminal = (
+            "run_complete"
+            if step["run_complete"]
+            else "game_over"
+            if step["game_over"]
+            else "level_completed"
+            if step["level_completed"]
+            else None
+        )
+        if terminal is not None:
+            step["change_lines"] = [
+                f"{terminal.replace('_', ' ').upper()} — scene repainted, "
+                "per-object diff skipped"
+            ]
+        else:
+            post_grid = _probe_state_grid(state)
+            if pre_grid is not None and post_grid is not None:
+                try:
+                    step["change_lines"] = diff_change_lines(
+                        pre_grid, post_grid, _hud_current_mask_cells()
+                    )
+                except Exception:  # noqa: BLE001 - narration must never break a probe
+                    step["change_lines"] = []
+            else:
+                step["change_lines"] = []
+        steps.append(step)
+        if terminal is not None:
+            stop_reason = terminal
+            break
+    executed_count = sum(1 for s in steps if s.get("executed"))
+    level = _probe_state_level(state) if _probe_state_level(state) is not None else level
+    table: dict[str, Any] = {
+        "probe": True,
+        "executed": executed_count > 0,
+        "requested": requested,
+        "executed_count": executed_count,
+        "stopped_early": executed_count < requested,
+        "steps": steps,
+        "cost": _probe_cost(tls, level, executed_count),
+    }
+    if requested > cap:
+        table["truncated_to_cap"] = cap
+        stop_reason = stop_reason or "per_call_cap"
+    if stop_reason is not None:
+        table["stop_reason"] = stop_reason
+    _probe_bank_report(table)
+    return {"action_result": table, "state": state}
+
+
+def _probe_prompt_block() -> str:
+    """Render (and consume) the banked probe tables; '' when there is nothing."""
+    tls = getattr(_PROBE_TLS, "state", None)
+    if not tls or not tls.get("reports"):
+        return ""
+    rendered: list[str] = [_PROBE_PROMPT_HEADER]
+    for table in tls["reports"]:
+        if table.get("error"):
+            rendered.append(f"probe call refused: {table['error']}")
+            continue
+        head = (
+            f"probe call ({table.get('executed_count', 0)}/{table.get('requested', 0)}"
+            " actions executed"
+        )
+        if table.get("stop_reason"):
+            head += f", stopped: {table['stop_reason']}"
+        rendered.append(head + "):")
+        for index, step in enumerate(table.get("steps") or [], start=1):
+            lines = list(step.get("change_lines") or [])
+            if step.get("error"):
+                lines = [f"REFUSED: {step['error']}"]
+            shown = lines[:_PROBE_STEP_MAX_LINES]
+            overflow = len(lines) - len(shown)
+            first = shown[0] if shown else "(no observation)"
+            rendered.append(f"  {index}. {step.get('action')}: {first}")
+            rendered.extend(f"     {line}" for line in shown[1:])
+            if overflow > 0:
+                rendered.append(f"     +{overflow} more change lines")
+        cost = table.get("cost") or {}
+        rendered.append(
+            f"(probe cost: {cost.get('actions_spent_this_call', 0)} scored actions "
+            f"this call, {cost.get('probe_actions_total', 0)} total; "
+            f"{cost.get('probe_calls_left_this_level', 0)} probe calls left on this level)"
+        )
+    tls["reports"] = []
+    return "\n".join(rendered)
+
+
+def _probe_addendum_text() -> str:
+    return (
+        "run_probe — probe battery (python tool):\n"
+        f"- `run_probe(actions)` executes up to {_probe_max_actions()} REAL environment "
+        "actions as one guarded probe battery. Same specs as `action(...)`: "
+        "`run_probe(['UP', 'UP', {'action': 'MOUSE', 'row': 4, 'col': 7}])`.\n"
+        "- It returns a per-action effect table: structured `change_lines` for every "
+        "executed action (computed by code, HUD-masked), level/score, and terminal "
+        "flags; the same table is repeated in your next prompt as a PROBE REPORT.\n"
+        f"- Guards: at most {_probe_max_actions()} actions per call and "
+        f"{_probe_max_calls()} probe calls per level; RESET is never allowed; execution "
+        "stops early at a level completion or game over; unavailable actions stop the "
+        "probe. Probe actions are REAL and scored — the `cost` field shows exactly "
+        "what you spent.\n"
+        "- Batching doctrine: short lists for new hypotheses, scale up for proven "
+        "sequences.\n"
+    )
+
+
+def patch_run_probe() -> str:
+    """PATCH 18: run_probe(actions) probe-battery macro-action in the python tool."""
+    from inference.agent import action_names as an_mod
+    from inference.agent import python_tool_sandbox as sandbox_mod
+    from inference.agent import tool_agent
+
+    # -- presence gates (patch-9 law: verify every seam, decline cleanly) ---------
+    bootstrap = getattr(sandbox_mod, "_SANDBOX_BOOTSTRAP", None)
+    if not isinstance(bootstrap, str):
+        return "patch18 run-probe: FAIL (_SANDBOX_BOOTSTRAP not found)"
+    if _PROBE_BOOTSTRAP_ANCHOR not in bootstrap and "run_probe" not in bootstrap:
+        return "patch18 run-probe: FAIL (bootstrap `action` anchor moved upstream)"
+    agent_cls = getattr(tool_agent, "ToolAgent", None)
+    if agent_cls is None or not hasattr(agent_cls, "_build_user_prompt"):
+        return "patch18 run-probe: FAIL (ToolAgent._build_user_prompt not found)"
+    builder = getattr(tool_agent, "_build_system_prompt", None)
+    if not callable(builder):
+        return "patch18 run-probe: FAIL (_build_system_prompt not found)"
+    if not callable(getattr(an_mod, "to_engine_action", None)):
+        return "patch18 run-probe: FAIL (action_names.to_engine_action not found)"
+    if getattr(sandbox_mod.run_sandboxed_python, "_run_probe_patched", False):
+        return "patch18 run-probe: SKIP (already applied)"
+
+    # -- 18a: sandbox global — run_probe = sentinel-tagged action() ----------------
+    if "run_probe" not in bootstrap:
+        sandbox_mod._SANDBOX_BOOTSTRAP = bootstrap.replace(
+            _PROBE_BOOTSTRAP_ANCHOR, _PROBE_BOOTSTRAP_ANCHOR + _PROBE_BOOTSTRAP_LINES
+        )
+
+    # -- 18b: host-side interception of the sentinel (innermost handler wrap) ------
+    original_run = sandbox_mod.run_sandboxed_python
+
+    def run_sandboxed_python(
+        *,
+        code: str,
+        timeout_seconds: int,
+        initial_state: dict[str, Any],
+        action_handler: Any,
+    ) -> dict[str, Any]:
+        state_box = {"state": dict(initial_state or {})}
+
+        def handler(actions: Any) -> dict[str, Any]:
+            items = list(actions or [])
+            if (
+                items
+                and isinstance(items[0], dict)
+                and str(items[0].get("action", "")).strip() == _PROBE_SENTINEL
+            ):
+                out = probe_execute(items[1:], action_handler, state_box["state"])
+                refreshed = out.get("state")
+                if isinstance(refreshed, dict) and refreshed:
+                    state_box["state"] = refreshed
+                return out
+            out = action_handler(actions)
+            try:
+                refreshed = out.get("state") if isinstance(out, dict) else None
+                if isinstance(refreshed, dict) and refreshed:
+                    state_box["state"] = refreshed
+            except Exception:  # noqa: BLE001 - tracking must never break an action
+                pass
+            return out
+
+        return original_run(
+            code=code,
+            timeout_seconds=timeout_seconds,
+            initial_state=initial_state,
+            action_handler=handler,
+        )
+
+    # -- 18c: per-game budget reset (reused worker threads must not leak spend) ----
+    from inference.framework import solver
+
+    session_cls = getattr(solver, "_HarnessGameSession", None)
+    if session_cls is None or not hasattr(session_cls, "play"):
+        return "patch18 run-probe: FAIL (_HarnessGameSession.play not found)"
+    original_play = session_cls.play
+
+    def play(self: Any) -> None:
+        _PROBE_TLS.state = None
+        return original_play(self)
+
+    # -- 18d: system-prompt advertisement (patch 12b/13/15 seam, runtime-gated) ----
+    def _build_system_prompt(*args: Any, **kwargs: Any) -> str:
+        prompt = builder(*args, **kwargs)
+        if _probe_enabled():
+            prompt = f"{prompt}\n\n{_probe_addendum_text()}"
+        return prompt
+
+    # -- 18e: PROBE REPORT above the grids in the next analyzer prompt -------------
+    # apply_all runs patch 18 LAST, so this wrap is the outermost prompt prepend:
+    # the report renders ABOVE patch 16's change report and patch 17's legend.
+    original_build = agent_cls._build_user_prompt
+
+    def _build_user_prompt(self: Any, *args: Any, **kwargs: Any) -> str:
+        prompt = original_build(self, *args, **kwargs)
+        if not _probe_enabled():
+            return prompt
+        try:
+            block = _probe_prompt_block()
+        except Exception:  # noqa: BLE001 - the report must never break a turn
+            return prompt
+        return f"{block}\n\n{prompt}" if block else prompt
+
+    _forward_patch_markers(run_sandboxed_python, original_run)
+    _forward_patch_markers(play, original_play)
+    _forward_patch_markers(_build_system_prompt, builder)
+    _forward_patch_markers(_build_user_prompt, original_build)
+    run_sandboxed_python._run_probe_patched = True  # type: ignore[attr-defined]
+    play._run_probe_play_patched = True  # type: ignore[attr-defined]
+    _build_system_prompt._run_probe_prompt_patched = True  # type: ignore[attr-defined]
+    _build_user_prompt._run_probe_patched = True  # type: ignore[attr-defined]
+    sandbox_mod.run_sandboxed_python = run_sandboxed_python
+    if getattr(tool_agent, "run_sandboxed_python", None) is not None:
+        tool_agent.run_sandboxed_python = run_sandboxed_python
+    session_cls.play = play
+    tool_agent._build_system_prompt = _build_system_prompt
+    agent_cls._build_user_prompt = _build_user_prompt
+
+    if _probe_enabled():
+        return "patch18 run-probe: OK (TAAF_RUN_PROBE=1)"
+    return "patch18 run-probe: OK (dormant — opt in with TAAF_RUN_PROBE=1)"
+
+
 def apply_all(verbose: bool = True) -> list[str]:
     """Apply every patch. Each is independent; one failing does not block the others."""
     results = []
@@ -5049,6 +5504,9 @@ def apply_all(verbose: bool = True) -> list[str]:
         # legend must render BELOW the change report (inner wrap = lower block).
         patch_wiggle,
         patch_diff_lines,
+        # patch 18 LAST: its prompt wrap is the outermost prepend, so the PROBE
+        # REPORT renders above patch 16's change report and patch 17's legend.
+        patch_run_probe,
     ):
         try:
             results.append(fn())
