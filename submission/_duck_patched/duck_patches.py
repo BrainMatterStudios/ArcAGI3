@@ -5479,6 +5479,320 @@ def patch_run_probe() -> str:
     return "patch18 run-probe: OK (dormant — opt in with TAAF_RUN_PROBE=1)"
 
 
+# --- PATCH 19: archetype-dispatch prompt scaffolds --------------------------------
+#
+# Rank 3 of the 2026-08-07 human-play idea sweep (docs/RESEARCH-2026-08-07-human-
+# play-idea-sweep.md): humans complete novel games quickly because most of the
+# "learning" is one genre classification plus a wholesale library import. Patch 17
+# already MEASURES the genre (GAME_MODE: AVATAR / CLICK / ARROW-MORPH / UNCLEAR,
+# re-verified per level); this patch DISPATCHES on it: a short mode-specific
+# doctrine addendum is appended to the system prompt while the verdict holds.
+# Per the sweep's own scope warning ("start with two scaffolds only — the four-
+# scaffold build is weeks") exactly TWO scaffolds exist, AVATAR-NAV and
+# CLICK-PUZZLE; ARROW-MORPH and UNCLEAR fall back to the neutral (current)
+# prompts. Scaffolds are ADDITIVE — nothing is stripped from the base prompt
+# (token-diet lesson: capping context 2x'd DEV and cratered hidden).
+#
+# Seam: the same system-prompt advertisement seam patches 12b/13/18 use — but
+# those wrap `tool_agent._build_system_prompt`, which ToolAgent.__init__ calls
+# ONCE and caches as `self._system_prompt` for every request. A cached addendum
+# would be stale twice over: agents are constructed before the battery has a
+# verdict, and patch 17's per-level re-probe can flip the verdict mid-game. So
+# the injection is a data-descriptor property on `ToolAgent._system_prompt`:
+# writes store the base prompt (with 12b/13/18's addenda intact), reads append
+# the CURRENT mode's scaffold — every request rebuilds it, so a re-probe swap
+# reaches the very next prompt and no stale scaffold can ship.
+#
+# Escape hatch (mandatory per the sweep — misclassification is sticky for the
+# whole run): if a scaffold has been active for TAAF_DISPATCH_STALL executed
+# actions (default 40) with ZERO new effect novelty — no new changed-ever cell,
+# no new reactive/remote cell, no new (action -> effect-class) row in patch 17's
+# press stats — the scaffold is dropped, the wiggle verdict is marked UNCLEAR
+# (so the CONTROLLABILITY LEGEND agrees with the prompts), and the drop is
+# one-way for the remainder of the level. The next level's re-probe starts
+# clean. TAAF_DISPATCH=1 enables (default OFF — no behavior change until A/B'd).
+
+_DISPATCH_TLS = _threading.local()
+
+DISPATCH_DIAGNOSTICS = {"escapes": 0, "swaps": 0}
+
+_DISPATCH_SCAFFOLD_MODES = ("AVATAR", "CLICK")
+_DISPATCH_MARKER = "ARCHETYPE SCAFFOLD"
+
+
+def _dispatch_enabled() -> bool:
+    """Opt-in only (TAAF_DISPATCH=1). Default OFF."""
+    import os
+
+    return os.environ.get("TAAF_DISPATCH", "0").strip() in {"1", "true", "True"}
+
+
+def _dispatch_stall_limit() -> int:
+    """Escape-hatch K: scaffold-active actions with zero novelty (default 40)."""
+    import os
+
+    try:
+        return max(1, int(os.environ.get("TAAF_DISPATCH_STALL", "").strip() or 40))
+    except ValueError:
+        return 40
+
+
+class DispatchState:
+    """Per-game dispatch record (stall counter, one-way per-level escape)."""
+
+    def __init__(self) -> None:
+        self.level: int | None = None
+        self.active_mode: str | None = None
+        self.stall_actions = 0
+        self.novelty_sig: tuple | None = None
+        self.escaped = False
+        self.escaped_mode: str | None = None
+
+
+def _dispatch_state() -> DispatchState:
+    state = getattr(_DISPATCH_TLS, "state", None)
+    if state is None:
+        state = DispatchState()
+        _DISPATCH_TLS.state = state
+    return state
+
+
+def _dispatch_novelty_sig(ws: WiggleState) -> tuple:
+    """Effect-novelty signature over patch 17's per-level evidence.
+
+    Grows ONLY on genuinely new information: a never-before-changed cell, a new
+    reactive/remote-reactive cell, or a new (action -> effect-class) row (a new
+    move direction or a first morph for that action). Repeating a known effect
+    — an avatar shuttling over visited cells, re-clicking an already-reactive
+    tile — leaves the signature unchanged, which is exactly the perseveration
+    texture the escape hatch exists to catch.
+    """
+    rows = []
+    for name in sorted(ws.press_stats):
+        stats = ws.press_stats[name]
+        signs = tuple(sorted({tuple(m["sign"]) for m in stats["moves"]}))
+        rows.append((name, bool(stats["morphs"]), signs))
+    return (
+        len(ws.changed_ever),
+        len(ws.reactive),
+        len(ws.reactive_remote),
+        tuple(rows),
+    )
+
+
+def _dispatch_observe(ws: WiggleState) -> None:
+    """Fold one executed, non-boundary, non-probe action into the escape hatch."""
+    if not ws.battery_done:
+        return
+    disp = _dispatch_state()
+    if disp.level != ws.level:
+        # New level: patch 17 re-probes and re-verdicts, so the escape (one-way
+        # PER LEVEL) clears and the stall clock restarts.
+        disp.level = ws.level
+        disp.active_mode = None
+        disp.stall_actions = 0
+        disp.novelty_sig = None
+        disp.escaped = False
+        disp.escaped_mode = None
+    if disp.escaped:
+        return
+    mode = ws.mode if ws.mode in _DISPATCH_SCAFFOLD_MODES else None
+    if mode is None:  # neutral fallback active — nothing to escape from
+        disp.active_mode = None
+        disp.stall_actions = 0
+        disp.novelty_sig = None
+        return
+    if mode != disp.active_mode:
+        if disp.active_mode is not None:
+            DISPATCH_DIAGNOSTICS["swaps"] += 1
+        disp.active_mode = mode  # fresh scaffold gets a fresh stall window
+        disp.stall_actions = 0
+        disp.novelty_sig = _dispatch_novelty_sig(ws)
+        return
+    sig = _dispatch_novelty_sig(ws)
+    if sig != disp.novelty_sig:
+        disp.novelty_sig = sig
+        disp.stall_actions = 0
+        return
+    disp.stall_actions += 1
+    if disp.stall_actions < _dispatch_stall_limit():
+        return
+    disp.escaped = True
+    disp.escaped_mode = mode
+    DISPATCH_DIAGNOSTICS["escapes"] += 1
+    # Mark the verdict UNCLEAR in patch 17's record too, so the legend, the
+    # GAME_MODE sandbox global and the prompts agree (no stale scaffold claim
+    # anywhere). Patch 17 re-verdicts from fresh evidence at the next re-probe.
+    ws.mode = "UNCLEAR"
+    ws.mode_reason = (
+        f"dispatch escape: {mode} scaffold saw no new effects for "
+        f"{disp.stall_actions} actions"
+    )
+    ws.mode_history.append((int(ws.level or 1), "UNCLEAR"))
+    print(
+        f"[duck-patch] patch19 dispatch: escape hatch fired on level {ws.level} "
+        f"({mode} -> UNCLEAR after {disp.stall_actions} stalled actions)",
+        flush=True,
+    )
+
+
+def _dispatch_avatar_scaffold(ws: WiggleState) -> str:
+    body = (
+        f"'{ws.avatar_color}' " if ws.avatar_color else ""
+    )
+    lines = [
+        f"{_DISPATCH_MARKER}: AVATAR-NAV — dispatched from the measured GAME MODE "
+        "(see the CONTROLLABILITY LEGEND above the boards; per-pixel masks in the "
+        "python tool: WIGGLE_MASKS, mode: GAME_MODE).",
+        f"- You CONTROL an avatar: the tagged {body}object in the legend. The "
+        "directional actions translate exactly that object; everything else is "
+        "scenery, hazard, or cargo.",
+        "- A directional press that changes nothing is a wall or an edge: record "
+        "it and route around it; do not re-press it hoping for a different result.",
+        "- Navigate first, theorize second: walk to the distinct objects/markers "
+        "and touch them — in this genre contact and cell-entry are the usual "
+        "triggers.",
+        "- A snap-back to the start position is a DEATH, not a teleport: winning "
+        "humans treat avatar resets as failures to avoid, never as a movement "
+        "strategy. Identify the cell that killed you and route around it.",
+    ]
+    if _probe_enabled():
+        lines.append(
+            "- Test a route hypothesis with one run_probe([...]) battery (several "
+            "arrows in one call) instead of one arrow per deliberation."
+        )
+    return "\n".join(lines)
+
+
+def _dispatch_click_scaffold(ws: WiggleState) -> str:
+    lines = [
+        f"{_DISPATCH_MARKER}: CLICK-PUZZLE — dispatched from the measured GAME MODE "
+        "(see the CONTROLLABILITY LEGEND above the boards; per-pixel masks in the "
+        "python tool: WIGGLE_MASKS, mode: GAME_MODE).",
+        "- There is NO avatar: clicks are the mechanic. Do not spend further "
+        "actions on the directional actions this level.",
+        "- A click's effect can land FAR from the clicked cell — the legend counts "
+        "remote-effect cells (WIGGLE_MASKS['reactive_remote']). After each click, "
+        "credit any change anywhere on the board to that click, not to ambient "
+        "motion.",
+        "- Repeat-clicking the SAME cell is a real mechanic in this genre (tiles "
+        "cycle through states): if a click visibly advanced a tile, click it again "
+        "before abandoning the cell.",
+        "- Failing is reconnaissance here: winning humans often study the board, "
+        "trip the fail state, then execute the whole solution in one clean pass "
+        "(the level comes back after a game over, but your action count carries "
+        "over — make the clean pass count).",
+    ]
+    if _probe_enabled():
+        lines.append(
+            "- Batch candidate clicks with run_probe([...]) and read the per-click "
+            "effect table instead of one click per deliberation."
+        )
+    return "\n".join(lines)
+
+
+def _dispatch_prompt_block() -> str:
+    """The current mode's scaffold; '' = neutral fallback (current prompts)."""
+    if not _dispatch_enabled():
+        return ""
+    ws = getattr(_WIGGLE_TLS, "state", None)
+    if ws is None or not ws.battery_done:
+        return ""
+    disp = getattr(_DISPATCH_TLS, "state", None)
+    if disp is not None and disp.escaped and disp.level == ws.level:
+        return ""  # one-way per level: stay neutral even if the verdict re-flips
+    if ws.mode == "AVATAR":
+        return _dispatch_avatar_scaffold(ws)
+    if ws.mode == "CLICK":
+        return _dispatch_click_scaffold(ws)
+    return ""  # ARROW-MORPH / UNCLEAR -> neutral (current) prompts
+
+
+def patch_archetype_dispatch() -> str:
+    """PATCH 19: mode-dispatched prompt scaffolds with a stall escape hatch."""
+    from inference.agent import tool_agent
+    from inference.framework import solver
+
+    agent_cls = getattr(tool_agent, "ToolAgent", None)
+    if agent_cls is None:
+        return "patch19 dispatch: FAIL (ToolAgent not found)"
+    session_cls = getattr(solver, "_HarnessGameSession", None)
+    if (
+        session_cls is None
+        or not hasattr(session_cls, "_execute_action")
+        or not hasattr(session_cls, "play")
+    ):
+        return "patch19 dispatch: FAIL (_HarnessGameSession seam not found)"
+    existing = vars(agent_cls).get("_system_prompt")
+    if isinstance(existing, property) and getattr(
+        existing.fget, "_dispatch_patched", False
+    ):
+        return "patch19 dispatch: SKIP (already applied)"
+
+    # -- 19a: live system-prompt scaffold via a data-descriptor property ----------
+    # ToolAgent.__init__ assigns `self._system_prompt = _build_system_prompt(...)`
+    # once; the property routes that write to a base slot and appends the CURRENT
+    # scaffold on every read, so a per-level re-probe verdict swap reaches the
+    # next request and the addendum can never go stale.
+    def _system_prompt_get(self: Any) -> str:
+        base = getattr(self, "_dispatch_base_system_prompt", None)
+        if base is None:  # agent constructed before the patch: base is in __dict__
+            base = self.__dict__.get("_system_prompt", "")
+        try:
+            block = _dispatch_prompt_block()
+        except Exception:  # noqa: BLE001 - the scaffold must never break a turn
+            return base
+        return f"{base}\n\n{block}" if block else base
+
+    def _system_prompt_set(self: Any, value: Any) -> None:
+        self._dispatch_base_system_prompt = value
+
+    _system_prompt_get._dispatch_patched = True  # type: ignore[attr-defined]
+    agent_cls._system_prompt = property(_system_prompt_get, _system_prompt_set)
+
+    # -- 19b: escape hatch — count scaffold-active actions with zero novelty ------
+    # Applied AFTER patch 17 in apply_all, so this wrap is OUTSIDE 17's observer:
+    # by the time it runs, the transition is already folded into the wiggle state.
+    original_exec = session_cls._execute_action
+
+    def _execute_action(self: Any, action: Any, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        payload = original_exec(self, action, *args, **kwargs)
+        if not _dispatch_enabled():
+            return payload
+        try:
+            ws = getattr(self, "_wiggle_state", None)
+            if (
+                ws is not None
+                and not ws.probing  # battery/reprobe presses are not scaffold turns
+                and isinstance(payload, dict)
+                and payload.get("executed")
+                and getattr(getattr(action, "id", None), "name", "") != "RESET"
+                and not _wiggle_payload_boundary(payload)
+            ):
+                _dispatch_observe(ws)
+        except Exception:  # noqa: BLE001 - bookkeeping must never break an action
+            pass
+        return payload
+
+    # -- 19c: per-game reset (reused worker threads must not leak a stall clock) --
+    original_play = session_cls.play
+
+    def play(self: Any) -> None:
+        _DISPATCH_TLS.state = None
+        return original_play(self)
+
+    _forward_patch_markers(_execute_action, original_exec)
+    _forward_patch_markers(play, original_play)
+    _execute_action._dispatch_patched = True  # type: ignore[attr-defined]
+    play._dispatch_play_patched = True  # type: ignore[attr-defined]
+    session_cls._execute_action = _execute_action
+    session_cls.play = play
+
+    if _dispatch_enabled():
+        return "patch19 dispatch: OK (TAAF_DISPATCH=1; scaffolds need TAAF_WIGGLE=1)"
+    return "patch19 dispatch: OK (dormant — opt in with TAAF_DISPATCH=1)"
+
+
 def apply_all(verbose: bool = True) -> list[str]:
     """Apply every patch. Each is independent; one failing does not block the others."""
     results = []
@@ -5504,9 +5818,15 @@ def apply_all(verbose: bool = True) -> list[str]:
         # legend must render BELOW the change report (inner wrap = lower block).
         patch_wiggle,
         patch_diff_lines,
-        # patch 18 LAST: its prompt wrap is the outermost prepend, so the PROBE
-        # REPORT renders above patch 16's change report and patch 17's legend.
+        # patch 18 after 16/17: its prompt wrap is the outermost user-prompt
+        # prepend, so the PROBE REPORT renders above patch 16's change report
+        # and patch 17's legend.
         patch_run_probe,
+        # patch 19 LAST: it does not touch the user prompt (its scaffold rides
+        # the system prompt), but its _execute_action wrap must be OUTSIDE
+        # patch 17's observer so the escape hatch reads an already-updated
+        # wiggle state.
+        patch_archetype_dispatch,
     ):
         try:
             results.append(fn())
