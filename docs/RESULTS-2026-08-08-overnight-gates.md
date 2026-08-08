@@ -58,3 +58,10 @@ expected mid-morning; classification per the frozen 0.69–1.27 band rule.
 - Two-wave totals: base 23, candidate 30; 0 new target unlocks in either wave; no regressions; mechanisms fire (animation 1540 deliveries, grinder 1 level w2) but do not move totals reliably.
 - Consequence per the frozen plan: candidate delta (animation+grinder+600s watchdog) is dead; live duplicate config reverts to BASE bytes (base-family mean 0.929 vs patched 0.788); patch work on this delta ends.
 - Variance v1 scored 0.85 IN_BAND same morning -> tonight per the approved framework: idle-day byte-identical base draw.
+
+## Package screen (2026-08-08 19:33 UTC) — STOP; the finding is adoption, not capability
+
+- 10 levels excl-ft09 (base pair 11/12); 0 target unlocks -> pre-registered STOP.
+- Mechanisms DELIVERED but the model did not USE them: **run_probe called 1 time in 28 games** despite advertisement; dispatch assigned modes (7 AVATAR/7 CLICK/6 MORPH/8 UNCLEAR) but 6 games escaped scaffolds; wiggle fired 28/28 (93 presses, 10 reprobes) — the only structurally-enforced mechanism, and the only one fully engaged.
+- Protocol healthy (129 actions/game, 0 zero-action games) -> not prompt-overload; the 27B simply kept its trained one-action habit. Confirms the sweep law: advertised = performative; ENFORCED = adopted. Next iteration: make batching STRUCTURAL (PRO-LONG-style mandatory plan-list action channel), not optional.
+- Parallel-load probe (28 vs 56 streams): aggregate 553 -> 782 tok/s (+41%), per-stream latency 8.1 -> 11.0s (+36%), 0 errors. Parallel cognition is subsidized, not free: right for rare commit-point verification (patch20), wrong for per-action ensembles.
