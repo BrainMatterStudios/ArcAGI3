@@ -5123,7 +5123,9 @@ def _probe_max_calls() -> int:
 def _probe_tls_state() -> dict[str, Any]:
     state = getattr(_PROBE_TLS, "state", None)
     if state is None:
-        state = {"calls_by_level": {}, "actions_total": 0, "reports": []}
+        # `reports` is consumed by the next prompt render; `history` is a small
+        # non-consumed ring so patch 20's verifier can cite recent effect tables.
+        state = {"calls_by_level": {}, "actions_total": 0, "reports": [], "history": []}
         _PROBE_TLS.state = state
     return state
 
@@ -5158,6 +5160,9 @@ def _probe_bank_report(table: dict[str, Any]) -> None:
     tls = _probe_tls_state()
     tls["reports"].append(table)
     del tls["reports"][: -_PROBE_REPORT_KEEP]
+    history = tls.setdefault("history", [])
+    history.append(table)
+    del history[: -_PROBE_REPORT_KEEP]
 
 
 def probe_execute(
@@ -5208,10 +5213,33 @@ def probe_execute(
             f"probe budget exhausted on this level ({_probe_max_calls()} calls); "
             "act on what you already measured."
         )
-    tls["calls_by_level"][level] = tls["calls_by_level"].get(level, 0) + 1
 
     cap = _probe_max_actions()
     plan = specs[:cap]
+
+    # -- patch 20 seam: verifier-at-commit. Runs AFTER the hard guards (a plan
+    # that would be refused anyway must not spend a verifier request) and BEFORE
+    # the budget increment (a vetoed call keeps its slot for the revision).
+    veto_reason = _verify_maybe_veto(plan, state)
+    if veto_reason is not None:
+        table = {
+            "probe": True,
+            "executed": False,
+            "vetoed": True,
+            "veto_reason": veto_reason,
+            "error": f"PLAN VETOED by verifier: {veto_reason}",
+            "requested": requested,
+            "executed_count": 0,
+            "steps": [],
+            "cost": _probe_cost(tls, level, 0),
+            "note": (
+                "one revision cycle: your next run_probe call executes "
+                "without verification"
+            ),
+        }
+        _probe_bank_report(table)
+        return {"action_result": table, "state": state}
+    tls["calls_by_level"][level] = tls["calls_by_level"].get(level, 0) + 1
     steps: list[dict[str, Any]] = []
     stop_reason: str | None = None
     for spec in plan:
@@ -5306,6 +5334,13 @@ def _probe_prompt_block() -> str:
         return ""
     rendered: list[str] = [_PROBE_PROMPT_HEADER]
     for table in tls["reports"]:
+        if table.get("vetoed"):
+            rendered.append(str(table.get("error") or "PLAN VETOED by verifier"))
+            rendered.append(
+                "(one revision cycle: your next run_probe call executes "
+                "without verification)"
+            )
+            continue
         if table.get("error"):
             rendered.append(f"probe call refused: {table['error']}")
             continue
@@ -5793,6 +5828,256 @@ def patch_archetype_dispatch() -> str:
     return "patch19 dispatch: OK (dormant — opt in with TAAF_DISPATCH=1)"
 
 
+# --- PATCH 20: verifier-at-commit for large run_probe plans -----------------------
+#
+# Measured server headroom (2026-08 profiling: median 24 running requests, 0
+# waiting; generation 204 tok/s median vs 400+ peak) means one extra parallel
+# request per game batches into spare vLLM capacity. This patch spends that
+# headroom on adversarial plan verification: when the model commits to a
+# run_probe plan of >= TAAF_VERIFY_MIN_ACTIONS actions (default 5), a SEPARATE
+# analyzer request — same server, same client machinery — is fired
+# synchronously WITHIN the turn (not a new turn) asking one question: "find the
+# single strongest reason this plan fails; answer VETO(reason) or PASS".
+#
+# CLIENT MECHANISM: `ToolAgent._chat_completion(messages, tools=None,
+# request_timeout_seconds=...)` is the harness's own request path (build_chat_
+# payload/build_headers -> requests.post {base_url}/chat/completions, returns
+# message + finish_reason + usage). The verifier reuses it verbatim. The live
+# agent instance is reached through a TLS stash written by a thin
+# `ToolAgent._run_python_tool` wrap: probe_execute runs on the session worker
+# thread inside that very call, so the stash is always the right agent.
+#
+# FAIL-OPEN BY DESIGN: the verifier must never block progress. Timeout (env
+# TAAF_VERIFY_TIMEOUT_S, default 45), HTTP error, missing agent, or a reply
+# that parses as neither VETO(...) nor PASS all mean PASS. On VETO the plan is
+# NOT executed: the veto reason lands in run_probe's return value AND in the
+# next prompt's PROBE REPORT slot as "PLAN VETOED by verifier: <reason>", the
+# vetoed call does NOT consume a per-level probe slot, and — one revision
+# cycle, no veto loops — the model's NEXT run_probe call of any kind executes
+# unconditionally.
+#
+# Seam note (patch 19 coexistence): patch 20 deliberately does NOT touch the
+# system prompt, so it neither wraps `_build_system_prompt` (stale-cache trap
+# 19 documents) nor interferes with 19's `_system_prompt` data descriptor.
+# TAAF_VERIFY=1 enables (default OFF — no behavior change until A/B'd).
+
+_VERIFY_TLS = _threading.local()
+
+VERIFY_DIAGNOSTICS = {
+    "calls": 0,
+    "passes": 0,
+    "vetoes": 0,
+    "timeouts": 0,
+    "malformed": 0,
+    "unavailable": 0,
+    "tokens": 0,
+}
+
+
+def _verify_enabled() -> bool:
+    """Opt-in only (TAAF_VERIFY=1). Default OFF."""
+    import os
+
+    return os.environ.get("TAAF_VERIFY", "0").strip() in {"1", "true", "True"}
+
+
+def _verify_min_actions() -> int:
+    """K: smallest run_probe plan that triggers verification (default 5)."""
+    import os
+
+    try:
+        return max(1, int(os.environ.get("TAAF_VERIFY_MIN_ACTIONS", "").strip() or 5))
+    except ValueError:
+        return 5
+
+
+def _verify_timeout_s() -> float:
+    """Hard verifier-request timeout in seconds (default 45)."""
+    import os
+
+    try:
+        return max(1.0, float(os.environ.get("TAAF_VERIFY_TIMEOUT_S", "").strip() or 45.0))
+    except ValueError:
+        return 45.0
+
+
+def _verify_tls_state() -> dict[str, Any]:
+    state = getattr(_VERIFY_TLS, "state", None)
+    if state is None:
+        state = {"skip_next": False}
+        _VERIFY_TLS.state = state
+    return state
+
+
+def _verify_messages(plan: list, state: Any) -> list[dict[str, Any]]:
+    """Compact adversarial prompt: the plan, the legend, the last effect tables."""
+    import json as _json
+
+    try:
+        legend = _wiggle_prompt_block()  # persistent render — NOT consumed
+    except Exception:  # noqa: BLE001
+        legend = ""
+    tables_json = ""
+    try:
+        history = list(_probe_tls_state().get("history") or [])[-2:]
+        if history:
+            tables_json = _json.dumps(history)[:2000]
+    except Exception:  # noqa: BLE001
+        tables_json = ""
+    try:
+        plan_json = _json.dumps(plan)[:2000]
+    except Exception:  # noqa: BLE001
+        plan_json = str(plan)[:2000]
+    valid = ", ".join(str(v) for v in ((state or {}).get("valid_actions") or []))
+    user_parts = [
+        f"PROPOSED PLAN ({len(plan)} actions): {plan_json}",
+        f"VALID ACTIONS NOW: {valid or 'unknown'}",
+    ]
+    if legend:
+        user_parts.append(legend)
+    if tables_json:
+        user_parts.append(f"RECENT EFFECT TABLES: {tables_json}")
+    user_parts.append(
+        "Find the single strongest reason this plan fails; "
+        "answer VETO(reason) or PASS."
+    )
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are an adversarial plan verifier for a grid-puzzle agent. "
+                "The agent is about to spend real, scored environment actions on "
+                "the proposed plan. Your only job is to find the single strongest "
+                "reason the plan fails. Reply on your final line with exactly "
+                "VETO(<one short reason>) or PASS."
+            ),
+        },
+        {"role": "user", "content": "\n\n".join(user_parts)},
+    ]
+
+
+def _verify_parse(content: Any) -> tuple[str, str]:
+    """('veto', reason) | ('pass', '') | ('malformed', ''). VETO wins over PASS."""
+    import re
+
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):  # multimodal part lists
+        text = " ".join(
+            str(part.get("text", "")) for part in content if isinstance(part, dict)
+        )
+    else:
+        text = ""
+    match = re.search(r"VETO\s*\(\s*(.*?)\s*\)", text, flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        reason = " ".join(match.group(1).split())[:300]
+        return "veto", reason or "unspecified risk"
+    if re.search(r"\bPASS\b", text):
+        return "pass", ""
+    return "malformed", ""
+
+
+def _verify_maybe_veto(plan: list, state: Any) -> str | None:
+    """The patch-18 executor's verification hook: reason string = veto, None = go.
+
+    Every failure mode — disabled, small plan, no stashed agent, timeout, HTTP
+    error, malformed reply — returns None: the verifier can only ever withhold
+    a plan it affirmatively vetoed (fail-open by design).
+    """
+    if not _verify_enabled():
+        return None
+    vs = _verify_tls_state()
+    if vs["skip_next"]:
+        # One revision cycle: the first plan after a veto — whatever it is —
+        # executes unconditionally, so veto loops are impossible.
+        vs["skip_next"] = False
+        return None
+    if len(list(plan or [])) < _verify_min_actions():
+        return None
+    VERIFY_DIAGNOSTICS["calls"] += 1
+    agent = getattr(_VERIFY_TLS, "agent", None)
+    if agent is None or not callable(getattr(agent, "_chat_completion", None)):
+        VERIFY_DIAGNOSTICS["unavailable"] += 1
+        return None
+    try:
+        result = agent._chat_completion(
+            _verify_messages(plan, state),
+            tools=None,
+            request_timeout_seconds=_verify_timeout_s(),
+        )
+    except Exception:  # noqa: BLE001 - timeout/HTTP/parse failures all fail open
+        VERIFY_DIAGNOSTICS["timeouts"] += 1
+        return None
+    usage = getattr(result, "usage", None)
+    if isinstance(usage, dict):
+        try:
+            VERIFY_DIAGNOSTICS["tokens"] += int(usage.get("total_tokens") or 0)
+        except (TypeError, ValueError):
+            pass
+    message = getattr(result, "message", None)
+    verdict, reason = _verify_parse(
+        message.get("content") if isinstance(message, dict) else None
+    )
+    if verdict == "veto":
+        VERIFY_DIAGNOSTICS["vetoes"] += 1
+        vs["skip_next"] = True
+        return reason
+    if verdict == "pass":
+        VERIFY_DIAGNOSTICS["passes"] += 1
+    else:
+        VERIFY_DIAGNOSTICS["malformed"] += 1
+    return None
+
+
+def patch_verify_at_commit() -> str:
+    """PATCH 20: adversarial verifier request before large run_probe plans."""
+    from inference.agent import tool_agent
+    from inference.framework import solver
+
+    agent_cls = getattr(tool_agent, "ToolAgent", None)
+    if agent_cls is None or not hasattr(agent_cls, "_run_python_tool"):
+        return "patch20 verify: FAIL (ToolAgent._run_python_tool not found)"
+    if not callable(getattr(agent_cls, "_chat_completion", None)):
+        return "patch20 verify: FAIL (ToolAgent._chat_completion not found)"
+    session_cls = getattr(solver, "_HarnessGameSession", None)
+    if session_cls is None or not hasattr(session_cls, "play"):
+        return "patch20 verify: FAIL (_HarnessGameSession.play not found)"
+    if getattr(agent_cls._run_python_tool, "_verify_patched", False):
+        return "patch20 verify: SKIP (already applied)"
+
+    # -- 20a: stash the live agent while its python tool runs ---------------------
+    # probe_execute runs on the session worker thread INSIDE this call, so the
+    # stash is always the requesting agent; cleared in finally so a stale agent
+    # can never serve another game's verification.
+    original_run_tool = agent_cls._run_python_tool
+
+    def _run_python_tool(self: Any, *args: Any, **kwargs: Any) -> Any:
+        _VERIFY_TLS.agent = self
+        try:
+            return original_run_tool(self, *args, **kwargs)
+        finally:
+            _VERIFY_TLS.agent = None
+
+    # -- 20b: per-game reset (reused worker threads must not leak the skip flag) ---
+    original_play = session_cls.play
+
+    def play(self: Any) -> None:
+        _VERIFY_TLS.state = None
+        _VERIFY_TLS.agent = None
+        return original_play(self)
+
+    _forward_patch_markers(_run_python_tool, original_run_tool)
+    _forward_patch_markers(play, original_play)
+    _run_python_tool._verify_patched = True  # type: ignore[attr-defined]
+    play._verify_play_patched = True  # type: ignore[attr-defined]
+    agent_cls._run_python_tool = _run_python_tool
+    session_cls.play = play
+
+    if _verify_enabled():
+        return "patch20 verify: OK (TAAF_VERIFY=1; triggers need TAAF_RUN_PROBE=1)"
+    return "patch20 verify: OK (dormant — opt in with TAAF_VERIFY=1)"
+
+
 def apply_all(verbose: bool = True) -> list[str]:
     """Apply every patch. Each is independent; one failing does not block the others."""
     results = []
@@ -5827,6 +6112,10 @@ def apply_all(verbose: bool = True) -> list[str]:
         # patch 17's observer so the escape hatch reads an already-updated
         # wiggle state.
         patch_archetype_dispatch,
+        # patch 20: no prompt seams at all — a _run_python_tool stash + a play
+        # reset; its executor hook is a static call inside patch 18's
+        # probe_execute, gated by TAAF_VERIFY at call time.
+        patch_verify_at_commit,
     ):
         try:
             results.append(fn())

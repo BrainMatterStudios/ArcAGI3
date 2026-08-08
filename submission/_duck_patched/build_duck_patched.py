@@ -123,7 +123,9 @@ def patch_cell_source() -> str:
         "import atexit as _atexit\n"
         "_atexit.register(\n"
         '    lambda: print(f"[duck-patch] compact diagnostics: {COMPACT_DIAGNOSTICS} '
-        'antifreeze: {ANTIFREEZE_DIAGNOSTICS} diff-lines: {DIFF_LINES_DIAGNOSTICS}", flush=True)\n'
+        'antifreeze: {ANTIFREEZE_DIAGNOSTICS} diff-lines: {DIFF_LINES_DIAGNOSTICS} '
+        'run-probe: {RUN_PROBE_DIAGNOSTICS} dispatch: {DISPATCH_DIAGNOSTICS} '
+        'verify: {VERIFY_DIAGNOSTICS}", flush=True)\n'
         ")\n"
     )
 

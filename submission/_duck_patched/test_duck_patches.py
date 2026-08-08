@@ -283,7 +283,7 @@ def test_grid_burner_toggle_is_call_time_not_apply_time(monkeypatch):
 
 def test_apply_all_reports_every_patch():
     lines = duck_patches.apply_all(verbose=False)
-    assert len(lines) == 21  # 1-6 + verify + 7/8/9/10/11 + 12a + 12b + 13 + 14 + 15 + 17 + 16 + 18 + 19
+    assert len(lines) == 22  # 1-6 + verify + 7/8/9/10/11 + 12a + 12b + 13 + 14 + 15 + 17 + 16 + 18 + 19 + 20
     joined = " | ".join(lines)
     assert "FAIL" not in joined, joined
     assert "patch3 reset: NOT NEEDED" in joined, (
