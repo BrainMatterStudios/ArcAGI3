@@ -51,3 +51,10 @@ patched-family 0.788).
 Fired 00:11:05 UTC via the gated runner (re-attest + race guard + settle);
 pending with the genuine long-run signature; 90-min watch closed clean; score
 expected mid-morning; classification per the frozen 0.69–1.27 band rule.
+
+## Wave-2 replication (2026-08-08 ~09:45 UTC) — closure verdict FINAL: NO_GO
+
+- Base v2 (pinned image): 12 levels excl ft09. Candidate v5: 13. **Delta +1 = no replication of wave-1 +6.**
+- Two-wave totals: base 23, candidate 30; 0 new target unlocks in either wave; no regressions; mechanisms fire (animation 1540 deliveries, grinder 1 level w2) but do not move totals reliably.
+- Consequence per the frozen plan: candidate delta (animation+grinder+600s watchdog) is dead; live duplicate config reverts to BASE bytes (base-family mean 0.929 vs patched 0.788); patch work on this delta ends.
+- Variance v1 scored 0.85 IN_BAND same morning -> tonight per the approved framework: idle-day byte-identical base draw.
