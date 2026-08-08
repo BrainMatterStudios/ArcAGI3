@@ -3729,6 +3729,443 @@ def patch_animation_sandbox() -> str:
     return "patch15 animation: OK"
 
 
+# --- PATCH 16: action-locked structured change lines (Transient Map) -------------
+#
+# Rank 4a of the 2026-08-07 human-play idea sweep (docs/RESEARCH-2026-08-07-human-
+# play-idea-sweep.md): the model should NEVER have to spot frame differences by
+# reading two 64x64 grids — the PRO-LONG precedent (94.6% ARC3 public) explicitly
+# warns that in-context board reading introduces precision errors. After every
+# executed action a deterministic pass diffs the HUD-masked pre/post boards,
+# labels connected changed components, detects pure translations (shape-verified
+# IoU >= 0.7 cross-correlation of per-color masks), and banks 1-10 compact lines
+# per action ("4x3 object (W) MOVED (dr=+1, dc=+0) ...", "6 cells ... RECOLORED
+# W->p", "NO CHANGE (HUD/step-counter tick only)"). The banked lines for every
+# action since the model's last turn are PREPENDED to the analyzer user prompt —
+# above the grids, at the same seam the board_changed summary flows — and the
+# grids themselves are untouched (token-diet lesson: never strip context).
+#
+# Masking: uses patch 8's live HudMaskTracker cells via _HUD_TLS; when no mask
+# has been confirmed yet, the raw diff is reported with an explicit caveat line.
+# Scene boundaries (RESET / level completed / game over / win) are reported as
+# repaints, not diffed — a full-scene diff of a repaint is noise.
+#
+# TAAF_DIFF_LINES=1 enables (default OFF — no behavior change until A/B'd).
+# TAAF_DIFF_MAX_LINES caps lines per action (default 8, clamp 3-10);
+# TAAF_DIFF_MAX_ACTIONS caps banked actions (default 6, clamp 1-20);
+# TAAF_DIFF_MAX_BLOCK caps the injected block (default 24 lines).
+
+_DIFF_TLS = _threading.local()
+
+DIFF_LINES_DIAGNOSTICS = {"reports": 0, "actions": 0}
+
+_DIFF_PROMPT_HEADER = (
+    "STRUCTURED CHANGE REPORT — deterministic HUD-masked frame diff of the actions "
+    "executed since your last turn, computed by code (not by eye). Trust these lines "
+    "over your own visual comparison of the grids; colors use the same letter codes "
+    "as the board views."
+)
+
+_DIFF_MAX_SHIFT = 8  # translation search radius, cells
+_DIFF_IOU_MIN = 0.7  # shape-verified translation acceptance
+_DIFF_COVER_MIN = 0.7  # movers must explain this share of the changed cells
+
+
+def _diff_lines_enabled() -> bool:
+    """Opt-in only (TAAF_DIFF_LINES=1). Default OFF."""
+    import os
+
+    return os.environ.get("TAAF_DIFF_LINES", "0").strip() in {"1", "true", "True"}
+
+
+def _diff_env_int(name: str, default: int, lo: int, hi: int) -> int:
+    import os
+
+    try:
+        value = int(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        value = default
+    return max(lo, min(hi, value))
+
+
+def _diff_max_lines() -> int:
+    return _diff_env_int("TAAF_DIFF_MAX_LINES", 8, 3, 10)
+
+
+def _diff_max_actions() -> int:
+    return _diff_env_int("TAAF_DIFF_MAX_ACTIONS", 6, 1, 20)
+
+
+def _diff_max_block() -> int:
+    return _diff_env_int("TAAF_DIFF_MAX_BLOCK", 24, 6, 60)
+
+
+def _diff_color_name(value: int) -> str:
+    """Render a color id as the SAME letter code the model's board views use."""
+    try:
+        from inference.utils.grid_utils import ARC_COLOR_CHARS
+
+        return ARC_COLOR_CHARS[max(0, min(15, int(value)))]
+    except Exception:
+        return str(int(value))
+
+
+def _diff_span(lo: int, hi: int, label: str) -> str:
+    return f"{label} {lo}" if lo == hi else f"{label}s {lo}-{hi}"
+
+
+def _diff_components(core: Any) -> list[list[tuple[int, int]]]:
+    """8-connected components of the changed-cell mask, largest first."""
+    height, width = core.shape
+    seen = set()
+    components: list[list[tuple[int, int]]] = []
+    for y0, x0 in ((int(y), int(x)) for y, x in zip(*core.nonzero())):
+        if (y0, x0) in seen:
+            continue
+        stack = [(y0, x0)]
+        seen.add((y0, x0))
+        comp: list[tuple[int, int]] = []
+        while stack:
+            y, x = stack.pop()
+            comp.append((y, x))
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    ny, nx = y + dy, x + dx
+                    if (
+                        0 <= ny < height
+                        and 0 <= nx < width
+                        and (ny, nx) not in seen
+                        and core[ny, nx]
+                    ):
+                        seen.add((ny, nx))
+                        stack.append((ny, nx))
+        components.append(sorted(comp))
+    components.sort(key=lambda c: (-len(c), c[0]))
+    return components
+
+
+def _diff_detect_translation(a: Any, b: Any, comp: list[tuple[int, int]]) -> dict | None:
+    """Shape-verified translation test for one changed component.
+
+    Within the component's bbox padded by the search radius, every color whose
+    cell count is conserved is cross-correlated against itself: the pre-frame
+    color mask is shifted over (dy, dx) in [-MAX_SHIFT, MAX_SHIFT]^2 and the
+    best-IoU shift kept (ties prefer the smallest displacement, so a static
+    background locks onto (0,0) and is excluded). A translation is reported
+    only when at least one color moved by a NON-ZERO shift with IoU >= 0.7,
+    all moving colors agree on the SAME shift, and the movers explain >= 70%
+    of the component's changed cells (a recolor with a coincidental match must
+    not be narrated as motion).
+    """
+    import numpy as np
+
+    ys = [y for y, _ in comp]
+    xs = [x for _, x in comp]
+    height, width = a.shape
+    wr0 = max(0, min(ys) - _DIFF_MAX_SHIFT)
+    wr1 = min(height - 1, max(ys) + _DIFF_MAX_SHIFT)
+    wc0 = max(0, min(xs) - _DIFF_MAX_SHIFT)
+    wc1 = min(width - 1, max(xs) + _DIFF_MAX_SHIFT)
+    wa = a[wr0 : wr1 + 1, wc0 : wc1 + 1]
+    wb = b[wr0 : wr1 + 1, wc0 : wc1 + 1]
+    core_local = np.zeros(wa.shape, dtype=bool)
+    for y, x in comp:
+        core_local[y - wr0, x - wc0] = True
+
+    def shifted(mask: Any, dy: int, dx: int) -> Any:
+        out = np.zeros_like(mask)
+        h, w = mask.shape
+        ys0, ys1 = max(0, dy), min(h, h + dy)
+        xs0, xs1 = max(0, dx), min(w, w + dx)
+        out[ys0:ys1, xs0:xs1] = mask[ys0 - dy : ys1 - dy, xs0 - dx : xs1 - dx]
+        return out
+
+    touched = {int(a[y, x]) for y, x in comp} | {int(b[y, x]) for y, x in comp}
+    movers: list[tuple[int, int, int, Any, Any]] = []  # (color, dy, dx, pre_c, post_c)
+    for color in sorted(touched):
+        pre_c = wa == color
+        post_c = wb == color
+        n_pre, n_post = int(pre_c.sum()), int(post_c.sum())
+        if n_pre == 0 or n_pre != n_post or bool((pre_c == post_c).all()):
+            continue  # not conserved, or untouched — cannot be a pure translation
+        best: tuple[float, int, int] | None = None
+
+        def rank(iou: float, dy: int, dx: int) -> tuple:
+            return (iou, -(abs(dy) + abs(dx)), -abs(dy), -abs(dx))
+
+        for dy in range(-_DIFF_MAX_SHIFT, _DIFF_MAX_SHIFT + 1):
+            for dx in range(-_DIFF_MAX_SHIFT, _DIFF_MAX_SHIFT + 1):
+                moved = shifted(pre_c, dy, dx)
+                union = int((moved | post_c).sum())
+                if union == 0:
+                    continue
+                iou = int((moved & post_c).sum()) / union
+                if best is None or rank(iou, dy, dx) > rank(*best):
+                    best = (iou, dy, dx)
+        if best is not None and best[0] >= _DIFF_IOU_MIN and (best[1], best[2]) != (0, 0):
+            movers.append((color, best[1], best[2], pre_c, post_c))
+
+    if not movers:
+        return None
+    shifts = {(dy, dx) for _, dy, dx, _, _ in movers}
+    if len(shifts) != 1:
+        return None
+    (dy, dx) = next(iter(shifts))
+
+    explained = np.zeros(wa.shape, dtype=bool)
+    dest = np.zeros(wa.shape, dtype=bool)
+    for _, mdy, mdx, pre_c, post_c in movers:
+        explained |= pre_c != post_c
+        dest |= shifted(pre_c, mdy, mdx) & post_c
+    n_core = int(core_local.sum())
+    if n_core == 0 or int((explained & core_local).sum()) / n_core < _DIFF_COVER_MIN:
+        return None
+    if not bool(dest.any()):
+        return None
+    dys, dxs = dest.nonzero()
+    return {
+        "dy": dy,
+        "dx": dx,
+        "colors": [color for color, *_ in movers],
+        "rows": (int(dys.min()) + wr0, int(dys.max()) + wr0),
+        "cols": (int(dxs.min()) + wc0, int(dxs.max()) + wc0),
+    }
+
+
+def _diff_describe_component(
+    a: Any, b: Any, comp: list[tuple[int, int]], name: Any
+) -> str:
+    ys = [y for y, _ in comp]
+    xs = [x for _, x in comp]
+    where = f"{_diff_span(min(ys), max(ys), 'row')} {_diff_span(min(xs), max(xs), 'col')}"
+
+    move = _diff_detect_translation(a, b, comp)
+    if move is not None:
+        r0, r1 = move["rows"]
+        c0, c1 = move["cols"]
+        colors = "+".join(name(c) for c in move["colors"])
+        return (
+            f"{r1 - r0 + 1}x{c1 - c0 + 1} object ({colors}) MOVED "
+            f"(dr={move['dy']:+d}, dc={move['dx']:+d}) to "
+            f"{_diff_span(r0, r1, 'row')} {_diff_span(c0, c1, 'col')}"
+        )
+
+    count = f"{len(comp)} cell" + ("s" if len(comp) != 1 else "")
+    transitions = {(int(a[y, x]), int(b[y, x])) for y, x in comp}
+    if len(transitions) == 1:
+        ((u, v),) = transitions
+        return f"{count} at {where} RECOLORED {name(u)}->{name(v)}"
+
+    def top_colors(values: list[int]) -> str:
+        counts: dict[int, int] = {}
+        for v in values:
+            counts[v] = counts.get(v, 0) + 1
+        ranked = sorted(counts, key=lambda c: (-counts[c], c))[:3]
+        rendered = ",".join(name(c) for c in ranked)
+        return rendered + (",…" if len(counts) > 3 else "")
+
+    pre_colors = top_colors([int(a[y, x]) for y, x in comp])
+    post_colors = top_colors([int(b[y, x]) for y, x in comp])
+    return f"{count} at {where} CHANGED ({pre_colors} -> {post_colors})"
+
+
+def diff_change_lines(
+    pre: Any,
+    post: Any,
+    mask_cells: Any = (),
+    *,
+    max_lines: int | None = None,
+    color_name: Any = None,
+) -> list[str]:
+    """Deterministic, compact change lines between two boards (pure function).
+
+    HUD cells (``mask_cells``: [row, col] pairs, patch 8's format) are excluded
+    from the diff. Components are described largest first; overflow beyond
+    ``max_lines`` is summarized honestly. An empty mask adds an explicit
+    "HUD may be unmasked" caveat instead of silently trusting the raw diff.
+    """
+    import numpy as np
+
+    name = color_name or _diff_color_name
+    cap = _diff_max_lines() if max_lines is None else max(1, int(max_lines))
+    a = np.asarray(pre, dtype=np.int16)
+    b = np.asarray(post, dtype=np.int16)
+    if a.ndim != 2 or a.shape != b.shape:
+        return [f"BOARD RESHAPED {tuple(a.shape)} -> {tuple(b.shape)} (scene repaint)"]
+
+    mask_list = [(int(c[0]), int(c[1])) for c in (mask_cells or [])]
+    mask = np.zeros(a.shape, dtype=bool)
+    for y, x in mask_list:
+        if 0 <= y < a.shape[0] and 0 <= x < a.shape[1]:
+            mask[y, x] = True
+
+    if not bool((a != b).any()):
+        return ["NO CHANGE (board identical)"]
+    # Neutralize HUD cells entirely (post := pre there): a ticking bar inside a
+    # translation-search window must not break color conservation nearby.
+    b = b.copy()
+    b[mask] = a[mask]
+    core = a != b
+    if not bool(core.any()):
+        return ["NO CHANGE (HUD/step-counter tick only)"]
+
+    # A move whose vacated and arrival strips are disconnected (object longer than
+    # its displacement) yields TWO components that reconstruct the IDENTICAL
+    # description — dedupe so one motion is narrated once.
+    lines: list[str] = []
+    seen: set[str] = set()
+    remaining = _diff_components(core)
+    while remaining and len(lines) < cap:
+        comp = remaining.pop(0)
+        description = _diff_describe_component(a, b, comp, name)
+        if description in seen:
+            continue
+        seen.add(description)
+        lines.append(f"CHANGE #{len(lines) + 1}: {description}")
+    leftover = remaining
+    if leftover:
+        lines.append(
+            f"+{len(leftover)} more small changes "
+            f"({sum(len(c) for c in leftover)} cells total)"
+        )
+    if not mask_list:
+        lines.append(
+            "(caveat: HUD not yet identified — some of these changes may be "
+            "HUD/step-counter ticks, not gameplay)"
+        )
+    return lines
+
+
+def _diff_record_action(action: Any, payload: Any, pre_grid: Any, post_grid: Any) -> None:
+    """Bank one executed action's change lines into the per-thread log."""
+    if not isinstance(payload, dict) or not payload.get("executed"):
+        return
+    is_reset = getattr(getattr(action, "id", None), "name", "") == "RESET"
+    if (
+        is_reset
+        or payload.get("level_completed")
+        or payload.get("game_over")
+        or payload.get("run_complete")
+    ):
+        reason = (
+            "RESET"
+            if is_reset
+            else "LEVEL COMPLETED"
+            if payload.get("level_completed")
+            else "RUN COMPLETE"
+            if payload.get("run_complete")
+            else "GAME OVER"
+        )
+        lines = [f"{reason} — scene repainted, per-object diff skipped"]
+    else:
+        lines = diff_change_lines(pre_grid, post_grid, _hud_current_mask_cells())
+    entries = getattr(_DIFF_TLS, "entries", None)
+    if entries is None:
+        entries = []
+        _DIFF_TLS.entries = entries
+    entries.append(
+        {
+            "action": str(payload.get("action_display") or "?"),
+            "action_num": payload.get("action_num"),
+            "lines": lines,
+        }
+    )
+    del entries[: -_diff_max_actions()]
+    DIFF_LINES_DIAGNOSTICS["actions"] += 1
+
+
+def _diff_prompt_block() -> str:
+    """Render (and consume) the banked change log; '' when there is nothing."""
+    entries = getattr(_DIFF_TLS, "entries", None)
+    if not entries:
+        return ""
+    rendered: list[str] = []
+    for entry in entries:
+        step = entry.get("action_num")
+        label = f"After {entry['action']}" + (f" (action #{step})" if step is not None else "")
+        if len(entry["lines"]) == 1:
+            rendered.append(f"{label}: {entry['lines'][0]}")
+        else:
+            rendered.append(f"{label}:")
+            rendered.extend(f"  {line}" for line in entry["lines"])
+    cap = _diff_max_block()
+    if len(rendered) > cap:
+        rendered = ["(earlier actions omitted — block capped)"] + rendered[-cap:]
+    _DIFF_TLS.entries = []
+    DIFF_LINES_DIAGNOSTICS["reports"] += 1
+    return "\n".join([_DIFF_PROMPT_HEADER, *rendered])
+
+
+def patch_diff_lines() -> str:
+    """PATCH 16: structured change lines above the grids in the analyzer prompt."""
+    from inference.agent import tool_agent
+    from inference.framework import solver
+
+    session_cls = getattr(solver, "_HarnessGameSession", None)
+    if session_cls is None or not hasattr(session_cls, "_execute_action"):
+        return "patch16 diff-lines: FAIL (_HarnessGameSession._execute_action not found)"
+    if not callable(getattr(solver, "_grid_from_state", None)):
+        return "patch16 diff-lines: FAIL (solver._grid_from_state not found)"
+    agent_cls = getattr(tool_agent, "ToolAgent", None)
+    if agent_cls is None or not hasattr(agent_cls, "_build_user_prompt"):
+        return "patch16 diff-lines: FAIL (ToolAgent._build_user_prompt not found)"
+    if getattr(session_cls._execute_action, "_diff_lines_patched", False) or getattr(
+        agent_cls._build_user_prompt, "_diff_lines_patched", False
+    ):
+        return "patch16 diff-lines: SKIP (already applied)"
+
+    # -- 16a: host-side capture around every executed action ----------------------
+    original_exec = session_cls._execute_action
+
+    def _execute_action(self: Any, action: Any, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        if not _diff_lines_enabled():
+            return original_exec(self, action, *args, **kwargs)
+        try:
+            pre = [list(row) for row in solver._grid_from_state(self.game.current_state)]
+        except Exception:
+            pre = None
+        payload = original_exec(self, action, *args, **kwargs)
+        try:
+            if pre is not None:
+                post = [list(row) for row in solver._grid_from_state(self.game.current_state)]
+                _diff_record_action(action, payload, pre, post)
+        except Exception:  # noqa: BLE001 - telemetry must never break an action
+            pass
+        return payload
+
+    # -- clear on game start: a reused worker thread must not leak another game's log
+    original_play = session_cls.play
+
+    def play(self: Any) -> None:
+        _DIFF_TLS.entries = []
+        return original_play(self)
+
+    # -- 16b: prepend the banked log ABOVE the grids (patch 14's prompt seam) ------
+    original_build = agent_cls._build_user_prompt
+
+    def _build_user_prompt(self: Any, *args: Any, **kwargs: Any) -> str:
+        prompt = original_build(self, *args, **kwargs)
+        if not _diff_lines_enabled():
+            return prompt
+        try:
+            block = _diff_prompt_block()
+        except Exception:  # noqa: BLE001 - the report must never break a turn
+            return prompt
+        return f"{block}\n\n{prompt}" if block else prompt
+
+    _forward_patch_markers(_execute_action, original_exec)
+    _forward_patch_markers(play, original_play)
+    _forward_patch_markers(_build_user_prompt, original_build)
+    _execute_action._diff_lines_patched = True  # type: ignore[attr-defined]
+    play._diff_lines_play_patched = True  # type: ignore[attr-defined]
+    _build_user_prompt._diff_lines_patched = True  # type: ignore[attr-defined]
+    session_cls._execute_action = _execute_action
+    session_cls.play = play
+    agent_cls._build_user_prompt = _build_user_prompt
+    if _diff_lines_enabled():
+        return "patch16 diff-lines: OK (TAAF_DIFF_LINES=1)"
+    return "patch16 diff-lines: OK (dormant — opt in with TAAF_DIFF_LINES=1)"
+
+
 def apply_all(verbose: bool = True) -> list[str]:
     """Apply every patch. Each is independent; one failing does not block the others."""
     results = []
@@ -3750,6 +4187,7 @@ def apply_all(verbose: bool = True) -> list[str]:
         patch_mechanic_playbook,
         patch_antifreeze,
         patch_animation_sandbox,
+        patch_diff_lines,
     ):
         try:
             results.append(fn())
