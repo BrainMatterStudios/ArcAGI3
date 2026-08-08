@@ -4166,6 +4166,864 @@ def patch_diff_lines() -> str:
     return "patch16 diff-lines: OK (dormant — opt in with TAAF_DIFF_LINES=1)"
 
 
+# --- PATCH 17: LLM-free opening wiggle battery -> controllability masks -----------
+#
+# Rank 2 of the 2026-08-07 human-play idea sweep (docs/RESEARCH-2026-08-07-human-
+# play-idea-sweep.md): before the model's FIRST deliberation the session spends a
+# bounded, LLM-free battery of directional presses ("wiggle") to MEASURE what the
+# body is instead of guessing it from a static frame. Port of the offline
+# contingency classifier that scored 14/14 avatar IDs with 0 false positives on
+# logged episodes (2026-08-07 offline verdicts). Lock rule (validated numbers):
+# shape-verified translation (IoU >= 0.70 — patch 16's `_diff_detect_translation`
+# is the same machinery), >= 2 direction-matching presses, consistency >= 0.5,
+# moved object <= 600 cells. One anti-drift refinement beyond the ported spec:
+# two matching presses must either repeat the SAME action's direction or come
+# from actions whose directions DIFFER — ambient motion drifts one way no matter
+# which key is pressed, action-contingent motion does not.
+#
+# Products, kept fresh by a standing observer over ALL executed actions and a
+# 2-press mini-probe after every level transition (lf52: controllability is
+# level-dependent — per-level re-probe is mandatory per the offline verdict):
+#
+#   * SELF     — cells of the component that translates under directionals;
+#   * REACTIVE — cells that changed near the model's clicks, with remote-effect
+#                clicks tracked as a separate category (dc22/s5i5 finding);
+#   * DEAD     — cells that never changed this level (HUD-masked throughout,
+#                via patch 8's live tracker);
+#   * GAME MODE — AVATAR / CLICK / ARROW-MORPH / UNCLEAR per the archetype
+#                dispatch spec: no ACTION1-4 offered -> CLICK (0 directional
+#                cost); translation lock within <= 12 presses -> AVATAR (+ the
+#                avatar color for free); arrows all masked no-ops -> CLICK;
+#                arrows change the board non-translationally -> ARROW-MORPH.
+#
+# Budget contract: the opening battery costs at most 12 scored actions
+# (interleaved 2x per available direction, then <= 4 confirm presses), aborts
+# after 4 consecutive masked no-ops (fast negative — 19/25 dev games are
+# click-dominant), costs 0 when no directional is offered, and NEVER issues
+# RESET. Winning humans reach the first level completion in ~20 (click) / ~31
+# (avatar) actions, so the cap sits below the click-game budget.
+#
+# Exposure: a compact CONTROLLABILITY LEGEND above the grids in the analyzer
+# prompt — BELOW patch 16's change report, which is why patch 17 must be applied
+# BEFORE patch 16 in apply_all (its prompt wrap must be the inner one) — plus
+# sandbox globals WIGGLE_MASKS / GAME_MODE through patch 9's state-payload
+# route. TAAF_WIGGLE=1 enables (default OFF — no behavior change until A/B'd).
+
+_WIGGLE_TLS = _threading.local()
+
+WIGGLE_DIAGNOSTICS = {
+    "batteries": 0,
+    "battery_presses": 0,
+    "reprobes": 0,
+    "reprobe_presses": 0,
+}
+
+_WIGGLE_DIRECTIONALS = ("ACTION1", "ACTION2", "ACTION3", "ACTION4")
+_WIGGLE_BASE_ROUNDS = 2  # interleaved rounds over the available directions
+_WIGGLE_CONFIRM_PRESSES = 4  # extra presses of the strongest candidate
+_WIGGLE_MAX_PRESSES = 12  # opening-battery hard cap (research spec: 12-16)
+_WIGGLE_NOOP_ABORT = 4  # consecutive masked no-ops -> early negative
+_WIGGLE_REPROBE_PRESSES = 2  # per-level mini-probe
+_WIGGLE_MAX_AVATAR_CELLS = 600  # validated classifier size ceiling
+_WIGGLE_MIN_MATCHES = 2  # direction-matching presses needed for a lock
+_WIGGLE_MIN_CONSISTENCY = 0.5  # matched / effect-presses acceptance
+_WIGGLE_CLICK_RADIUS = 5  # Chebyshev radius separating local from remote effects
+_WIGGLE_TICK_CELLS = 2  # <= this many non-translational cells = HUD-suspect no-op
+
+_WIGGLE_PROMPT_HEADER = (
+    "CONTROLLABILITY LEGEND — measured by an LLM-free directional wiggle battery "
+    "and a standing HUD-masked observer (computed by code, not by eye)."
+)
+
+_WIGGLE_REFRESH_LINES = (
+    '        runtime_globals["WIGGLE_MASKS"] = (state_payload.get("wiggle") or {}).get("masks")\n'
+    '        runtime_globals["GAME_MODE"] = (state_payload.get("wiggle") or {}).get("mode")\n'
+)
+
+
+def _wiggle_enabled() -> bool:
+    """Opt-in only (TAAF_WIGGLE=1). Default OFF."""
+    import os
+
+    return os.environ.get("TAAF_WIGGLE", "0").strip() in {"1", "true", "True"}
+
+
+class WiggleState:
+    """Per-game controllability record (per-level masks, cross-level history)."""
+
+    def __init__(self) -> None:
+        self.shape: tuple[int, int] | None = None
+        self.level: int | None = None
+        self.battery_done = False
+        self.battery_presses = 0
+        self.reprobe_presses = 0
+        self.mode = "UNCLEAR"
+        self.mode_reason = "battery not run yet"
+        self.locked_in: int | None = None  # presses spent when the lock landed
+        self.avatar_color: str | None = None
+        self.avatar_cells: list[tuple[int, int]] = []
+        self.avatar_action: str | None = None
+        self.avatar_shift: tuple[int, int] | None = None
+        # action -> {"presses": int, "noops": int, "morphs": int, "moves": [...]}
+        self.press_stats: dict[str, dict[str, Any]] = {}
+        self.consecutive_noops = 0
+        self.changed_ever: set[tuple[int, int]] = set()
+        self.reactive: set[tuple[int, int]] = set()
+        self.reactive_remote: set[tuple[int, int]] = set()
+        self.clicks = 0
+        self.remote_click_events = 0
+        self.directionals_at_start: list[str] | None = None
+        self.probing = False  # True while battery/reprobe presses are in flight
+        self.mode_history: list[tuple[int, str]] = []
+
+
+def _wiggle_stats(state: WiggleState, name: str) -> dict[str, Any]:
+    return state.press_stats.setdefault(
+        name, {"presses": 0, "noops": 0, "morphs": 0, "moves": []}
+    )
+
+
+def _wiggle_move_cells(a: Any, b: Any, move: dict) -> list[tuple[int, int]]:
+    """Destination cells of a detected translation (the avatar's new footprint)."""
+    cells: list[tuple[int, int]] = []
+    dy, dx = int(move["dy"]), int(move["dx"])
+    colors = {int(c) for c in move["colors"]}
+    (r0, r1), (c0, c1) = move["rows"], move["cols"]
+    height, width = a.shape
+    for r in range(r0, r1 + 1):
+        for c in range(c0, c1 + 1):
+            pr, pc = r - dy, c - dx
+            if 0 <= pr < height and 0 <= pc < width:
+                if int(b[r, c]) in colors and int(b[r, c]) == int(a[pr, pc]):
+                    cells.append((r, c))
+    return cells
+
+
+def _wiggle_jump_move(a: Any, b: Any, core: Any) -> dict[str, Any] | None:
+    """Unbounded-displacement translation for slot-cursor games (tr87 class).
+
+    Patch 16's detector searches shifts within +-8 cells; tr87's selection
+    cursor jumps ~28 columns per press and the validated classifier did find
+    it. This fallback accepts a jump only under strict whole-object identity:
+    a SMALL (<= 600 cells) color whose total count is conserved and whose
+    complete cell pattern reappears bit-identical at a new offset. All such
+    colors must agree on one non-zero displacement, and the movers must explain
+    >= 70% of the changed cells — a coincidental repaint must not read as
+    motion. Large colors (backgrounds) are excluded by the size gate; their
+    vacated/covered cells mirror the mover and would otherwise vote its exact
+    opposite displacement.
+    """
+    import numpy as np
+
+    changed = np.argwhere(core)
+    touched = {int(a[y, x]) for y, x in changed} | {int(b[y, x]) for y, x in changed}
+    moved: dict[int, tuple[tuple[int, int], list[tuple[int, int]]]] = {}
+    for color in sorted(touched):
+        pre_mask = a == color
+        post_mask = b == color
+        n = int(pre_mask.sum())
+        if n == 0 or n > _WIGGLE_MAX_AVATAR_CELLS or n != int(post_mask.sum()):
+            continue
+        if bool((pre_mask == post_mask).all()):
+            continue
+        pre_cells = np.argwhere(pre_mask)
+        post_cells = np.argwhere(post_mask)
+        origin_pre = pre_cells.min(axis=0)
+        origin_post = post_cells.min(axis=0)
+        if sorted(map(tuple, pre_cells - origin_pre)) != sorted(
+            map(tuple, post_cells - origin_post)
+        ):
+            continue  # not the same rigid shape — rotation/morph, not a jump
+        dy, dx = (int(v) for v in (origin_post - origin_pre))
+        if (dy, dx) == (0, 0):
+            continue
+        moved[color] = ((dy, dx), [(int(y), int(x)) for y, x in post_cells])
+    if not moved:
+        return None
+    shifts = {shift for shift, _ in moved.values()}
+    if len(shifts) != 1:
+        return None
+    (dy, dx) = next(iter(shifts))
+    cells = sorted({cell for _, cs in moved.values() for cell in cs})
+    if not 0 < len(cells) <= _WIGGLE_MAX_AVATAR_CELLS:
+        return None
+    explained = np.zeros(a.shape, dtype=bool)
+    for color in moved:
+        explained |= (a == color) != (b == color)
+    n_core = int(core.sum())
+    if n_core == 0 or int((explained & core).sum()) / n_core < _DIFF_COVER_MIN:
+        return None
+    return {"dy": dy, "dx": dx, "colors": sorted(moved), "cells": cells}
+
+
+def wiggle_observe_transition(
+    state: WiggleState,
+    action_name: str,
+    action_data: dict | None,
+    pre: Any,
+    post: Any,
+    mask_cells: Any = (),
+) -> dict[str, Any]:
+    """Fold one executed (pre, action, post) transition into the state.
+
+    Pure with respect to the harness: this is the exact function the offline
+    replay validation drives with logged episode triples.
+    """
+    import numpy as np
+
+    a = np.asarray(pre, dtype=np.int16)
+    b = np.asarray(post, dtype=np.int16)
+    if a.ndim != 2 or a.shape != b.shape:
+        if b.ndim == 2:
+            state.shape = tuple(int(v) for v in b.shape)
+        return {"kind": "repaint"}
+    state.shape = tuple(int(v) for v in a.shape)
+
+    # Neutralize HUD cells (patch 8's mask): post := pre there, so a ticking bar
+    # can neither fake an effect nor break color conservation near the avatar.
+    mask_list = [(int(c[0]), int(c[1])) for c in (mask_cells or [])]
+    b2 = b.copy()
+    for y, x in mask_list:
+        if 0 <= y < a.shape[0] and 0 <= x < a.shape[1]:
+            b2[y, x] = a[y, x]
+    core = a != b2
+    changed = [(int(y), int(x)) for y, x in zip(*core.nonzero())]
+    state.changed_ever.update(changed)
+
+    name = str(action_name or "")
+    if name in _WIGGLE_DIRECTIONALS:
+        stats = _wiggle_stats(state, name)
+        stats["presses"] += 1
+        if not changed:
+            stats["noops"] += 1
+            state.consecutive_noops += 1
+            return {"kind": "noop", "action": name}
+        move = None
+        for comp in _diff_components(core):  # largest first
+            cand = _diff_detect_translation(a, b2, comp)
+            if cand is None:
+                continue
+            cells = _wiggle_move_cells(a, b2, cand)
+            if 0 < len(cells) <= _WIGGLE_MAX_AVATAR_CELLS:
+                move = (cand, cells)
+                break
+        if move is None:
+            jump = _wiggle_jump_move(a, b2, core)
+            if jump is not None:
+                move = (jump, jump["cells"])
+        if move is None:
+            if len(changed) <= _WIGGLE_TICK_CELLS:
+                # The battery runs before patch 8's tracker can confirm a mask
+                # (needs ~3 windows), and 18-24/25 games tick a 1-2 cell HUD bar
+                # on every action. A tiny non-translational change is treated as
+                # a no-op (HUD-suspect), or the fast negative could never fire.
+                stats["noops"] += 1
+                stats["tick_noops"] = stats.get("tick_noops", 0) + 1
+                state.consecutive_noops += 1
+                return {"kind": "noop", "action": name, "hud_suspect": True}
+            stats["morphs"] += 1
+            state.consecutive_noops = 0
+            return {"kind": "morph", "action": name}
+        state.consecutive_noops = 0
+        cand, cells = move
+        sign = (int(np.sign(cand["dy"])), int(np.sign(cand["dx"])))
+        stats["moves"].append(
+            {
+                "sign": sign,
+                "dy": int(cand["dy"]),
+                "dx": int(cand["dx"]),
+                "cells": cells,
+                "colors": [int(c) for c in cand["colors"]],
+            }
+        )
+        return {"kind": "move", "action": name, "sign": sign, "n_cells": len(cells)}
+
+    if name == "ACTION6":
+        state.clicks += 1
+        if changed:
+            data = action_data or {}
+            try:
+                cy, cx = int(data["y"]), int(data["x"])
+            except (KeyError, TypeError, ValueError):
+                cy = cx = None  # type: ignore[assignment]
+            if cy is None:
+                state.reactive.update(changed)
+            else:
+                near = {
+                    cell
+                    for cell in changed
+                    if max(abs(cell[0] - cy), abs(cell[1] - cx)) <= _WIGGLE_CLICK_RADIUS
+                }
+                far = [cell for cell in changed if cell not in near]
+                state.reactive.update(near)
+                # > _WIGGLE_TICK_CELLS far cells: an unconfirmed 1-2 cell HUD
+                # tick must not read as a remote effect (dc22/s5i5 class).
+                if len(far) > _WIGGLE_TICK_CELLS:
+                    state.reactive_remote.update(far)
+                    state.remote_click_events += 1
+        return {"kind": "click", "changed": bool(changed)}
+
+    return {"kind": "other", "action": name, "changed": bool(changed)}
+
+
+def _wiggle_lock_evidence(state: WiggleState) -> dict[str, Any] | None:
+    """The validated avatar-lock test over the accumulated press evidence."""
+    matched: list[tuple[str, dict]] = []
+    modal_signs: dict[str, tuple[int, int]] = {}
+    effects = 0
+    for name in _WIGGLE_DIRECTIONALS:
+        stats = state.press_stats.get(name)
+        if not stats:
+            continue
+        effects += len(stats["moves"]) + stats["morphs"]
+        if not stats["moves"]:
+            continue
+        signs = [m["sign"] for m in stats["moves"]]
+        modal = max(set(signs), key=signs.count)
+        if modal == (0, 0):
+            continue
+        modal_signs[name] = modal
+        matched.extend((name, m) for m in stats["moves"] if m["sign"] == modal)
+    if len(matched) < _WIGGLE_MIN_MATCHES:
+        return None
+    if effects <= 0 or len(matched) / effects < _WIGGLE_MIN_CONSISTENCY:
+        return None
+    # Anti-drift refinement: matches must repeat one action's direction, or come
+    # from actions with DIFFERENT directions (ambient motion fails both).
+    per_action = {name: sum(1 for n, _ in matched if n == name) for name in modal_signs}
+    if max(per_action.values(), default=0) < 2 and len(set(modal_signs.values())) < 2:
+        return None
+    name, m = matched[-1]
+    return {
+        "matches": len(matched),
+        "effects": effects,
+        "action": name,
+        "sign": m["sign"],
+        "dy": m["dy"],
+        "dx": m["dx"],
+        "cells": list(m["cells"]),
+        "colors": list(m["colors"]),
+    }
+
+
+def wiggle_verdict(state: WiggleState) -> tuple[str, str]:
+    """(mode, reason) per the archetype dispatch spec."""
+    if state.directionals_at_start is not None and not state.directionals_at_start:
+        return "CLICK", "no directional actions offered (0 presses spent)"
+    presses = sum(s["presses"] for s in state.press_stats.values())
+    noops = sum(s["noops"] for s in state.press_stats.values())
+    morphs = sum(s["morphs"] for s in state.press_stats.values())
+    moves = sum(len(s["moves"]) for s in state.press_stats.values())
+    if _wiggle_lock_evidence(state) is not None:
+        return "AVATAR", f"shape-verified translation lock ({presses} presses)"
+    if presses > 0 and noops == presses:
+        return "CLICK", f"all {presses} directional presses were masked no-ops"
+    if morphs > 0 and moves == 0:
+        return (
+            "ARROW-MORPH",
+            f"arrows changed the board non-translationally ({morphs}/{presses} presses)",
+        )
+    if presses == 0:
+        return "UNCLEAR", "no directional evidence yet"
+    return (
+        "UNCLEAR",
+        f"mixed evidence ({moves} translations, {morphs} morphs, {noops} no-ops "
+        f"in {presses} presses)",
+    )
+
+
+def _wiggle_apply_verdict(state: WiggleState) -> None:
+    mode, reason = wiggle_verdict(state)
+    state.mode, state.mode_reason = mode, reason
+    if mode == "AVATAR":
+        lock = _wiggle_lock_evidence(state)
+        if lock is not None:
+            state.avatar_cells = [tuple(c) for c in lock["cells"]]
+            state.avatar_color = "+".join(
+                _diff_color_name(c) for c in sorted(set(lock["colors"]))
+            )
+            state.avatar_action = lock["action"]
+            state.avatar_shift = (int(lock["dy"]), int(lock["dx"]))
+
+
+def _wiggle_level_reset(state: WiggleState, level: int | None) -> None:
+    """New level: bodies and boards change (lf52), so per-level evidence resets.
+
+    Mode/color/history persist as priors until the mini-probe re-verifies them.
+    """
+    state.level = level
+    state.press_stats = {}
+    state.consecutive_noops = 0
+    state.changed_ever = set()
+    state.reactive = set()
+    state.reactive_remote = set()
+    state.avatar_cells = []
+
+
+def _wiggle_directionals_available(session: Any) -> list[str]:
+    from inference.framework import solver
+
+    try:
+        avail = {int(v) for v in session.game.current_state.available_actions}
+    except Exception:
+        return []
+    names = []
+    for name in _WIGGLE_DIRECTIONALS:
+        try:
+            if int(solver.arcengine.GameAction.from_name(name).value) in avail:
+                names.append(name)
+        except Exception:
+            continue
+    return names
+
+
+def _wiggle_session_blocked(session: Any) -> bool:
+    from inference.framework import solver
+
+    try:
+        if session.should_stop() or solver._is_engine_game_over(session.game):
+            return True
+        return getattr(session.game.current_state.raw.state, "name", "") in (
+            "GAME_OVER",
+            "WIN",
+        )
+    except Exception:
+        return True
+
+
+def _wiggle_press(session: Any, state: WiggleState, name: str) -> dict[str, Any] | None:
+    """Execute ONE directional press outside the LLM loop and observe it.
+
+    Returns the payload, or None when the press was refused (terminal state,
+    action unavailable, or anything unexpected). The battery NEVER issues RESET:
+    only ACTION1-4 names are accepted at all.
+    """
+    from inference.framework import solver
+
+    if name not in _WIGGLE_DIRECTIONALS:
+        return None
+    if _wiggle_session_blocked(session):
+        return None
+    if name not in _wiggle_directionals_available(session):
+        return None
+    try:
+        pre = [list(row) for row in solver._grid_from_state(session.game.current_state)]
+        action = solver.arcengine.ActionInput(
+            id=solver.arcengine.GameAction.from_name(name), data={}
+        )
+        payload = session._execute_action(
+            action, batch_index=1, batch_size=1, generated_tokens=0
+        )
+        post = [list(row) for row in solver._grid_from_state(session.game.current_state)]
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or not payload.get("executed"):
+        return None
+    boundary = (
+        payload.get("level_completed")
+        or payload.get("game_over")
+        or payload.get("run_complete")
+    )
+    if not boundary:  # a repaint must not enter the press statistics
+        try:
+            wiggle_observe_transition(
+                state, name, {}, pre, post, _hud_current_mask_cells()
+            )
+        except Exception:
+            pass
+    return payload
+
+
+def _wiggle_payload_boundary(payload: dict[str, Any]) -> bool:
+    return bool(
+        payload.get("level_completed")
+        or payload.get("game_over")
+        or payload.get("run_complete")
+    )
+
+
+def _wiggle_confirm_candidate(state: WiggleState) -> str | None:
+    """The action one press short of a lock: most translations, ties by order."""
+    best: str | None = None
+    best_moves = 0
+    for name in _WIGGLE_DIRECTIONALS:
+        stats = state.press_stats.get(name)
+        if stats and len(stats["moves"]) > best_moves:
+            best, best_moves = name, len(stats["moves"])
+    return best
+
+
+def _wiggle_finish_probe(session: Any, state: WiggleState) -> None:
+    """Post-probe bookkeeping: verdict, then per-level reset if a probe press
+    itself crossed a level boundary (the verdict belongs to the level probed)."""
+    from inference.framework import solver
+
+    _wiggle_apply_verdict(state)
+    state.mode_history.append((int(state.level or 1), state.mode))
+    try:
+        level_now = solver._level_number(session.game)
+    except Exception:
+        return
+    if state.level is not None and level_now != state.level:
+        _wiggle_level_reset(state, level_now)
+
+
+def _wiggle_run_battery(session: Any, state: WiggleState) -> None:
+    """The opening battery: interleaved 2x per available direction, early stop on
+    translation lock, early abort on 4 straight masked no-ops, <= 12 presses."""
+    from inference.framework import solver
+
+    state.probing = True
+    try:
+        WIGGLE_DIAGNOSTICS["batteries"] += 1
+        try:
+            state.level = solver._level_number(session.game)
+        except Exception:
+            state.level = 1
+        state.directionals_at_start = _wiggle_directionals_available(session)
+        if not state.directionals_at_start:
+            return  # CLICK verdict, 0 scored actions spent
+
+        def press(name: str) -> bool:
+            """True while the battery may continue."""
+            payload = _wiggle_press(session, state, name)
+            if payload is None:
+                return False
+            state.battery_presses += 1
+            WIGGLE_DIAGNOSTICS["battery_presses"] += 1
+            if _wiggle_payload_boundary(payload):
+                return False
+            if _wiggle_lock_evidence(state) is not None:
+                state.locked_in = state.battery_presses
+                return False
+            return state.consecutive_noops < _WIGGLE_NOOP_ABORT
+
+        alive = True
+        for _ in range(_WIGGLE_BASE_ROUNDS):
+            for name in state.directionals_at_start:
+                if not alive or state.battery_presses >= _WIGGLE_MAX_PRESSES:
+                    alive = False
+                    break
+                alive = press(name)
+            if not alive:
+                break
+        confirm_used = 0
+        while (
+            alive
+            and state.locked_in is None
+            and confirm_used < _WIGGLE_CONFIRM_PRESSES
+            and state.battery_presses < _WIGGLE_MAX_PRESSES
+        ):
+            candidate = _wiggle_confirm_candidate(state)
+            if candidate is None:
+                break
+            alive = press(candidate)
+            confirm_used += 1
+    finally:
+        state.probing = False
+        state.battery_done = True
+        _wiggle_finish_probe(session, state)
+
+
+def _wiggle_reprobe(session: Any, state: WiggleState) -> None:
+    """2-press mini-probe on a fresh level (controllability is level-dependent)."""
+    from inference.framework import solver
+
+    try:
+        level = solver._level_number(session.game)
+    except Exception:
+        level = (state.level or 0) + 1
+    state.probing = True
+    try:
+        WIGGLE_DIAGNOSTICS["reprobes"] += 1
+        prior_action = state.avatar_action
+        _wiggle_level_reset(state, level)
+        names = _wiggle_directionals_available(session)
+        state.directionals_at_start = names
+        if names:
+            if prior_action in names:  # strongest test: repeat the locked direction
+                plan = [prior_action] * _WIGGLE_REPROBE_PRESSES
+            else:
+                plan = (names * _WIGGLE_REPROBE_PRESSES)[:_WIGGLE_REPROBE_PRESSES]
+            for name in plan:
+                payload = _wiggle_press(session, state, name)
+                if payload is None:
+                    break
+                state.reprobe_presses += 1
+                WIGGLE_DIAGNOSTICS["reprobe_presses"] += 1
+                if _wiggle_payload_boundary(payload):
+                    break
+    finally:
+        state.probing = False
+        _wiggle_finish_probe(session, state)
+        state.mode_reason = f"L{level} reprobe: {state.mode_reason}"
+
+
+def _wiggle_span(cells: list[tuple[int, int]]) -> str:
+    ys = [c[0] for c in cells]
+    xs = [c[1] for c in cells]
+    return (
+        f"{_diff_span(min(ys), max(ys), 'row')} {_diff_span(min(xs), max(xs), 'col')}"
+    )
+
+
+def _wiggle_prompt_block() -> str:
+    """The persistent legend injected above the grids ('' before the battery)."""
+    state = getattr(_WIGGLE_TLS, "state", None)
+    if state is None or not state.battery_done:
+        return ""
+    lines = [_WIGGLE_PROMPT_HEADER]
+    if state.mode == "AVATAR" and state.avatar_cells:
+        move = ""
+        if state.avatar_action and state.avatar_shift:
+            move = (
+                f"; {state.avatar_action} moved it "
+                f"(dr={state.avatar_shift[0]:+d}, dc={state.avatar_shift[1]:+d})"
+            )
+        lines.append(
+            f"GAME MODE: AVATAR — {state.mode_reason}. Your body: "
+            f"{len(state.avatar_cells)} '{state.avatar_color}' cell(s) at "
+            f"{_wiggle_span(state.avatar_cells)}{move}. Move it with the arrow actions."
+        )
+    elif state.mode == "CLICK":
+        lines.append(
+            f"GAME MODE: CLICK — {state.mode_reason}. Do not spend more actions "
+            "on the directional actions; interact by clicking."
+        )
+    elif state.mode == "ARROW-MORPH":
+        lines.append(
+            f"GAME MODE: ARROW-MORPH — {state.mode_reason}. Arrows transform the "
+            "board in place (rotate/recolor/morph); they do not steer an avatar."
+        )
+    else:
+        lines.append(f"GAME MODE: UNCLEAR — {state.mode_reason}.")
+    if state.clicks:
+        remote = (
+            f" plus {len(state.reactive_remote)} cells from "
+            f"{state.remote_click_events} remote-effect click(s)"
+            if state.reactive_remote
+            else ""
+        )
+        lines.append(
+            f"REACTIVE: {len(state.reactive)} cell(s) changed near your clicks{remote}."
+        )
+    if state.shape:
+        total = state.shape[0] * state.shape[1]
+        dead = total - len(state.changed_ever)
+        lines.append(
+            f"DEAD: {dead}/{total} cells have never changed on this level "
+            "(HUD-masked; probe them last)."
+        )
+    lines.append(
+        f"(probe cost so far: {state.battery_presses + state.reprobe_presses} scored "
+        "actions; per-pixel masks in the python tool: WIGGLE_MASKS, mode: GAME_MODE)"
+    )
+    return "\n".join(lines)
+
+
+def _wiggle_current_payload() -> dict[str, Any]:
+    """JSON-able snapshot for the sandbox ({} before the battery / when off)."""
+    if not _wiggle_enabled():
+        return {}
+    state = getattr(_WIGGLE_TLS, "state", None)
+    if state is None or not state.battery_done:
+        return {}
+    masks: dict[str, Any] = {
+        "self": [[int(r), int(c)] for r, c in sorted(state.avatar_cells)],
+        "reactive": [[int(r), int(c)] for r, c in sorted(state.reactive)[:400]],
+        "reactive_remote": [
+            [int(r), int(c)] for r, c in sorted(state.reactive_remote)[:200]
+        ],
+        "changed_count": len(state.changed_ever),
+    }
+    if state.shape:
+        height, width = state.shape
+        masks["dead_count"] = height * width - len(state.changed_ever)
+        changed = state.changed_ever
+        masks["dead_rows"] = [
+            "".join("0" if (y, x) in changed else "1" for x in range(width))
+            for y in range(height)
+        ]
+    return {
+        "mode": state.mode,
+        "reason": state.mode_reason,
+        "avatar_color": state.avatar_color,
+        "avatar_action": state.avatar_action,
+        "masks": masks,
+        "history": [[int(lvl), mode] for lvl, mode in state.mode_history],
+    }
+
+
+def patch_wiggle() -> str:
+    """PATCH 17: LLM-free opening wiggle battery -> SELF/REACTIVE/DEAD masks."""
+    from inference.agent import python_tool_sandbox as sandbox_mod
+    from inference.agent import tool_agent
+    from inference.framework import solver
+
+    session_cls = getattr(solver, "_HarnessGameSession", None)
+    if (
+        session_cls is None
+        or not hasattr(session_cls, "_execute_action")
+        or not hasattr(session_cls, "play")
+    ):
+        return "patch17 wiggle: FAIL (_HarnessGameSession seam not found)"
+    if not callable(getattr(solver, "_grid_from_state", None)):
+        return "patch17 wiggle: FAIL (solver._grid_from_state not found)"
+    if getattr(solver, "arcengine", None) is None:
+        return "patch17 wiggle: FAIL (solver.arcengine not found)"
+    agent_cls = getattr(tool_agent, "ToolAgent", None)
+    if agent_cls is None or not hasattr(agent_cls, "_build_user_prompt"):
+        return "patch17 wiggle: FAIL (ToolAgent._build_user_prompt not found)"
+    if getattr(session_cls._execute_action, "_wiggle_patched", False) or getattr(
+        agent_cls._build_user_prompt, "_wiggle_patched", False
+    ):
+        return "patch17 wiggle: SKIP (already applied)"
+
+    # -- 17a: battery before the model's first deliberation ------------------------
+    original_play = session_cls.play
+
+    def play(self: Any) -> None:
+        state = WiggleState() if _wiggle_enabled() else None
+        _WIGGLE_TLS.state = state  # reused worker threads must not leak a game
+        if state is not None:
+            self._wiggle_state = state
+            try:
+                if not _wiggle_session_blocked(self):
+                    self.seed_initial_history()  # bank the pre-battery frame
+                    _wiggle_run_battery(self, state)
+            except Exception:  # noqa: BLE001 - the battery must never break a game
+                pass
+        return original_play(self)
+
+    # -- 17b: standing observer + per-level mini-probe on every executed action ----
+    original_exec = session_cls._execute_action
+
+    def _execute_action(self: Any, action: Any, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        if not _wiggle_enabled():
+            return original_exec(self, action, *args, **kwargs)
+        state = getattr(self, "_wiggle_state", None)
+        if state is None:
+            state = WiggleState()
+            self._wiggle_state = state
+        _WIGGLE_TLS.state = state
+        if state.probing:  # battery/reprobe presses observe themselves
+            return original_exec(self, action, *args, **kwargs)
+        try:
+            pre = [list(row) for row in solver._grid_from_state(self.game.current_state)]
+        except Exception:
+            pre = None
+        payload = original_exec(self, action, *args, **kwargs)
+        try:
+            if pre is not None and isinstance(payload, dict) and payload.get("executed"):
+                name = getattr(getattr(action, "id", None), "name", "")
+                if name != "RESET" and not _wiggle_payload_boundary(payload):
+                    post = [
+                        list(row)
+                        for row in solver._grid_from_state(self.game.current_state)
+                    ]
+                    wiggle_observe_transition(
+                        state,
+                        name,
+                        dict(getattr(action, "data", {}) or {}),
+                        pre,
+                        post,
+                        _hud_current_mask_cells(),
+                    )
+                if (
+                    payload.get("level_completed")
+                    and not payload.get("run_complete")
+                    and state.battery_done
+                ):
+                    _wiggle_reprobe(self, state)
+        except Exception:  # noqa: BLE001 - measurement must never break an action
+            pass
+        return payload
+
+    # -- 17c: persistent legend above the grids (INNER wrap: patch 16 lands above) -
+    original_build = agent_cls._build_user_prompt
+
+    def _build_user_prompt(self: Any, *args: Any, **kwargs: Any) -> str:
+        prompt = original_build(self, *args, **kwargs)
+        if not _wiggle_enabled():
+            return prompt
+        try:
+            block = _wiggle_prompt_block()
+        except Exception:  # noqa: BLE001 - the legend must never break a turn
+            return prompt
+        if not block:
+            return prompt
+        # Order-robust placement: apply_all wraps 17 inside 16 so the change
+        # report lands on top, but if 16 was applied FIRST (its wrap is inner),
+        # the incoming prompt already starts with the report — slot the legend
+        # just below it (the report and the base prompt are "\n\n"-separated).
+        if prompt.startswith(_DIFF_PROMPT_HEADER):
+            head, sep, rest = prompt.partition("\n\n")
+            if sep:
+                return f"{head}\n\n{block}\n\n{rest}"
+        return f"{block}\n\n{prompt}"
+
+    _forward_patch_markers(play, original_play)
+    _forward_patch_markers(_execute_action, original_exec)
+    _forward_patch_markers(_build_user_prompt, original_build)
+    play._wiggle_play_patched = True  # type: ignore[attr-defined]
+    _execute_action._wiggle_patched = True  # type: ignore[attr-defined]
+    _build_user_prompt._wiggle_patched = True  # type: ignore[attr-defined]
+    session_cls.play = play
+    session_cls._execute_action = _execute_action
+    agent_cls._build_user_prompt = _build_user_prompt
+
+    # -- 17d: sandbox globals (patch 9's state-payload route) -----------------------
+    sandbox_note = ""
+    bootstrap = getattr(sandbox_mod, "_SANDBOX_BOOTSTRAP", None)
+    if isinstance(bootstrap, str) and _HUD_REFRESH_ANCHOR in bootstrap:
+        if "WIGGLE_MASKS" not in bootstrap:
+            sandbox_mod._SANDBOX_BOOTSTRAP = bootstrap.replace(
+                _HUD_REFRESH_ANCHOR, _HUD_REFRESH_ANCHOR + _WIGGLE_REFRESH_LINES
+            )
+        original_run = sandbox_mod.run_sandboxed_python
+        if not getattr(original_run, "_wiggle_patched", False):
+
+            def run_sandboxed_python(
+                *,
+                code: str,
+                timeout_seconds: int,
+                initial_state: dict[str, Any],
+                action_handler: Any,
+            ) -> dict[str, Any]:
+                sandbox_state = dict(initial_state or {})
+                if "wiggle" not in sandbox_state:
+                    sandbox_state["wiggle"] = _wiggle_current_payload()
+
+                def handler(actions: Any) -> dict[str, Any]:
+                    out = action_handler(actions)
+                    try:
+                        refreshed = out.get("state") if isinstance(out, dict) else None
+                        if isinstance(refreshed, dict) and "wiggle" not in refreshed:
+                            refreshed["wiggle"] = _wiggle_current_payload()
+                    except Exception:
+                        pass
+                    return out
+
+                return original_run(
+                    code=code,
+                    timeout_seconds=timeout_seconds,
+                    initial_state=sandbox_state,
+                    action_handler=handler,
+                )
+
+            _forward_patch_markers(run_sandboxed_python, original_run)
+            run_sandboxed_python._wiggle_patched = True  # type: ignore[attr-defined]
+            sandbox_mod.run_sandboxed_python = run_sandboxed_python
+            if getattr(tool_agent, "run_sandboxed_python", None) is not None:
+                tool_agent.run_sandboxed_python = run_sandboxed_python
+    else:
+        sandbox_note = "; sandbox globals unavailable (bootstrap anchor missing)"
+
+    if _wiggle_enabled():
+        return f"patch17 wiggle: OK (TAAF_WIGGLE=1){sandbox_note}"
+    return f"patch17 wiggle: OK (dormant — opt in with TAAF_WIGGLE=1){sandbox_note}"
+
+
 def apply_all(verbose: bool = True) -> list[str]:
     """Apply every patch. Each is independent; one failing does not block the others."""
     results = []
@@ -4187,6 +5045,9 @@ def apply_all(verbose: bool = True) -> list[str]:
         patch_mechanic_playbook,
         patch_antifreeze,
         patch_animation_sandbox,
+        # patch 17 BEFORE patch 16: both prepend to the analyzer prompt, and the
+        # legend must render BELOW the change report (inner wrap = lower block).
+        patch_wiggle,
         patch_diff_lines,
     ):
         try:
