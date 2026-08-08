@@ -227,3 +227,8 @@ every content hash is from actually-pulled bytes; version *numbers* are only sta
 document or submission text pins them (basis given per row in the JSON); everything else is
 marked unknown or UNRECOVERABLE. The point of this file is that nobody ever again argues
 from a misattributed draw.
+
+## 2026-08-08 — variance v1 (55336559)
+
+- Frozen sampling-variance arm [variance-v1-71c25dc2]: 0.6/20/0.95 -> 0.9/50/0.98, unseeded; submitted 00:11:05Z via scripts/submit_variance_20260808.py (re-attest + race guard + settle; watch clean).
+- **Score 0.85 — IN_BAND (0.69-1.27): individually inconclusive per the registered reading rule.** No large-effect signal from sampling; hotter sampling neither cratered nor popped at n=1.
