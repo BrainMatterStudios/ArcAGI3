@@ -46,6 +46,29 @@ def test_metadata_is_private_commit_kernel():
         assert meta["id"] == f"ahmedmobasher86/{ARM_SLUGS[arm]}"
         assert meta["code_file"] == f"patch-closure-{arm}.ipynb"
         assert "arc-prize-2026-arc-agi-3" in meta["competition_sources"]
+        # fc12c29: candidate ERRORed on unpinned images — the pin must survive
+        # every rebuild (the builder owns kernel-metadata.json).
+        assert meta["docker_image"].startswith("gcr.io/kaggle-private-byod/python@sha256:")
+
+
+def test_install_cell_probes_both_competition_mount_forms(tmp_path):
+    """2026-08-08 root cause: the competition data mounts at either
+    /kaggle/input/competitions/<slug> or /kaggle/input/<slug> per machine;
+    duck-base hardcodes the first and discards pip stdout. The built kernels
+    must probe BOTH at runtime and keep pip's failure visible."""
+    for arm in ("base", "candidate"):
+        nb = json.loads(build_arm(arm, output_root=tmp_path).read_text())
+        install = [
+            "".join(c["source"]) for c in nb["cells"]
+            if c["cell_type"] == "code" and "arc_agi_3_wheels" in "".join(c["source"])
+        ]
+        assert len(install) == 1, f"{arm}: expected exactly one wheels install cell"
+        src = install[0]
+        assert "/kaggle/input/competitions/arc-prize-2026-arc-agi-3/arc_agi_3_wheels" in src
+        assert '"/kaggle/input/arc-prize-2026-arc-agi-3/arc_agi_3_wheels"' in src
+        assert "either mount form" in src           # loud failure names both paths
+        assert "DEVNULL" not in src                 # pip output must be visible
+        assert "capture_output=True" in src and "stderr" in src
 
 
 def test_arm_slugs_are_distinct_and_never_the_competition_kernel():

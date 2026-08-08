@@ -51,6 +51,54 @@ ARM_SLUGS = {
 HOOK_MARKER = "Make one-off changes to `bm`, `bm.games`, or `bm.solver` here"
 SERVE_GUARD = "if TRUE_SUBMISSION:  # serving Qwen needs the eval GPU; the CPU-safe commit skips it"
 RUN_MARKER = "# Build the live competition game list from the gateway's available environments."
+INSTALL_MARKER = "# Install the ARC runtime from the bundled competition wheels."
+
+# Pinned by fc12c29 after the candidate drew broken unpinned images: the
+# duck-proven byod image. The builder owns kernel-metadata.json, so the pin
+# lives HERE — a rebuild must never silently drop it.
+DOCKER_IMAGE = ("gcr.io/kaggle-private-byod/python@sha256:"
+                "37c64f7dd9c54116ecd1bcc88817c5469b88387388fade02bfa8bf3fc647d461")
+
+# Replaces duck-base's install cell. ROOT CAUSE (2026-08-08, proven from pip's
+# stderr after 3 candidate ERRORs incl. on the pinned image): the competition
+# data mounts at EITHER /kaggle/input/competitions/<slug> OR
+# /kaggle/input/<slug> depending on the machine; duck-base hardcodes the first
+# ("Location ... is ignored: non-existing path" -> "No matching distribution
+# found for arc-agi"). Probe both mount forms at runtime; fail loudly naming
+# both. pip output is CAPTURED and printed on failure (and its stderr always)
+# — never discarded to DEVNULL, so this failure class can never be blind again.
+INSTALL_CELL = '''\
+# patch-closure: install the ARC runtime from the bundled competition wheels.
+# The competition data mounts at EITHER /kaggle/input/competitions/<slug> OR
+# /kaggle/input/<slug> depending on the machine (proven from pip's stderr on
+# the 2026-08-08 candidate ERRORs). Probe both; fail loudly naming both.
+_pc_wheel_dirs = [
+    "/kaggle/input/competitions/arc-prize-2026-arc-agi-3/arc_agi_3_wheels",
+    "/kaggle/input/arc-prize-2026-arc-agi-3/arc_agi_3_wheels",
+]
+_pc_wheels = next((p for p in _pc_wheel_dirs if Path(p).is_dir()), None)
+if _pc_wheels is None:
+    raise RuntimeError(
+        f"arc_agi_3_wheels directory not found at either mount form: {_pc_wheel_dirs}")
+print(f"[pc] installing arc-agi from {_pc_wheels}", flush=True)
+_pc_pip = subprocess.run(
+    [
+        sys.executable, "-m", "pip", "install",
+        "--quiet", "--no-index", "--no-warn-conflicts",
+        "--disable-pip-version-check",
+        "--find-links", _pc_wheels,
+        "arc-agi",
+    ],
+    capture_output=True, text=True,
+)
+if _pc_pip.stdout.strip():
+    print(_pc_pip.stdout, flush=True)
+if _pc_pip.stderr.strip():
+    print(f"[pc] pip stderr:\\n{_pc_pip.stderr}", flush=True)
+if _pc_pip.returncode != 0:
+    raise RuntimeError(f"[pc] pip install of arc-agi FAILED (rc={_pc_pip.returncode})")
+print(f"[pc] arc-agi installed from {_pc_wheels}", flush=True)
+'''
 
 APPLY_BLOCK = '''
 # --- full patch application (both arms, identical bytes) ------------------------
@@ -168,13 +216,18 @@ def build_arm(arm: str, output_root: Path | None = None) -> Path:
     ast.parse(hook_src)
     ast.parse(run_src.replace("await pc_main", "_ = pc_main"))
 
+    ast.parse(INSTALL_CELL)
+
     nb = json.loads(BASE_NB.read_text())
-    seen = {"serve": False, "hook": False, "run": False}
+    seen = {"serve": False, "hook": False, "run": False, "install": False}
     cells = []
     for cell in nb["cells"]:
         src = "".join(cell.get("source", []))
         if cell["cell_type"] == "code":
-            if SERVE_GUARD in src:
+            if INSTALL_MARKER in src:
+                src = INSTALL_CELL
+                seen["install"] = True
+            elif SERVE_GUARD in src:
                 src = src.replace(
                     SERVE_GUARD,
                     "if True:  # patch-closure: force the serve — a commit run must serve Qwen")
@@ -246,6 +299,7 @@ def build_arm(arm: str, output_root: Path | None = None) -> Path:
         "competition_sources": ["arc-prize-2026-arc-agi-3"],
         "kernel_sources": [],
         "model_sources": [],
+        "docker_image": DOCKER_IMAGE,
     }, indent=2) + "\n")
     return nb_path
 
