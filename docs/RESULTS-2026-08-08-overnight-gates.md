@@ -78,3 +78,15 @@ expected mid-morning; classification per the frozen 0.69–1.27 band rule.
 - **Adoption REPLICATED and improved: 2.59 plan-actions/deliberation (w1 2.01, base 1.0), multi-step 37%** — the structural channel reliably changes model behavior; the level payoff is modest/noisy, not the w1 spike.
 - Both waves STOP per pre-registered bars. Remaining adoption headroom: ~2/3 of turns still single-step (225 nudges).
 - Morning decision: iterate adoption vs consolidate; AgentWorld gate on upload (ETA ~13:00 UTC); GPU spent ~22.5h/30h week.
+
+## Final overnight results (2026-08-09 10:43 UTC)
+
+### Struct v3 / adoption iteration — PRIMARY NOT MET; coaching lever exhausted
+- adoption 2.57 (bar >3.5; waves now 2.01/2.59/2.57 = stable ~2.5x plateau). Coaching levers (worked examples, yield nudges, commit floor) moved nothing vs wave 2. **The ceiling is the model's deliberation habit, not contract clarity.** Levels 12 excl-ft09, no unlocks. Pooled struct {17,12,12} mean 13.7 vs base {11,12} 11.5 -> ~+2/wave, inside noise at these n.
+- Next lever, if any, is hard-structural (reject inspection-only turns / force action() in first call) with protocol-damage risk; not built without a fresh decision.
+
+### AgentWorld capability gate — NO_GO, Track B brain route EXHAUSTED
+- Full completion: served (bf16->dynamic FP8, text-only interface), protocol 77/89 = 86.5% (<95%), **0 levels on all 6 games incl. both controls** (35B at least got su15=1). Both alternative brains now measured NO_GO by the same instrument. The 27B remains the best available brain.
+
+### Week ledger
+- GPU ~27h/30h. Public LB high banked: **1.30** (new all-time). Replicated positive mechanism: structural plan channel (2.5x adoption, ~+2/wave directional). All four negative gates closed cleanly with zero slots burned on failures.
