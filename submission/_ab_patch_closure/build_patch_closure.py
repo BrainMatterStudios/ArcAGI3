@@ -212,9 +212,15 @@ def hook_cell(arm: str, arm_env: dict[str, str]) -> str:
 
 
 def run_cell(arm: str, source_hash: str, patch_hash: str,
-             hypothesis: str, reading: dict | None = None) -> str:
+             hypothesis: str, reading: dict | None = None,
+             geometry: dict | None = None) -> str:
     reading_line = (
         f"    reading={json.dumps(reading, sort_keys=True)},\n" if reading is not None else "")
+    # Default is the frozen eval geometry. An override exists so a wave can name
+    # a FOCUS SUBSET (geometry["games"]): the clone map is round-robin over the
+    # official list, so a full-25 wave gives n=1 per game. Overriding anything
+    # other than "games" changes the eval-shaped contract — do it deliberately.
+    geom = dict(GEOMETRY) if geometry is None else dict(geometry)
     return (
         "# patch-closure machinery: competition-simulated single-arm run. Replaces\n"
         "# duck-base's submission cell (its gateway poll cannot succeed in a commit\n"
@@ -228,7 +234,7 @@ def run_cell(arm: str, source_hash: str, patch_hash: str,
         "    bm=bm, target=target, working_dir=WORKING_DIR,\n"
         "    arm=PC_ARM, arm_env=PC_ARM_ENV,\n"
         f"    hypothesis={hypothesis!r},\n"
-        f"    geometry={json.dumps(GEOMETRY)},\n"
+        f"    geometry={json.dumps(geom)},\n"
         f"    source_base_sha256={source_hash!r},\n"
         f"    patch_sha256={patch_hash!r},\n"
         f"{reading_line}"
@@ -250,7 +256,8 @@ def build_arm(arm: str, output_root: Path | None = None) -> Path:
 def build_kernel(arm: str, slug: str, arm_env: dict[str, str], hypothesis: str,
                  reading: dict | None = None, code_stem: str | None = None,
                  output_root: Path | None = None,
-                 post_run_cell: str | None = None) -> Path:
+                 post_run_cell: str | None = None,
+                 geometry: dict | None = None) -> Path:
     """Parameterized kernel builder shared by the closure arms and the
     package screen; returns the notebook path.
 
@@ -260,7 +267,7 @@ def build_kernel(arm: str, slug: str, arm_env: dict[str, str], hypothesis: str,
     """
     source_hash, patch_hash = _source_hashes()
     hook_src = hook_cell(arm, arm_env)
-    run_src = run_cell(arm, source_hash, patch_hash, hypothesis, reading)
+    run_src = run_cell(arm, source_hash, patch_hash, hypothesis, reading, geometry)
     # ast.parse, not compile(): IPython executes cells per-statement, so the
     # inlined modules' mid-cell `from __future__` lines are runtime-legal (the
     # COMPLETE ab-wmr kernels carry the same byte pattern) but a strict module
@@ -339,7 +346,7 @@ def build_kernel(arm: str, slug: str, arm_env: dict[str, str], hypothesis: str,
         "arm_env": dict(arm_env),
         "source_base_sha256": source_hash,
         "patch_sha256": patch_hash,
-        "geometry": dict(GEOMETRY),
+        "geometry": dict(GEOMETRY) if geometry is None else dict(geometry),
     }
 
     arm_dir = (Path(output_root) if output_root is not None else HERE) / arm
