@@ -232,3 +232,8 @@ from a misattributed draw.
 
 - Frozen sampling-variance arm [variance-v1-71c25dc2]: 0.6/20/0.95 -> 0.9/50/0.98, unseeded; submitted 00:11:05Z via scripts/submit_variance_20260808.py (re-attest + race guard + settle; watch clean).
 - **Score 0.85 — IN_BAND (0.69-1.27): individually inconclusive per the registered reading rule.** No large-effect signal from sampling; hotter sampling neither cratered nor popped at n=1.
+
+## 2026-08-09 — idle-day base draw (55362984)
+
+- Byte-identical pinned base v2 [base-v2-886dbc8a], fired 00:11:06Z via gated runner.
+- **Score 1.30 — new all-time high public draw** (prior max 1.27). Identical bytes -> a tail draw of the base distribution (n=9), zero evidentiary weight by design; rank banking delivered.
