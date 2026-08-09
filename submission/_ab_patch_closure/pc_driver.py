@@ -577,6 +577,20 @@ async def pc_main(bm, target, working_dir, arm, arm_env, hypothesis, geometry,
         official = sorted(e.game_id for e in arcade.available_environments)
         if len(official) != 25:
             raise RuntimeError(f"expected 25 official environments, got {len(official)}")
+        # Optional FOCUS SUBSET. The clone map is round-robin over `official`
+        # (see `recon` below), so a full 25-game wave gives n=1 per game — which
+        # is why every per-game verdict in this rig's history rests on a single
+        # clone. Naming fewer games here spreads the same 28 clones over them,
+        # turning n=1 into n=28 on one game. The 25-environment assert above
+        # still runs, so a broken env_dir is caught before any filtering.
+        focus = tuple(geometry.get("games") or ())
+        if focus:
+            missing = [g for g in focus if g not in official]
+            if missing:
+                raise RuntimeError(f"geometry.games not in the official set: {missing}")
+            official = [g for g in official if g in focus]
+            print(f"[pc] FOCUS SUBSET: {len(official)} game(s) {official} "
+                  f"across {geometry['clones']} clones", flush=True)
         result["env_dir"] = env_dir
         baselines = pc_load_baselines(env_dir)
 
