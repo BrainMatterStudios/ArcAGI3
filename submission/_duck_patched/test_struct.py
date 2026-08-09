@@ -1119,10 +1119,14 @@ prompt = tool_agent._build_system_prompt(tool_output_tokens=1000)
 assert "PLAN CONTRACT" not in prompt
 assert duck_patches._STRUCT_CYCLE_OLD in prompt
 
+from inference.agent import python_tool_sandbox as sandbox_mod
+assert duck_patches._BARE_SENTINEL in sandbox_mod._SANDBOX_BOOTSTRAP
+
 os.environ["TAAF_STRUCT"] = "1"
 os.environ["TAAF_RUN_PROBE"] = "1"
 prompt = tool_agent._build_system_prompt(tool_output_tokens=1000)
 assert "PLAN CONTRACT" in prompt and "ENFORCED GATES" in prompt
+assert "FIRST python call" in prompt  # 2026-08-09 time-budget contract line
 assert duck_patches._STRUCT_CYCLE_OLD not in prompt
 assert "observe-deliberate-plan cycle" in prompt
 assert "run_probe — probe battery" not in prompt  # advert replaced
@@ -1163,3 +1167,244 @@ print("SCORED-BUNDLE STRUCT OK")
     )
     assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     assert "SCORED-BUNDLE STRUCT OK" in proc.stdout
+
+
+# ---------------------------------------------------------------------------------
+# 2026-08-09 adoption iteration: worked example, post-single coaching,
+# COMMIT-phase soft floor, yield-aware nudge, bare-vs-explicit tagging
+# ---------------------------------------------------------------------------------
+
+
+def test_battery_log_records_per_press_lines(tmp_path, monkeypatch):
+    """The wiggle battery banks per-press effect lines (lever 1's raw data)."""
+    monkeypatch.setenv("TAAF_WIGGLE", "1")
+    duck_patches.patch_wiggle()
+    _apply()
+    game, session = _real_session(tmp_path)
+    state = WiggleState()
+    duck_patches._wiggle_run_battery(session, state)
+    assert state.battery_presses >= 3
+    assert len(state.battery_log) == state.battery_presses
+    entry = state.battery_log[0]
+    assert set(entry) == {"action", "line"} and entry["action"] and entry["line"]
+    # ACTION2 (DOWN) moved the block: at least one press line shows the motion
+    assert any(
+        "MOVED" in e["line"] or "CHANGE" in e["line"] for e in state.battery_log
+    )
+
+
+def test_worked_example_seeded_once_from_battery_log(monkeypatch):
+    _enable(monkeypatch)
+    agent = _agent()
+    ws = WiggleState()
+    ws.battery_done = True
+    ws.battery_log = [
+        {"action": "UP", "line": "NO CHANGE (board identical)"},
+        {"action": "DOWN", "line": "CHANGE #1: 2x1 object (b) MOVED (dr=+1, dc=+0)"},
+        {"action": "LEFT", "line": "NO CHANGE (board identical)"},
+        {"action": "DOWN", "line": "CHANGE #1: 2x1 object (b) MOVED (dr=+1, dc=+0)"},
+    ]
+    _WIGGLE_TLS.state = ws
+    try:
+        prompt = _build(agent)
+        assert "EXAMPLE — your wiggle battery, replayed as a plan" in prompt
+        assert "action(['UP', 'DOWN', 'LEFT', 'DOWN'])" in prompt
+        assert "2. DOWN: CHANGE #1" in prompt
+        assert "4 measured observations" in prompt
+        assert STRUCT_DIAGNOSTICS["examples_shown"] == 1
+        # once per game: the second prompt must NOT repeat it
+        assert "EXAMPLE — your wiggle battery" not in _build(agent)
+        assert STRUCT_DIAGNOSTICS["examples_shown"] == 1
+    finally:
+        _WIGGLE_TLS.state = None
+
+
+def test_worked_example_requires_real_battery_data(monkeypatch):
+    _enable(monkeypatch)
+    agent = _agent()
+    ws = WiggleState()
+    ws.battery_done = True
+    ws.battery_log = [{"action": "UP", "line": "NO CHANGE"}]  # < 3 presses
+    _WIGGLE_TLS.state = ws
+    try:
+        assert "EXAMPLE — your wiggle battery" not in _build(agent)
+        assert STRUCT_DIAGNOSTICS["examples_shown"] == 0
+    finally:
+        _WIGGLE_TLS.state = None
+    # no wiggle state at all (battery never ran): no example either
+    assert "EXAMPLE — your wiggle battery" not in _build(agent)
+
+
+def test_bare_single_vs_explicit_plan_distinguished_in_real_sandbox(monkeypatch):
+    from inference.agent import python_tool_sandbox as sandbox_mod
+
+    _enable(monkeypatch)
+    _apply()
+    assert duck_patches._BARE_SENTINEL in sandbox_mod._SANDBOX_BOOTSTRAP
+
+    def _run(code):
+        handler = ScriptedHandler([{}])
+        out = sandbox_mod.run_sandboxed_python(
+            code=code,
+            timeout_seconds=30,
+            initial_state=_state(_grid()),
+            action_handler=handler,
+        )
+        assert not out.get("error"), out
+        return handler
+
+    _run("result = action('UP')['executed_count']")
+    assert STRUCT_DIAGNOSTICS["bare_singles"] == 1
+    assert STRUCT_DIAGNOSTICS["explicit_single_plans"] == 0
+    _run("result = action(['UP'])['executed_count']")
+    assert STRUCT_DIAGNOSTICS["bare_singles"] == 1
+    assert STRUCT_DIAGNOSTICS["explicit_single_plans"] == 1
+    _run("result = action({'action': 'MOUSE', 'row': 3, 'col': 4})['executed_count']")
+    assert STRUCT_DIAGNOSTICS["bare_singles"] == 2
+    assert STRUCT_DIAGNOSTICS["wrapped_singles"] == 3
+
+
+def test_bare_marker_never_reaches_native_handler_when_disabled(monkeypatch):
+    from inference.agent import python_tool_sandbox as sandbox_mod
+
+    monkeypatch.delenv("TAAF_STRUCT", raising=False)
+    _apply()
+    handler = BatchHandler()
+    out = sandbox_mod.run_sandboxed_python(
+        code="result = action('UP')['executed']",
+        timeout_seconds=30,
+        initial_state=_state(_grid()),
+        action_handler=handler,
+    )
+    assert not out.get("error"), out
+    assert out["result"] is True
+    assert handler.calls == [[{"action": "UP"}]]  # marker stripped, spec intact
+    assert STRUCT_DIAGNOSTICS["bare_singles"] == 0  # dormant: no bookkeeping
+
+
+def test_post_single_coaching_line_with_no_spam_cap(monkeypatch):
+    _enable(monkeypatch)
+    agent = _agent()
+
+    def bare_single():
+        handler = ScriptedHandler([{}])
+        plan_execute(["UP"], handler, handler.state(), bare_single=True)
+
+    bare_single()
+    prompt1 = _build(agent)
+    assert "Batch 2-20 actions" in prompt1
+    assert STRUCT_DIAGNOSTICS["coach_lines"] == 1
+    bare_single()
+    prompt2 = _build(agent)  # every-other-turn cap: suppressed
+    assert "Batch 2-20 actions" not in prompt2
+    bare_single()
+    prompt3 = _build(agent)  # cap cleared: coaches again
+    assert "Batch 2-20 actions" in prompt3
+    assert STRUCT_DIAGNOSTICS["coach_lines"] == 2
+
+
+def test_explicit_1_plan_in_scout_is_friction_free(monkeypatch):
+    _enable(monkeypatch)
+    agent = _agent()
+    handler = ScriptedHandler([{}])
+    plan_execute(["UP"], handler, handler.state(), bare_single=False)
+    prompt = _build(agent)
+    assert "Batch 2-20 actions" not in prompt
+    assert "COMMIT phase" not in prompt
+    assert STRUCT_DIAGNOSTICS["coach_lines"] == 0
+
+
+def test_multi_action_plans_never_draw_coaching(monkeypatch):
+    _enable(monkeypatch)
+    agent = _agent()
+    handler = ScriptedHandler([{}, {}])
+    plan_execute(["UP", "DOWN"], handler, handler.state(), bare_single=False)
+    prompt = _build(agent)
+    assert "Batch 2-20 actions" not in prompt and "COMMIT phase" not in prompt
+    assert STRUCT_DIAGNOSTICS["coach_lines"] == 0
+
+
+def test_commit_phase_soft_length_floor(monkeypatch):
+    _enable(monkeypatch)
+    agent = _agent()
+    tls = _struct_tls_state()
+    tls["phase"].update({"level": 1, "phase": "COMMIT", "reason": "test"})
+    handler = ScriptedHandler([{}])
+    # an EXPLICIT 1-plan in COMMIT executes normally but draws the floor line
+    out = plan_execute(["UP"], handler, handler.state(), bare_single=False)
+    assert out["action_result"]["executed_count"] == 1  # soft: never blocked
+    prompt = _build(agent)
+    assert "COMMIT phase: proven mechanics deserve 5-20 action plans" in prompt
+    assert STRUCT_DIAGNOSTICS["commit_floor_lines"] == 1
+    assert STRUCT_DIAGNOSTICS["coach_lines"] == 1
+
+
+def test_yield_aware_nudge_names_the_time_budget(monkeypatch):
+    _enable(monkeypatch)
+    agent = _agent()
+    _build(agent)  # first prompt: no nudge ever
+    tls = _struct_tls_state()
+    tls["last_turn_yielded"] = True
+    prompt = _build(agent)
+    assert "entire time budget" in prompt and "FIRST python call" in prompt
+    assert NUDGE_MARKER not in prompt  # the generic phrasing is replaced
+    assert STRUCT_DIAGNOSTICS["yield_nudges"] == 1
+    tls["last_turn_yielded"] = False
+    prompt2 = _build(agent)
+    assert NUDGE_MARKER in prompt2  # non-yield planless turns keep the original
+    assert STRUCT_DIAGNOSTICS["yield_nudges"] == 1
+
+
+def test_analyze_wrap_stashes_turn_outcome(monkeypatch):
+    from inference.agent import tool_agent
+
+    _enable(monkeypatch)
+    _apply()
+    assert getattr(tool_agent.ToolAgent.analyze, "_struct_analyze_patched", False)
+    duck_patches._struct_note_turn_result(
+        SimpleNamespace(step_executed=False, yielded_control=True)
+    )
+    assert _struct_tls_state()["last_turn_yielded"] is True
+    duck_patches._struct_note_turn_result(
+        SimpleNamespace(step_executed=True, yielded_control=False)
+    )
+    assert _struct_tls_state()["last_turn_yielded"] is False
+    # a turn that yielded AFTER acting is not a planless-yield case
+    duck_patches._struct_note_turn_result(
+        SimpleNamespace(step_executed=True, yielded_control=True)
+    )
+    assert _struct_tls_state()["last_turn_yielded"] is False
+
+
+def test_contract_carries_the_first_call_time_budget_line(monkeypatch):
+    from inference.agent import tool_agent
+
+    _enable(monkeypatch)
+    _apply()
+    prompt = tool_agent._build_system_prompt(tool_output_tokens=1000)
+    assert "TIME BUDGET" in prompt and "FIRST python call" in prompt
+
+
+def test_adoption_levers_off_by_default(monkeypatch):
+    monkeypatch.delenv("TAAF_STRUCT", raising=False)
+    agent = _agent()
+    ws = WiggleState()
+    ws.battery_done = True
+    ws.battery_log = [{"action": "UP", "line": "x"}] * 4
+    _WIGGLE_TLS.state = ws
+    try:
+        prompt = _build(agent)
+        assert "EXAMPLE — your wiggle battery" not in prompt
+        assert "Batch 2-20 actions" not in prompt
+        assert "entire time budget" not in prompt
+    finally:
+        _WIGGLE_TLS.state = None
+    assert STRUCT_DIAGNOSTICS["examples_shown"] == 0
+
+
+def test_struct_bootstrap_injection_is_idempotent():
+    from inference.agent import python_tool_sandbox as sandbox_mod
+
+    _apply()
+    _apply()
+    assert sandbox_mod._SANDBOX_BOOTSTRAP.count(duck_patches._BARE_SENTINEL) == 1

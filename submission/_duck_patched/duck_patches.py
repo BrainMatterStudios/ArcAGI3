@@ -4285,6 +4285,9 @@ class WiggleState:
         self.directionals_at_start: list[str] | None = None
         self.probing = False  # True while battery/reprobe presses are in flight
         self.mode_history: list[tuple[int, str]] = []
+        # per-press record of the battery, consumed by patch 21's worked
+        # example ("your wiggle battery, replayed as a plan"): [{action, line}]
+        self.battery_log: list[dict[str, str]] = []
 
 
 def _wiggle_stats(state: WiggleState, name: str) -> dict[str, Any]:
@@ -4773,6 +4776,22 @@ def _wiggle_press(session: Any, state: WiggleState, name: str) -> dict[str, Any]
             )
         except Exception:
             pass
+    # patch 21 seam: bank this press as one worked-example step — the same
+    # diff machinery a PLAN REPORT uses, so the demonstrated format is exact.
+    try:
+        if state.probing and len(state.battery_log) < _WIGGLE_MAX_PRESSES:
+            from inference.agent.action_names import to_model_action
+
+            if boundary:
+                line = "LEVEL/RUN BOUNDARY — scene repainted"
+            else:
+                lines = diff_change_lines(pre, post, _hud_current_mask_cells())
+                line = lines[0] if lines else "(no observation)"
+            state.battery_log.append(
+                {"action": str(to_model_action(name) or name), "line": line}
+            )
+    except Exception:  # noqa: BLE001 - example capture must never break a press
+        pass
     return payload
 
 
@@ -5589,6 +5608,18 @@ def patch_run_probe() -> str:
 
         def handler(actions: Any) -> dict[str, Any]:
             items = list(actions or [])
+            # -- patch 21 tag: the sandbox marks BARE inputs (action('UP') /
+            # action({...})) so a wrapped single can be told apart from an
+            # explicit 1-plan. Stripped FIRST, unconditionally — the marker
+            # must never reach the native handler or the probe executor.
+            bare_single = False
+            if (
+                items
+                and isinstance(items[0], dict)
+                and str(items[0].get("action", "")).strip() == _BARE_SENTINEL
+            ):
+                bare_single = True
+                items = items[1:]
             if (
                 items
                 and isinstance(items[0], dict)
@@ -5604,12 +5635,17 @@ def patch_run_probe() -> str:
             # a plan of 1) and rides the per-step plan executor. run_probe stays
             # a separate sentinel route above, so both coexist.
             if items and _STRUCT_CHANNEL["installed"] and _struct_enabled():
-                out = plan_execute(items, action_handler, state_box["state"])
+                out = plan_execute(
+                    items,
+                    action_handler,
+                    state_box["state"],
+                    bare_single=bare_single,
+                )
                 refreshed = out.get("state")
                 if isinstance(refreshed, dict) and refreshed:
                     state_box["state"] = refreshed
                 return out
-            out = action_handler(actions)
+            out = action_handler(items if bare_single else actions)
             try:
                 refreshed = out.get("state") if isinstance(out, dict) else None
                 if isinstance(refreshed, dict) and refreshed:
@@ -6292,6 +6328,19 @@ def patch_verify_at_commit() -> str:
 #     plan steps are differ'd ONCE (patch 16's banker skips them — the one
 #     adopter quit over verbatim-duplicate reports); report lines stay terse
 #     with no running cost totals (tu93 anxiety loops).
+#   * ADOPTION ITERATION (2026-08-09, two GPU waves: 2.01 -> 2.59 plan-actions
+#     per turn, singles still ~2/3 of deliberations, 193/225 planless turns =
+#     turn_time_budget yields). Three non-blocking levers:
+#       L1 worked example — the game's OWN wiggle battery replayed as a plan
+#          report in the first post-battery prompt (real data, zero actions);
+#       L2 post-single coaching — a bare single (action('UP'), tagged by the
+#          sandbox and distinguished from an explicit 1-plan action(['UP']))
+#          draws one terse batching line next prompt, capped every other turn;
+#       L3 COMMIT-phase soft length floor — a 1-action plan in COMMIT executes
+#          normally but the coaching line carries phase context.
+#     Plus the nudge repair: planless turns overwhelmingly DIED ON THE TURN
+#     CLOCK mid-inspection, so the nudge (and a contract line) now says "act
+#     in your FIRST python call", wired off AnalyzerTurnResult.yielded_control.
 #   * WIGGLE VERDICT REPAIRS (same autopsy: AVATAR-verdict clones banked 0/11
 #     while CLICK went 9/9): (a) locks with displacement >> body size or
 #     single-direction-only evidence demote to CURSOR (tr87/re86/cn04 were
@@ -6344,6 +6393,13 @@ STRUCT_DIAGNOSTICS = {
     "reports_injected": 0,  # PLAN REPORT blocks delivered to the next prompt
     "nudges": 0,  # retry-nudge lines appended
     "turns_without_plan": 0,  # prompts rendered with no plan since the last one
+    # -- adoption-iteration levers (2026-08-09, GPU screen 2.01->2.59 a/t) -----
+    "bare_singles": 0,  # action('UP') / action({...}) — not an explicit 1-plan
+    "explicit_single_plans": 0,  # action(['UP']) — a deliberate 1-plan
+    "examples_shown": 0,  # worked battery-replay examples seeded (lever 1)
+    "coach_lines": 0,  # post-single coaching lines appended (lever 2)
+    "commit_floor_lines": 0,  # COMMIT-phase length-floor coaching (lever 3)
+    "yield_nudges": 0,  # nudges rephrased for turn_time_budget yields
 }
 
 _STRUCT_REPORT_KEEP = 2  # banked plan tables kept for the next prompt
@@ -6359,6 +6415,55 @@ _STRUCT_NUDGE_LINE = (
     "Your previous response did not produce a valid plan. Act by calling "
     "`action([...])` from the python tool with an ordered plan of 1-20 actions "
     "(a single action is fine — it executes as a plan of 1)."
+)
+
+# -- 2026-08-09 GPU-wave autopsy: 191/194 and 224/228 planless turns were
+# turn_time_budget yields — the model inspected until the turn clock cut it
+# off. The nudge must name THAT failure, not a formatting one.
+_STRUCT_YIELD_NUDGE_LINE = (
+    "Your last turn spent its entire time budget on python inspection and "
+    "never acted. Inspect briefly and include your `action([...])` plan in "
+    "your FIRST python call — a turn that only inspects is a wasted "
+    "deliberation."
+)
+
+# Lever 2 — post-single coaching (bare singles were ~2/3 of all deliberations).
+_STRUCT_COACH_SINGLE_LINE = (
+    "Previous turn: 1 action for 1 deliberation. Batch 2-20 actions unless "
+    "testing a brand-new hypothesis — you receive per-action effect lines "
+    "either way."
+)
+
+# Lever 3 — COMMIT-phase soft length floor (executes normally, coaches only).
+_STRUCT_COACH_COMMIT_LINE = (
+    "Previous turn: 1 action for 1 deliberation. COMMIT phase: proven "
+    "mechanics deserve 5-20 action plans — batch the sequence you already "
+    "trust; execution still stops early on any score change."
+)
+
+_STRUCT_EXAMPLE_HEADER = (
+    "EXAMPLE — your wiggle battery, replayed as a plan (real measured data "
+    "from THIS game; this is the plan contract in action):"
+)
+_STRUCT_EXAMPLE_MIN_STEPS = 3
+_STRUCT_EXAMPLE_MAX_STEPS = 6
+
+# Lever 2's sandbox tag: `action('UP')` / `action({...})` (bare input) is
+# distinguished from `action(['UP'])` (an explicit 1-plan) by a marker dict the
+# sandbox prepends and the host strips before ANY routing. The bootstrap
+# rebinds ONLY runtime_globals["action"], so run_probe's internal use of the
+# raw `action` local stays untagged.
+_BARE_SENTINEL = "__BARE_SINGLE__"
+_STRUCT_BOOTSTRAP_ANCHOR = '    runtime_globals["run_probe"] = run_probe\n'
+_STRUCT_BOOTSTRAP_LINES = (
+    "\n"
+    "    def _plan_channel_action(actions):\n"
+    "        if isinstance(actions, (list, tuple)):\n"
+    "            return action(list(actions))\n"
+    '        return action([{"action": "' + _BARE_SENTINEL + '"}]'
+    " + _normalize_actions(actions))\n"
+    "\n"
+    '    runtime_globals["action"] = _plan_channel_action\n'
 )
 
 # -- autopsy law (2026-08-09): every capability must live in the TOOL SCHEMA and
@@ -6481,6 +6586,11 @@ def _struct_tls_state() -> dict[str, Any]:
             "plan_seen_since_prompt": None,
             "nudge_streak": 0,
             "last_reset": False,  # cross-call consecutive-RESET dedupe
+            # adoption levers (2026-08-09)
+            "last_plan": None,  # {"planned": int, "bare": bool, "phase": str}
+            "coach_cooldown": 0,  # every-other-turn cap for coaching lines
+            "example_shown": False,  # worked example seeds at most once/game
+            "last_turn_yielded": False,  # previous analyze ended in a time yield
         }
         _STRUCT_TLS.state = state
     return state
@@ -6656,7 +6766,10 @@ def _struct_parse_plan(
 
 
 def plan_execute(
-    actions: Any, action_handler: Any, current_state: Any = None
+    actions: Any,
+    action_handler: Any,
+    current_state: Any = None,
+    bare_single: bool = False,
 ) -> dict[str, Any]:
     """PATCH 21 executor: one plan submission -> sequential real execution.
 
@@ -6680,11 +6793,21 @@ def plan_execute(
     )
     if requested == 1:
         STRUCT_DIAGNOSTICS["wrapped_singles"] += 1
+        if bare_single:
+            STRUCT_DIAGNOSTICS["bare_singles"] += 1
+        else:
+            STRUCT_DIAGNOSTICS["explicit_single_plans"] += 1
 
     plan, notes = _struct_parse_plan(raw, tls)
     if plan:
         tls["plan_seen_since_prompt"] = True
         tls["nudge_streak"] = 0
+        # lever 2/3 seam: the NEXT prompt coaches on 1-action plans.
+        tls["last_plan"] = {
+            "planned": len(plan),
+            "bare": bool(bare_single),
+            "phase": tls["phase"]["phase"] if _struct_gates_active() else "SCOUT",
+        }
 
     cap = _struct_max_plan()
     if len(plan) > cap:
@@ -7010,10 +7133,88 @@ def _struct_contract_text() -> str:
         "observations, so ACT IN PLANS, not single actions.\n"
         "- Doctrine: short plans (1-5) to test hypotheses; long plans (up to "
         f"{cap}) for proven sequences.\n"
+        "- Turns have a TIME BUDGET: inspect briefly and include your "
+        "`action([...])` plan in your FIRST python call — a turn that only "
+        "inspects is a wasted deliberation.\n"
         "- Before the tool call, state a 1-2 sentence `Plan:` rationale in your "
         "reply text — it is kept in your history and your future self will need "
         "it.\n"
     )
+
+
+def _struct_note_turn_result(result: Any) -> None:
+    """Stash whether the analyze turn ended in a time-budget yield (no action).
+
+    Called by patch 21's `analyze` wrap AFTER the original returns; the NEXT
+    prompt's nudge then names the actual failure (2026-08-09 autopsy: ~97% of
+    planless turns were turn_time_budget yields, not formatting confusion).
+    """
+    try:
+        tls = _struct_tls_state()
+        tls["last_turn_yielded"] = bool(
+            getattr(result, "yielded_control", False)
+            and not getattr(result, "step_executed", False)
+        )
+    except Exception:  # noqa: BLE001 - bookkeeping must never break a turn
+        pass
+
+
+def _struct_example_block() -> str:
+    """Lever 1 — demonstrated format: the game's OWN wiggle battery, replayed
+    as a plan report. Renders at most once per game, only when the battery
+    actually pressed >= 3 actions (real data only, zero extra actions)."""
+    tls = _struct_tls_state()
+    if tls["example_shown"]:
+        return ""
+    ws = getattr(_WIGGLE_TLS, "state", None)
+    log = list(getattr(ws, "battery_log", None) or [])
+    if ws is None or not getattr(ws, "battery_done", False):
+        return ""
+    if len(log) < _STRUCT_EXAMPLE_MIN_STEPS:
+        return ""
+    steps = log[:_STRUCT_EXAMPLE_MAX_STEPS]
+    plan_repr = ", ".join(f"'{s['action']}'" for s in steps)
+    lines = [
+        _STRUCT_EXAMPLE_HEADER,
+        f"  one call — action([{plan_repr}]) — already bought this per-step "
+        "report:",
+    ]
+    for index, step in enumerate(steps, start=1):
+        lines.append(f"  {index}. {step['action']}: {step['line']}")
+    lines.append(
+        f"  (one deliberation, {len(steps)} measured observations — batch "
+        "your actions like this.)"
+    )
+    tls["example_shown"] = True
+    STRUCT_DIAGNOSTICS["examples_shown"] += 1
+    return "\n".join(lines)
+
+
+def _struct_coach_line() -> str:
+    """Levers 2+3 — post-single coaching, capped at every other prompt.
+
+    Bare singles (auto-wrapped `action('UP')`) coach in any phase; an explicit
+    1-plan coaches only in COMMIT phase (SCOUT probes stay friction-free).
+    Purely advisory — nothing is ever rejected or stalled.
+    """
+    tls = _struct_tls_state()
+    last_plan, tls["last_plan"] = tls["last_plan"], None
+    if not last_plan or last_plan.get("planned") != 1:
+        tls["coach_cooldown"] = max(0, tls["coach_cooldown"] - 1)
+        return ""
+    commit = last_plan.get("phase") == "COMMIT"
+    if not commit and not last_plan.get("bare"):
+        return ""  # explicit 1-plan in SCOUT: correct behavior, no friction
+    if tls["coach_cooldown"] > 0:
+        tls["coach_cooldown"] -= 1
+        return ""
+    tls["coach_cooldown"] = 1  # skip the next prompt: no spam
+    if commit:
+        STRUCT_DIAGNOSTICS["commit_floor_lines"] += 1
+        STRUCT_DIAGNOSTICS["coach_lines"] += 1
+        return _STRUCT_COACH_COMMIT_LINE
+    STRUCT_DIAGNOSTICS["coach_lines"] += 1
+    return _STRUCT_COACH_SINGLE_LINE
 
 
 def _struct_gates_text() -> str:
@@ -7121,11 +7322,37 @@ def patch_struct_channel() -> str:
     original_tools = getattr(agent_cls, "_tools", None)
     if not callable(original_tools):
         return "patch21 struct: FAIL (ToolAgent._tools not found)"
+    original_analyze = getattr(agent_cls, "analyze", None)
+    if not callable(original_analyze):
+        return "patch21 struct: FAIL (ToolAgent.analyze not found)"
     if getattr(agent_cls._build_user_prompt, "_struct_channel_patched", False):
         return "patch21 struct: SKIP (already applied)"
 
     # -- 21a: arm the executor hook inside patch 18's handler (call-time gated) ---
     _STRUCT_CHANNEL["installed"] = True
+
+    # -- 21a': sandbox tag for bare singles (lever 2's wrapped-vs-explicit
+    # split). Injected after patch 18's run_probe registration so the rebind is
+    # the LAST word on runtime_globals["action"]; the marker is stripped
+    # host-side before ANY routing, so the native path is byte-identical.
+    sandbox_note = ""
+    bootstrap = getattr(sandbox_mod, "_SANDBOX_BOOTSTRAP", "")
+    if isinstance(bootstrap, str) and _BARE_SENTINEL not in bootstrap:
+        if _STRUCT_BOOTSTRAP_ANCHOR in bootstrap:
+            sandbox_mod._SANDBOX_BOOTSTRAP = bootstrap.replace(
+                _STRUCT_BOOTSTRAP_ANCHOR,
+                _STRUCT_BOOTSTRAP_ANCHOR + _STRUCT_BOOTSTRAP_LINES,
+            )
+        else:
+            sandbox_note = "; bare-single tag unavailable (bootstrap anchor missing)"
+
+    # -- 21a'': turn-outcome stash — the next prompt's nudge names the REAL
+    # failure (time-budget yield vs no plan), per the 2026-08-09 autopsy.
+    def analyze(self: Any, *args: Any, **kwargs: Any) -> Any:
+        result = original_analyze(self, *args, **kwargs)
+        if _struct_enabled():
+            _struct_note_turn_result(result)
+        return result
 
     # -- 21b: per-game state reset (reused worker threads must not leak state) ----
     original_play = session_cls.play
@@ -7167,16 +7394,30 @@ def patch_struct_channel() -> str:
             prompt = prompt.replace(_STRUCT_USER_LINE_OLD, _STRUCT_USER_LINE_NEW)
             tls = _struct_tls_state()
             blocks: list[str] = []
+            # Lever 1: the game's own battery replayed as a worked example —
+            # models copy demonstrated formats, so demonstrate one (once).
+            example = _struct_example_block()
+            if example:
+                blocks.append(example)
             block = _struct_prompt_block()
             if block:
                 blocks.append(block)
+            # Levers 2+3: post-single coaching, every-other-prompt cap.
+            coach = _struct_coach_line()
+            if coach:
+                blocks.append(coach)
             # Retry nudge: a rendered prompt whose turn produced no valid plan.
+            # Named for the REAL failure when the turn died on the time budget.
             if tls["plan_seen_since_prompt"] is False:
                 STRUCT_DIAGNOSTICS["turns_without_plan"] += 1
                 tls["nudge_streak"] += 1
                 if tls["nudge_streak"] <= _struct_nudge_max():
                     STRUCT_DIAGNOSTICS["nudges"] += 1
-                    blocks.append(_STRUCT_NUDGE_LINE)
+                    if tls["last_turn_yielded"]:
+                        STRUCT_DIAGNOSTICS["yield_nudges"] += 1
+                        blocks.append(_STRUCT_YIELD_NUDGE_LINE)
+                    else:
+                        blocks.append(_STRUCT_NUDGE_LINE)
             tls["plan_seen_since_prompt"] = False
         except Exception:  # noqa: BLE001 - the report must never break a turn
             return prompt
@@ -7184,20 +7425,23 @@ def patch_struct_channel() -> str:
 
     _forward_patch_markers(play, original_play)
     _forward_patch_markers(_tools, original_tools)
+    _forward_patch_markers(analyze, original_analyze)
     _forward_patch_markers(_build_system_prompt, builder)
     _forward_patch_markers(_build_user_prompt, original_build)
     play._struct_play_patched = True  # type: ignore[attr-defined]
     _tools._struct_tools_patched = True  # type: ignore[attr-defined]
+    analyze._struct_analyze_patched = True  # type: ignore[attr-defined]
     _build_system_prompt._struct_prompt_patched = True  # type: ignore[attr-defined]
     _build_user_prompt._struct_channel_patched = True  # type: ignore[attr-defined]
     session_cls.play = play
     agent_cls._tools = _tools
+    agent_cls.analyze = analyze
     tool_agent._build_system_prompt = _build_system_prompt
     agent_cls._build_user_prompt = _build_user_prompt
 
     if _struct_enabled():
-        return "patch21 struct: OK (TAAF_STRUCT=1 — plan channel armed)"
-    return "patch21 struct: OK (dormant — opt in with TAAF_STRUCT=1)"
+        return f"patch21 struct: OK (TAAF_STRUCT=1 — plan channel armed){sandbox_note}"
+    return f"patch21 struct: OK (dormant — opt in with TAAF_STRUCT=1){sandbox_note}"
 
 
 def patch_struct_gates() -> str:

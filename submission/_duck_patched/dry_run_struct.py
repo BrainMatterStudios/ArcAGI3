@@ -62,14 +62,27 @@ PLAN_CODE = (
     "action(plan)\n"
 )
 
+BARE_CODE = (
+    "prefs = [v for v in valid_actions if str(v).upper() not in ('RESET', 'MOUSE')]\n"
+    "if prefs:\n"
+    "    action(prefs[0])\n"
+    "elif valid_actions:\n"
+    "    action({'action': 'MOUSE', 'row': 32, 'col': 32})\n"
+    "else:\n"
+    "    action('UP')\n"
+)
+
 STATS = {
     "posts": 0,
     "plan_turns": 0,
+    "bare_turns": 0,
     "single_turns": 0,
     "plan_report_seen": 0,
     "phase_seen": 0,
     "brake_seen": 0,
     "contract_in_schema": 0,
+    "example_seen": 0,
+    "coach_seen": 0,
 }
 
 
@@ -95,9 +108,19 @@ def mock_reply(body: bytes):
         STATS["phase_seen"] += 1
     if "BRAKE" in last_user:
         STATS["brake_seen"] += 1
+    if "EXAMPLE — your wiggle battery" in last_user:
+        STATS["example_seen"] += 1
+    if "Batch 2-20 actions" in last_user or "COMMIT phase: proven" in last_user:
+        STATS["coach_seen"] += 1
     if "PLAN CONTRACT" in system_text:
-        STATS["plan_turns"] += 1
-        code = PLAN_CODE
+        # scripted 27B stand-in: its FIRST acting turn is a bare single (the
+        # observed dominant failure mode); coached turns batch 5-action plans
+        if "PLAN REPORT" in last_user:
+            STATS["plan_turns"] += 1
+            code = PLAN_CODE
+        else:
+            STATS["bare_turns"] += 1
+            code = BARE_CODE
     else:
         STATS["single_turns"] += 1
         code = SINGLE_CODE
@@ -190,8 +213,7 @@ async def run_arm(dp, arm: str, arm_env: dict) -> dict:
     from inference.framework import solver as duck_solver
 
     os.environ.update(arm_env)
-    for key in ("posts", "plan_turns", "single_turns", "plan_report_seen",
-                "phase_seen", "brake_seen", "contract_in_schema"):
+    for key in STATS:
         STATS[key] = 0
     diag_before = json.loads(json.dumps(dp.STRUCT_DIAGNOSTICS))
     wiggle_before = dict(dp.WIGGLE_DIAGNOSTICS)
@@ -293,6 +315,12 @@ def main():
     assert struct["mock"]["plan_report_seen"] > 0, "PLAN REPORT never reached a prompt"
     assert struct["mock"]["phase_seen"] > 0, "PHASE line never reached a prompt"
     assert sd["reports_injected"] > 0
+    # 2026-08-09 adoption levers, observed end-to-end at 28-clone geometry
+    assert sd["bare_singles"] >= 20, sd  # the scripted first-turn singles
+    assert sd["examples_shown"] >= 1, sd  # lever 1 seeded from real batteries
+    assert struct["mock"]["example_seen"] >= 1, struct["mock"]
+    assert sd["coach_lines"] >= 1, sd  # lever 2 fired after bare singles
+    assert struct["mock"]["coach_seen"] >= 1, struct["mock"]
     assert struct["plan_actions_per_turn"] is not None
     assert struct["plan_actions_per_turn"] > 3.0, (
         f"ADOPTION BAR MISSED: {struct['plan_actions_per_turn']} plan-actions/turn")
