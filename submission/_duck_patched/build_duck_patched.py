@@ -78,12 +78,34 @@ HOOK_MARKER = "Make one-off changes to `bm`, `bm.games`, or `bm.solver` here"
 # patch11/12 pinned OFF, grid-burner already default-off. Change these ONLY when
 # the submitted experiment changes, and keep the submission description in sync
 # (scripts/submit_gated.py cross-checks it).
+# v9 (struct live probe, 2026-08-09): this dict is a LITERAL copy of ARM_ENV from
+# submission/_ab_patch_closure/struct/struct-screen.ipynb cell 12 — the arm that
+# produced the replicated 2.5x plan adoption and the uncertified +2 levels/wave.
+# Copied literally (including the inert GRAPH_GRIND_* keys, dead while TAAF_GRAPH=0)
+# so the live probe is a faithful transfer test of the configuration we measured,
+# not a hybrid. Two knobs therefore differ from the settled patched arm v7/v8 in
+# addition to the four struct flags: TAAF_ANIMATION (default 1 -> 0) and
+# TAAF_WATCHDOG_STALL_S (default 600 -> 900).
 EXPERIMENT_ENV = {
+    "TAAF_WATCHDOG": "1",
+    "TAAF_WATCHDOG_STALL_S": "900",
+    "TAAF_HUD_MASK": "1",
+    "TAAF_WIN_REPLAY": "1",
+    "TAAF_ANTIFREEZE": "1",
+    "TAAF_ANIMATION": "0",
     "TAAF_GRAPH": "0",
+    "TAAF_GRAPH_GRIND_AGE_ACTIONS": "120",
+    "TAAF_GRAPH_GRIND_AGE_TURNS": "10",
+    "TAAF_GRAPH_GRIND_MAX_PER_LEVEL": "2",
     "TAAF_COMPACT": "0",
     # patch13 archetype playbook: default ON outside pins, but pinned OFF here so
     # the settled v6 arm stays clean until the playbook is A/B'd on its own.
     "TAAF_PLAYBOOK": "0",
+    "TAAF_GRID_BURNER": "0",
+    "TAAF_DIFF_LINES": "1",
+    "TAAF_WIGGLE": "1",
+    "TAAF_DISPATCH": "1",
+    "TAAF_STRUCT": "1",
 }
 
 
