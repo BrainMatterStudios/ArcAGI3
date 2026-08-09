@@ -65,3 +65,9 @@ expected mid-morning; classification per the frozen 0.69–1.27 band rule.
 - Mechanisms DELIVERED but the model did not USE them: **run_probe called 1 time in 28 games** despite advertisement; dispatch assigned modes (7 AVATAR/7 CLICK/6 MORPH/8 UNCLEAR) but 6 games escaped scaffolds; wiggle fired 28/28 (93 presses, 10 reprobes) — the only structurally-enforced mechanism, and the only one fully engaged.
 - Protocol healthy (129 actions/game, 0 zero-action games) -> not prompt-overload; the 27B simply kept its trained one-action habit. Confirms the sweep law: advertised = performative; ENFORCED = adopted. Next iteration: make batching STRUCTURAL (PRO-LONG-style mandatory plan-list action channel), not optional.
 - Parallel-load probe (28 vs 56 streams): aggregate 553 -> 782 tok/s (+41%), per-stream latency 8.1 -> 11.0s (+36%), 0 errors. Parallel cognition is subsidized, not free: right for rare commit-point verification (patch20), wrong for per-action ensembles.
+
+## Struct screen wave 1 (2026-08-09 01:25 UTC) — STOP by letter, FIRST POSITIVE DIRECTIONAL RESULT
+
+- 17 levels excl-ft09 (base 11/12, package 10); **g50t unlocked — first target unlock in any screen**; bar was 18 or 2 unlocks -> STOP.
+- Adoption transferred partially: plan_actions_per_llm_turn 2.01 (base 1.0; dry-run bar 3), 34% multi-step plans, full 1-20 length range used, 193 nudges (load-bearing for 27B), 918 auto-wrapped singles, protocol healthy (107 actions/game).
+- Replication wave (same bytes, v2) pushed per the closure-episode discipline: boundary results replicate before belief.
