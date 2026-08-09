@@ -59,6 +59,14 @@ BANKED = {
         "levels_excl_ft09": 10,
         "verdict": "STOP (adoption failure, not capability — db5bc44)",
     },
+    "struct_waves": {
+        "kernel": "ahmedmobasher86/arc-agi-3-struct-screen",
+        "adoption_by_wave": [2.01, 2.59],
+        "levels_excl_ft09_by_wave": [17, 12],
+        "notes": ("w1: 17 excl-ft09 + g50t unlock (6ea2f22); w2: level spike "
+                  "did not replicate, adoption did (4a51db5) — hence the "
+                  "f151409 adoption iteration this wave tests"),
+    },
 }
 
 
@@ -66,6 +74,10 @@ BANKED = {
 class StructThresholds:
     """Pre-registered bars. Editing after the data lands = goalpost-moving."""
 
+    # PRIMARY success criterion for the f151409 adoption-iteration wave
+    # (approved 2026-08-09): live plan-actions per LLM deliberation.
+    primary_min_plan_actions_per_llm_turn: float = 3.5
+    # Secondary (levels) bars — unchanged from the first struct waves.
     advance_min_levels_excl_ft09: int = 18
     advance_min_new_target_unlocks: int = 2
     min_behavior_actions: int = 50
@@ -79,24 +91,34 @@ STRUCT_READING = {
         "failure the package screen exposed, and does adopted planning move "
         "real play at 27B on top of the v7 pins?"
     ),
+    "primary_criterion": (
+        "PRIMARY (approved 2026-08-09, this wave): live adoption "
+        "result.adoption.plan_actions_per_llm_turn > 3.5. The first two "
+        "struct waves measured 2.01 then 2.59 with singles still ~2/3 of "
+        "deliberations; f151409's levers (worked battery-replay example, "
+        "yield-aware nudges, post-single coaching, COMMIT length floor) "
+        "exist to close exactly that gap, so this wave succeeds or fails on "
+        "that number. Levels are SECONDARY at the unchanged bars below."
+    ),
     "advance_bars": (
-        "ADVANCE to a paired wave if the struct arm reaches >= 18 levels "
-        "excl-ft09 OR >= 2 first unlocks among wa30/m0r0/g50t/dc22 (never "
-        "unlocked in the banked base pair). Otherwise STOP."
+        "SECONDARY (unchanged): ADVANCE to a paired wave if the struct arm "
+        "reaches >= 18 levels excl-ft09 OR >= 2 first unlocks among "
+        "wa30/m0r0/g50t/dc22 (never unlocked in the banked base pair). "
+        "Otherwise STOP."
     ),
     "adoption": (
-        "LIVE ACTIONS-PER-TURN is the single most important number this run "
-        "produces. Definition (cfeb92a): plan-actions per LLM DELIBERATION — "
+        "Definition (cfeb92a): plan-actions per LLM DELIBERATION — "
         "result.adoption.plan_actions_per_llm_turn, where llm_turns counts "
         "ToolAgent.analyze calls (the kernel-side equivalent of the mock "
         "dry run's POST count; the behavioural probe's actions_per_turn "
         "reads 1.0 by construction under TAAF_STRUCT because every plan step "
-        "executes as its own single-action batch). Banked base pair ~1.0; "
-        "mock dry-run adoption 4.65 (raw 5.34 incl. wiggle presses). Read it "
-        "with the STRUCT_DIAGNOSTICS plan_lengths histogram: a 27B that "
-        "still submits 1-plans (wrapped_singles ~= plans) did NOT adopt, "
-        "regardless of score — that repeats the package screen's finding at "
-        "a deeper seam and closes the prompt-contract line."
+        "executes as its own single-action batch). Banked: base pair ~1.0; "
+        "struct w1 2.01, w2 2.59; mock dry-run 4.65 (raw 5.34 incl. wiggle "
+        "presses). Read it with the STRUCT_DIAGNOSTICS plan_lengths "
+        "histogram and the new lever counters (examples_shown, coach_lines, "
+        "commit_floor_lines, yield_nudges, bare_singles vs "
+        "explicit_single_plans): a 27B that still submits 1-plans did NOT "
+        "adopt, regardless of score."
     ),
     "mechanism_engagement": (
         "Report (not gate): STRUCT_DIAGNOSTICS (plans, plan_actions, "
@@ -265,21 +287,42 @@ def classify_struct(
         return {"state": "INFRA_FAILURE", "reasons": infra, "metrics": metrics,
                 "thresholds": asdict(thresholds), "hypothesis": STRUCT_HYPOTHESIS}
 
-    reasons = []
+    # PRIMARY (this wave): the adoption bar. Reported as its own verdict block
+    # so the read cannot bury it; the ADVANCE/STOP state stays level-driven
+    # (the unchanged secondary bars).
+    adoption_value = adoption_rec.get("plan_actions_per_llm_turn")
+    primary_adoption = {
+        "bar": thresholds.primary_min_plan_actions_per_llm_turn,
+        "value": adoption_value,
+        "met": (adoption_value is not None
+                and adoption_value > thresholds.primary_min_plan_actions_per_llm_turn),
+    }
+
+    reasons = [
+        ("PRIMARY adoption criterion "
+         f"{'MET' if primary_adoption['met'] else 'NOT MET'}: "
+         f"plan_actions_per_llm_turn={adoption_value} vs bar "
+         f">{thresholds.primary_min_plan_actions_per_llm_turn} "
+         "(banked: base ~1.0, struct waves 2.01/2.59)")
+    ]
+    level_reasons = []
     if levels >= thresholds.advance_min_levels_excl_ft09:
         state = "ADVANCE"
-        reasons.append(f"levels excl-ft09 {levels} >= {thresholds.advance_min_levels_excl_ft09}")
+        level_reasons.append(
+            f"levels excl-ft09 {levels} >= {thresholds.advance_min_levels_excl_ft09}")
     if len(unlocks) >= thresholds.advance_min_new_target_unlocks:
         state = "ADVANCE"
-        reasons.append(f"first unlocks on never-unlocked targets: {unlocks} "
-                       f">= {thresholds.advance_min_new_target_unlocks}")
-    if not reasons:
+        level_reasons.append(f"first unlocks on never-unlocked targets: {unlocks} "
+                             f">= {thresholds.advance_min_new_target_unlocks}")
+    if not level_reasons:
         state = "STOP"
-        reasons.append(
+        level_reasons.append(
             f"levels excl-ft09 {levels} < {thresholds.advance_min_levels_excl_ft09} "
             f"and only {len(unlocks)} target unlock(s) ({unlocks}) — bar is "
             f"{thresholds.advance_min_new_target_unlocks}")
+    reasons.extend(f"secondary: {r}" for r in level_reasons)
 
-    return {"state": state, "reasons": reasons, "metrics": metrics,
+    return {"state": state, "primary_adoption": primary_adoption,
+            "reasons": reasons, "metrics": metrics,
             "thresholds": asdict(thresholds), "hypothesis": STRUCT_HYPOTHESIS,
             "pre_registered_reading_present": "pre_registered_reading" in result}

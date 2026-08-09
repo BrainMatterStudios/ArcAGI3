@@ -144,6 +144,10 @@ def main() -> int:
     assert verdict["state"] == "STOP", (
         "struct dry-run verdict must be STOP (no unlocks, no levels — the "
         f"screen encodes no forced ADVANCE): {verdict['state']} — {verdict['reasons']}")
+    # the mock's alternating 2/1 plans sit far below the 3.5 primary bar —
+    # a dry run must never read as a primary success
+    assert verdict["primary_adoption"]["bar"] == 3.5, verdict["primary_adoption"]
+    assert verdict["primary_adoption"]["met"] is False, verdict["primary_adoption"]
     assert base_dry.MockBrain.n_posts > 0
     print(f"\n[struct-dry] PASS — artifacts under {root / 'struct'}")
     return 0

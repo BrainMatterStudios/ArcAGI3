@@ -57,8 +57,18 @@ def test_struct_hypothesis_and_banked_references():
     assert STRUCT_HYPOTHESIS not in (HYPOTHESIS, PACKAGE_HYPOTHESIS)
     assert BANKED["base_pair"]["levels_excl_ft09_by_wave"] == [11, 12]
     assert BANKED["package_screen"]["levels_excl_ft09"] == 10
+    assert BANKED["struct_waves"]["adoption_by_wave"] == [2.01, 2.59]
     assert "18 levels" in STRUCT_READING["advance_bars"]
-    assert "ACTIONS-PER-TURN" in STRUCT_READING["adoption"]
+    assert "plan_actions_per_llm_turn" in STRUCT_READING["adoption"]
+
+
+def test_primary_adoption_bar_is_frozen_at_3_5():
+    from struct_screen_config import StructThresholds
+
+    assert StructThresholds().primary_min_plan_actions_per_llm_turn == 3.5
+    assert "> 3.5" in STRUCT_READING["primary_criterion"]
+    assert "PRIMARY" in STRUCT_READING["primary_criterion"]
+    assert "SECONDARY" in STRUCT_READING["advance_bars"]
 
 
 # --- decision boundaries --------------------------------------------------------
@@ -131,6 +141,22 @@ def test_default_struct_verdict_is_stop(struct_result):
     assert out["state"] == "STOP"
     assert out["metrics"]["levels_excl_ft09"] == 4
     assert out["metrics"]["new_target_unlocks"] == []
+    # fixture adoption 3.42 sits below the 3.5 primary bar
+    assert out["primary_adoption"] == {"bar": 3.5, "value": 3.42, "met": False}
+    assert any("PRIMARY adoption criterion NOT MET" in r for r in out["reasons"])
+
+
+def test_primary_adoption_met_above_the_bar(struct_result):
+    struct_result["adoption"]["plan_actions_per_llm_turn"] = 3.62
+    out = classify_struct(struct_result)
+    assert out["primary_adoption"] == {"bar": 3.5, "value": 3.62, "met": True}
+    assert any("PRIMARY adoption criterion MET" in r for r in out["reasons"])
+    assert out["state"] == "STOP"  # levels stay secondary and unchanged
+
+
+def test_primary_adoption_exactly_at_bar_is_not_met(struct_result):
+    struct_result["adoption"]["plan_actions_per_llm_turn"] = 3.5
+    assert classify_struct(struct_result)["primary_adoption"]["met"] is False
 
 
 def test_advance_on_18_levels_excl_ft09(struct_result):
@@ -248,7 +274,8 @@ def test_struct_kernel_contract_and_metadata(tmp_path):
     assert '"TAAF_RUN_PROBE"' not in hook.split("PC_ARM_ENV = {")[1].split("}")[0]
     run = next("".join(c["source"]) for c in nb["cells"]
                if c["cell_type"] == "code" and "await pc_main" in "".join(c["source"]))
-    assert "reading=" in run and "ACTIONS-PER-TURN" in run
+    assert "reading=" in run and "plan_actions_per_llm_turn" in run
+    assert "> 3.5" in run  # the approved primary bar rides inside the kernel
     # the parallel-load probe must NOT ride on this kernel (already measured)
     assert not any("PARALLEL LOAD PROBE" in "".join(c["source"])
                    for c in nb["cells"] if c["cell_type"] == "code")
@@ -296,3 +323,5 @@ def test_struct_dry_run_plan_channel_fires(tmp_path):
     out = classify_struct(result)
     assert out["state"] == "STOP"
     assert out["metrics"]["adoption"]["plan_actions_per_llm_turn"] > 1.0
+    assert out["primary_adoption"]["bar"] == 3.5
+    assert out["primary_adoption"]["met"] is False
