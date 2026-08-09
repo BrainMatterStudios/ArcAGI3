@@ -90,3 +90,81 @@ expected mid-morning; classification per the frozen 0.69–1.27 band rule.
 
 ### Week ledger
 - GPU ~27h/30h. Public LB high banked: **1.30** (new all-time). Replicated positive mechanism: structural plan channel (2.5x adoption, ~+2/wave directional). All four negative gates closed cleanly with zero slots burned on failures.
+
+---
+
+## 2026-08-09 (evening) — struct-v9 armed; two independent reviews; research doc adjudicated
+
+### Submission: struct-v9 armed for the 2026-08-10 00:01 UTC slot
+- duck-patched **kernel version 9**, canonical code-cell hash (ledger method, no trailing newline)
+  `b48f64c9f47bc0e4d8da0934a21000ff8683914a2dcda8fc2e009b42d68c3112`, scriptVersionId **341311881**.
+- `EXPERIMENT_ENV` is a LITERAL copy of the struct screen's `ARM_ENV` (17 keys, verified equal
+  key-by-key) so the probe is a faithful transfer test. Beyond the four struct flags this also moves
+  `TAAF_ANIMATION` 1->0 and `TAAF_WATCHDOG_STALL_S` 600->900 vs the settled patched arm v7/v8.
+- Commit run COMPLETE in ~2 min; log printed the pins plus `patch21 struct: OK (TAAF_STRUCT=1 —
+  plan channel armed)` and `patch22 gates: OK`. Wiring proven; serving still unproven by law.
+- `docker_image` deliberately left UNPINNED to keep v9 comparable to the patched family and the base
+  band (last patched run 08-06 completed unpinned).
+- **Known limitation, pre-registered:** scored-run logs are not retrievable (only commit logs are —
+  cf. `DIAGNOSIS-2026-08-03`), so this probe returns a single number and NO adoption telemetry.
+  Base band is 0.69-1.30; only a draw outside it is individually actionable. The patched family's
+  own five draws averaged 0.788, so a mid-band result is ambiguous between two references.
+
+### Review 1 — v9 artifact (claim: "v9 executes patch21/22 with the screen's configuration")
+- Mechanically **VERIFIED**: pins precede `apply_all()`, no import-time env reads (AST-scanned),
+  inlined `duck_patches.py` byte-identical to the screen's copy, budget/concurrency identical
+  (7920 s, 28 — the screen's "geometry" was the bundle default).
+- Its CRITICAL finding — that patch6 (TransferExplorer) would hijack the LLM for the first 200
+  actions and void the probe — is **REFUTED by the v9 commit log itself**:
+  `patch6 tool_agent_analyze: SKIP (arcagi3.transfer_explorer not importable)`. Dataset mounts do
+  not depend on `TRUE_SUBMISSION`, so the scored rerun mounts identically. Corollary: patch6 also
+  never fired in v7, so it does **not** explain the patched family's 0.788 — that deficit is still
+  unexplained and is worth its own investigation.
+- Valid residual gaps (not fixed tonight): v9 only *prints* the patch6 SKIP where the screen
+  *asserts* it, and a `patch21 FAIL` would warn rather than raise.
+
+### Review 2 — fire-time path. Four confirmed defects, fixed and committed (`19fd560`)
+- **Transport noise read as a kernel verdict.** `kernel_status()` combined stdout+stderr and
+  aborted on the substring `ERROR`; the Kaggle CLI prints transport failures there and
+  `NewConnectionError` contains "ERROR". Reproduced under a dead proxy. Now parses the positive
+  `has status "..."` line only; unreadable => retry, never a verdict.
+- **No retries on four fire-time API calls** — while the L24 launchd job fires five Kaggle
+  submissions at 00:00:05Z, 55 s before this runner wakes. Now 5 attempts with backoff.
+- **Race guard is TOCTOU** (reads the submissions list ~10 min before submit_gated submits) with no
+  idempotency marker. Added a marker claimed before handoff, released if submit_gated fails.
+- **`PACK_MARKERS` substring landmine, introduced the same day**: `'struct'` matched
+  "construction", "structural", "instructions". In a campaign named the structural campaign the
+  next base draw saying "structural campaign context" would have been REFUSED against a notebook
+  with no `TAAF_STRUCT`. Now whole-word matched; regression + positive controls both pass.
+- Also: `--not-after` bounds submit_gated's 6-hour COMPLETE wait to the caller's window; poll-loop
+  instead of a 3.9 h monolithic sleep; 60 s slack on the window's lower bound.
+- Not done, deliberate: no launchd job (a reboot silently loses the slot) and no alerting.
+
+### Research doc (08-09 "offline-week-challenge" synthesis) — mechanics trustworthy, empirics not
+- **Calibration REFUTED at the corpus.** `request.model` across `scratchpad/rl_gate/episodes/`:
+  37 `moonshotai/kimi-k3`, 19 `duck-model` (smoke placeholder), 3 `qwen3-vl-235b`, 3 kimi-k2.x,
+  and **one** `qwen/qwen3.6-27b` — `control_ft09_27b`, **0.0** on ft09 where K3 scored **47.6**.
+  The "0.110 multiplier / hidden 9x harder / +1.06 -> LB 2.36" chain is duck-on-hidden divided by
+  Kimi-K3-on-public: a model gap reported as a set-difficulty gap. Recomputing the counterfactual
+  on its own terms gives +0.78..+0.85 (LB ~2.1), not +1.06.
+- Transfer assumption is the fatal part: the cap is `sum(w_completed)/sum(w_all)`, so rescuing L1
+  in a 6-level game buys 4.8% while rescuing L5 buys 23.8%. Where we are shallower (hidden), the
+  marginal rescue is worth LESS — a flat multiplier assumes it is worth the same everywhere.
+  Precedent: v13 transfer-dense (+41% dev) and CAI-prune (+47% dev) both Kaggle-inert (0.33/0.28).
+- A survivorship objection I raised was TESTED AND FOUND WEAK: charging rescued levels their
+  already-sunk actions moves 18.98 -> 18.36, because the completion-share cap binds long before
+  efficiency does. Recorded against my own prior.
+- **Scoring**: depth weight `(level+1)` confirmed (`scorecard.py:486-491`) — the synthesis's stated
+  per-level formula omitted it. **"5x baseline run-cut" is UNFOUND** in the toolkit; treat as
+  fabricated. **Geodesic postpass can never score at eval** (`api.py:424-425` blocks
+  competition-mode remake); "+38% live-validated" is offline recomputation; its one live datum is
+  sub 54312141 = 1.05. Cost is ~2 API round-trips/game (None-return precedes the BFS), so not worth
+  a mid-campaign rebuild; `TAAF_GEODESIC_POSTPASS=0` is a free cleanup for the next build.
+- **Human reset lever dissolves**: same-unit measurement gives humans 0.93% of actions vs agent
+  0.75%. "20x/game vs 0.7%" was count-vs-rate.
+- **"~11 waves fit this week" is a fresh-30h-quota figure** quoted verbatim from
+  `submission/_rig/build_rig.py:23` into a week with ~3h left => ~1 wave.
+- **Salvage**: hidden games DO expose public `tags` (`api.py:56-77` withholds only `private_tags`,
+  `level_tags`, `baseline_actions`), so tag-driven archetype dispatch has a real channel on hidden
+  — game-ID-keyed scripts do not. Vision/multimodality is genuinely untested; "stronger base" is
+  dead (both swap gates NO_GO with controls).
