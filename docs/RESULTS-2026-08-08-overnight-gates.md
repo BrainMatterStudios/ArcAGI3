@@ -71,3 +71,10 @@ expected mid-morning; classification per the frozen 0.69–1.27 band rule.
 - 17 levels excl-ft09 (base 11/12, package 10); **g50t unlocked — first target unlock in any screen**; bar was 18 or 2 unlocks -> STOP.
 - Adoption transferred partially: plan_actions_per_llm_turn 2.01 (base 1.0; dry-run bar 3), 34% multi-step plans, full 1-20 length range used, 193 nudges (load-bearing for 27B), 918 auto-wrapped singles, protocol healthy (107 actions/game).
 - Replication wave (same bytes, v2) pushed per the closure-episode discipline: boundary results replicate before belief.
+
+## Struct screen wave 2 / replication (2026-08-09 04:35 UTC) — STOP; adoption replicates, level spike does not
+
+- 12 levels excl-ft09 (w1: 17); no target unlocks (w1 g50t did not recur). Pooled struct {17,12} mean 14.5 vs base pair {11,12} mean 11.5 -> +3/wave, directional, underpowered at n=2.
+- **Adoption REPLICATED and improved: 2.59 plan-actions/deliberation (w1 2.01, base 1.0), multi-step 37%** — the structural channel reliably changes model behavior; the level payoff is modest/noisy, not the w1 spike.
+- Both waves STOP per pre-registered bars. Remaining adoption headroom: ~2/3 of turns still single-step (225 nudges).
+- Morning decision: iterate adoption vs consolidate; AgentWorld gate on upload (ETA ~13:00 UTC); GPU spent ~22.5h/30h week.
