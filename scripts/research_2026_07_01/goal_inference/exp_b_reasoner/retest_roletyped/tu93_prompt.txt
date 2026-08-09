@@ -1,0 +1,23 @@
+You are analyzing an interactive grid-puzzle game. You must infer its WIN CONDITION.
+
+Each colored object has been TYPED by how it responded to probe actions:
+- role=agent: a piece that moves/translates when you press move actions (the thing you control)
+- role=collectible: its count decreased when touched (picked up / consumed)
+- role=editable: its cells changed when you clicked (a region you paint/fill/arrange)
+- role=goal?: static, small, distinct — likely a target/marker the agent or items must reach/match
+- role=wall/frame or static: never changed (walls, borders, or reference patterns)
+(HUD/status bars have been removed.)
+
+SCENE:
+grid 64x64, background=color5, actions=[1, 2, 3, 4]
+  color4: role=agent count=1 objs=1 [moves=True translates=True count_drops=False click_changes=False static=False]
+  color6: role=agent count=64 objs=1 [moves=True translates=True count_drops=True click_changes=False static=False]
+  color9: role=agent count=8 objs=1 [moves=True translates=True count_drops=False click_changes=False static=False]
+  color14: role=goal? count=9 objs=1 [moves=False translates=False count_drops=False click_changes=False static=True]
+  color0: role=static count=261 objs=29 [moves=False translates=False count_drops=False click_changes=False static=True]
+  color2: role=static count=288 objs=32 [moves=False translates=False count_drops=False click_changes=False static=True]
+
+Question: In ONE or TWO sentences, state your single best hypothesis of the WIN CONDITION — the
+concrete configuration or change of state that completes the level. Be specific about WHICH roles
+must reach WHICH state (e.g. "every collectible removed", "editable region made equal to the goal
+pattern", "every agent/box on a goal cell"). Answer only the win condition.

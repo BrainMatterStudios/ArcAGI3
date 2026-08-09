@@ -1,0 +1,67 @@
+You are analyzing an abstract grid-based puzzle game to infer its WIN CONDITION.
+You are given the START state as a list of colored objects, and a set of PROBE
+transitions (an action and how the grid changed). You do NOT know the game's rules.
+
+The grid is 64x64. Colors are integers 0-15. Background color = 5.
+Actions: action1-4 = directional moves; action5 = interact/confirm; action6 = click at a grid cell (x=col,y=row); action7 = alt interact.
+Available actions this level: [1, 2, 3, 4]
+
+START STATE color histogram (color:cell_count): c0:261, c2:288, c4:1, c5:3465, c6:64, c9:8, c14:9
+START STATE objects (largest first; connected same-color regions):
+  color=6 bbox=(r63-63,c0-63) size=64 shape=1x64
+  color=2 bbox=(r15-17,c18-20) size=9 shape=3x3
+  color=0 bbox=(r15-17,c21-23) size=9 shape=3x3
+  color=0 bbox=(r15-17,c27-29) size=9 shape=3x3
+  color=2 bbox=(r15-17,c30-32) size=9 shape=3x3
+  color=0 bbox=(r15-17,c33-35) size=9 shape=3x3
+  color=2 bbox=(r15-17,c36-38) size=9 shape=3x3
+  color=0 bbox=(r15-17,c39-41) size=9 shape=3x3
+  color=2 bbox=(r18-20,c21-23) size=9 shape=3x3
+  color=2 bbox=(r18-20,c27-29) size=9 shape=3x3
+  color=2 bbox=(r18-20,c39-41) size=9 shape=3x3
+  color=0 bbox=(r21-23,c21-23) size=9 shape=3x3
+  color=0 bbox=(r21-23,c27-29) size=9 shape=3x3
+  color=2 bbox=(r21-23,c30-32) size=9 shape=3x3
+  color=0 bbox=(r21-23,c33-35) size=9 shape=3x3
+  color=2 bbox=(r21-23,c36-38) size=9 shape=3x3
+  color=0 bbox=(r21-23,c39-41) size=9 shape=3x3
+  color=2 bbox=(r21-23,c42-44) size=9 shape=3x3
+  color=0 bbox=(r21-23,c45-47) size=9 shape=3x3
+  color=2 bbox=(r24-26,c21-23) size=9 shape=3x3
+  color=2 bbox=(r24-26,c27-29) size=9 shape=3x3
+  color=2 bbox=(r24-26,c33-35) size=9 shape=3x3
+  color=2 bbox=(r24-26,c45-47) size=9 shape=3x3
+  color=0 bbox=(r27-29,c21-23) size=9 shape=3x3
+  color=2 bbox=(r27-29,c24-26) size=9 shape=3x3
+  color=0 bbox=(r27-29,c27-29) size=9 shape=3x3
+  color=0 bbox=(r27-29,c33-35) size=9 shape=3x3
+  color=0 bbox=(r27-29,c45-47) size=9 shape=3x3
+  color=2 bbox=(r30-32,c33-35) size=9 shape=3x3
+  color=2 bbox=(r30-32,c45-47) size=9 shape=3x3
+  color=0 bbox=(r33-35,c15-17) size=9 shape=3x3
+  color=2 bbox=(r33-35,c18-20) size=9 shape=3x3
+  color=0 bbox=(r33-35,c21-23) size=9 shape=3x3
+  color=2 bbox=(r33-35,c24-26) size=9 shape=3x3
+  color=0 bbox=(r33-35,c27-29) size=9 shape=3x3
+  color=2 bbox=(r33-35,c30-32) size=9 shape=3x3
+  color=0 bbox=(r33-35,c33-35) size=9 shape=3x3
+  color=0 bbox=(r33-35,c39-41) size=9 shape=3x3
+  color=2 bbox=(r33-35,c42-44) size=9 shape=3x3
+  color=0 bbox=(r33-35,c45-47) size=9 shape=3x3
+  ...(+25 more small objects)
+
+PROBE TRANSITIONS observed (each = one action from the start state and its effect):
+  - MOVE action1: 1 cells changed in region (r63-63,c63-63); recolorings: 6->0(1 cells)
+  - MOVE action2: 2 cells changed in region (r63-63,c61-62); recolorings: 6->0(2 cells)
+  - MOVE action3: 1 cells changed in region (r63-63,c60-60); recolorings: 6->0(1 cells)
+  - MOVE action4: 19 cells changed in region (r15-63,c15-59); recolorings: 9->0(8 cells); 0->9(8 cells); 4->0(1 cells); 0->4(1 cells); 6->0(1 cells)
+
+TASK: Infer the most likely WIN CONDITION -- the specific state change or configuration
+that triggers level-completion. Answer ONLY in this format, concise:
+
+WIN_CONDITION: <one-sentence predicate, e.g. "all X objects are moved onto Y tiles" or
+"the editable region's colors match the target region">
+MECHANIC: <one phrase for how the player acts to achieve it>
+CONFIDENCE: <low|medium|high>
+
+Do not explain further. Be specific about WHICH objects/colors/regions.

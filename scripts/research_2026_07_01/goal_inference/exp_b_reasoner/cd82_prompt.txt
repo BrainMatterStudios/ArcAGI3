@@ -1,0 +1,45 @@
+You are analyzing an abstract grid-based puzzle game to infer its WIN CONDITION.
+You are given the START state as a list of colored objects, and a set of PROBE
+transitions (an action and how the grid changed). You do NOT know the game's rules.
+
+The grid is 64x64. Colors are integers 0-15. Background color = 5.
+Actions: action1-4 = directional moves; action5 = interact/confirm; action6 = click at a grid cell (x=col,y=row); action7 = alt interact.
+Available actions this level: [1, 2, 3, 4, 5, 6]
+
+START STATE color histogram (color:cell_count): c0:164, c2:30, c3:359, c4:164, c5:3236, c15:143
+START STATE objects (largest first; connected same-color regions):
+  color=3 bbox=(r0-8,c18-63) size=359 shape=9x46
+  color=0 bbox=(r34-43,c27-36) size=100 shape=10x10
+  color=15 bbox=(r25-31,c26-37) size=84 shape=7x12
+  color=4 bbox=(r0-17,c0-17) size=68 shape=18x18
+  color=4 bbox=(r63-63,c0-63) size=64 shape=1x64
+  color=0 bbox=(r3-7,c3-12) size=50 shape=5x10
+  color=15 bbox=(r8-12,c3-12) size=50 shape=5x10
+  color=2 bbox=(r24-32,c25-38) size=30 shape=9x14
+  color=4 bbox=(r2-6,c35-39) size=16 shape=5x5
+  color=4 bbox=(r2-6,c41-45) size=16 shape=5x5
+  color=0 bbox=(r3-5,c36-38) size=9 shape=3x3
+  color=15 bbox=(r3-5,c42-44) size=9 shape=3x3
+  color=0 bbox=(r7-7,c41-45) size=5 shape=1x5
+
+PROBE TRANSITIONS observed (each = one action from the start state and its effect):
+  - MOVE action1: 1 cells changed in region (r63-63,c63-63); recolorings: 4->5(1 cells)
+  - MOVE action2: no change
+  - MOVE action3: 201 cells changed in region (r21-63,c14-62); recolorings: 15->5(66 cells); 5->15(65 cells); 5->2(35 cells); 2->5(20 cells); 2->15(8 cells); 15->2(6 cells)
+  - MOVE action4: 201 cells changed in region (r21-63,c14-61); recolorings: 5->15(66 cells); 15->5(65 cells); 2->5(35 cells); 5->2(20 cells); 15->2(8 cells); 2->15(6 cells)
+  - ACTION5: 50 cells changed in region (r34-38,c27-36); recolorings: 0->15(50 cells)
+  - CLICK ACTION6 at (col=37,row=4): 95 cells changed in region (r7-63,c26-63); recolorings: 15->0(84 cells); 3->0(5 cells); 0->3(5 cells); 4->5(1 cells)
+  - CLICK ACTION6 at (col=43,row=4): 1 cells changed in region (r63-63,c63-63); recolorings: 4->5(1 cells)
+  - CLICK ACTION6 at (col=43,row=7): 1 cells changed in region (r63-63,c63-63); recolorings: 4->5(1 cells)
+  - CLICK ACTION6 at (col=32,row=26): 1 cells changed in region (r63-63,c63-63); recolorings: 4->5(1 cells)
+  - CLICK ACTION6 at (col=12,row=12): 1 cells changed in region (r63-63,c63-63); recolorings: 4->5(1 cells)
+
+TASK: Infer the most likely WIN CONDITION -- the specific state change or configuration
+that triggers level-completion. Answer ONLY in this format, concise:
+
+WIN_CONDITION: <one-sentence predicate, e.g. "all X objects are moved onto Y tiles" or
+"the editable region's colors match the target region">
+MECHANIC: <one phrase for how the player acts to achieve it>
+CONFIDENCE: <low|medium|high>
+
+Do not explain further. Be specific about WHICH objects/colors/regions.

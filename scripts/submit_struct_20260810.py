@@ -84,6 +84,10 @@ LOCAL_NOTEBOOK = REPO / "submission/_duck_patched/duck-patched.ipynb"
 COMPETITION = "arc-prize-2026-arc-agi-3"
 TARGET_UTC = datetime(2026, 8, 10, 0, 1, 0, tzinfo=timezone.utc)
 WINDOW_END_UTC = datetime(2026, 8, 10, 2, 0, 0, tzinfo=timezone.utc)
+# Idempotency claim. Checked at start, written once the slot is ours. Survives a
+# relaunch after a presumed death, which the race guard alone cannot (it reads the
+# submissions list ~10 min before submit_gated actually submits).
+MARKER = REPO / "logs/struct_v9_20260810.marker"
 
 # Pins that MUST still be present in the remote v9 bytes at fire time. If a
 # rebuild ever silently disarms the experiment, the hash check already catches
@@ -126,10 +130,53 @@ def auth_header() -> str:
     return "Basic " + base64.b64encode(f"{user}:{key}".encode()).decode()
 
 
-def api_json(url: str) -> dict | list:
-    req = urllib.request.Request(url, headers={"Authorization": auth_header()})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.load(resp)
+def api_json(url: str, attempts: int = 5) -> dict | list:
+    """GET with retries. Every fire-time API call goes through here.
+
+    Rationale: the L24 launchd job fires five Kaggle submissions plus repeated
+    listing calls at 00:00:05Z, 55 seconds before this runner wakes. A 429/503
+    landing on an unretried call would kill the slot outright. Retrying costs
+    seconds; not retrying costs the day.
+    """
+    last: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            req = urllib.request.Request(url, headers={"Authorization": auth_header()})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return json.load(resp)
+        except Exception as exc:  # noqa: BLE001 — any transport failure is retryable
+            last = exc
+            if attempt < attempts:
+                backoff = min(30, 3 * attempt)
+                log(f"api attempt {attempt}/{attempts} failed ({exc!r}) — retry in {backoff}s")
+                time.sleep(backoff)
+    raise SystemExit(f"ABORT: API unreachable after {attempts} attempts: {last!r}")
+
+
+def kernel_status_positive(attempts: int = 5) -> str | None:
+    """The kernel's POSITIVE status, or None if every attempt was transport noise.
+
+    The CLI prints transport failures to stderr, and strings like
+    NewConnectionError and "500 Server Error" contain the substring ERROR — so a
+    naive `"COMPLETE" in stdout+stderr` test turns a DNS hiccup into an abort.
+    Only a `has status "..."` line counts as the kernel speaking.
+    """
+    pattern = re.compile(r'has status\s+"([^"]+)"', re.IGNORECASE)
+    for attempt in range(1, attempts + 1):
+        try:
+            out = subprocess.run(
+                ["python3", "-m", "kaggle", "kernels", "status", KERNEL],
+                capture_output=True, text=True, timeout=120,
+            )
+            match = pattern.search(out.stdout + out.stderr)
+            if match:
+                return match.group(1).strip()
+            log(f"status attempt {attempt}/{attempts}: no positive status line")
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            log(f"status attempt {attempt}/{attempts} transport failure: {exc!r}")
+        if attempt < attempts:
+            time.sleep(min(30, 3 * attempt))
+    return None
 
 
 def canonical_code_hash(nb: dict) -> str:
@@ -191,13 +238,16 @@ def reattest() -> None:
         raise SystemExit("ABORT: local tracked notebook no longer matches the attested hash")
 
     # 5. Kernel liveness (latest session; the submitted version is pinned by -v).
-    status = subprocess.run(
-        ["python3", "-m", "kaggle", "kernels", "status", KERNEL],
-        capture_output=True, text=True, timeout=120,
-    )
-    combined = (status.stdout + status.stderr).upper()
-    if "COMPLETE" not in combined:
-        raise SystemExit(f"ABORT: kernel status not COMPLETE: {combined.strip()[:200]}")
+    status = kernel_status_positive()
+    if status is None:
+        # Never seen the kernel speak. Do NOT abort: identity checks 1-4 already
+        # proved the exact bytes and their kf binding, and submit_gated runs its
+        # own COMPLETE gate with retries. Aborting here on transport noise would
+        # burn the slot for a network blip.
+        log("WARNING: kernel status unreadable after retries — deferring the "
+            "liveness call to submit_gated's own gate 2 (identity already proven)")
+    elif "COMPLETE" not in status.upper():
+        raise SystemExit(f"ABORT: kernel status not COMPLETE: {status}")
     log(
         f"re-attest OK: v{EXPECTED_VERSION} == scriptVersionId {EXPECTED_SCRIPT_VERSION_ID}, "
         f"hash {remote_hash[:16]}…, {len(REQUIRED_PINS)} pins armed, remote==local, COMPLETE"
@@ -233,14 +283,27 @@ def main() -> int:
     except ImportError:
         log("WARNING: certifi unavailable — API re-attest and post-submit watch may be SSL-blind")
 
+    if MARKER.exists() and not args.mock:
+        raise SystemExit(f"ABORT: marker present ({MARKER}) — this slot already fired")
+
     target = datetime.now(timezone.utc) + timedelta(seconds=90) if args.mock else TARGET_UTC
-    delay = (target - datetime.now(timezone.utc)).total_seconds()
-    log(f"target {target:%Y-%m-%d %H:%M:%S}Z — sleeping {delay/3600:.2f} h")
-    if delay > 0:
-        time.sleep(delay)
+    log(f"target {target:%Y-%m-%d %H:%M:%S}Z — "
+        f"{(target - datetime.now(timezone.utc)).total_seconds()/3600:.2f} h to go")
+    # Poll loop, not one monolithic sleep: a single multi-hour time.sleep() is not
+    # robust to suspend/resume, and capping each nap at 60 s lets a late wake still
+    # land inside the window instead of overshooting it.
+    while True:
+        remaining = (target - datetime.now(timezone.utc)).total_seconds()
+        if remaining <= 0:
+            break
+        time.sleep(min(60.0, remaining))
 
     now = datetime.now(timezone.utc)
-    if not args.mock and not (TARGET_UTC <= now <= WINDOW_END_UTC):
+    # Lower bound carries 60 s of slack: `now` is wall-clock, and macOS `timed` can
+    # step the clock BACKWARD during the wait (notably after a network change or a
+    # wake). Without slack such a step lands just under TARGET_UTC and aborts a
+    # perfectly good run. Overshoot stays fail-closed at WINDOW_END_UTC.
+    if not args.mock and not (TARGET_UTC - timedelta(seconds=60) <= now <= WINDOW_END_UTC):
         raise SystemExit(f"ABORT: outside one-shot window (now {now:%Y-%m-%d %H:%M}Z)")
 
     reattest()
@@ -252,18 +315,44 @@ def main() -> int:
         else:
             raise SystemExit("ABORT: today's slot already consumed by another submission")
 
+    # Claim the slot BEFORE handing off. submit_gated settles 10 min before the
+    # actual submit, so the race guard's reading is stale by then; the marker is
+    # what stops a second copy of this runner (a relaunch after a presumed death)
+    # from walking the same path and double-submitting.
+    if not args.mock:
+        MARKER.parent.mkdir(parents=True, exist_ok=True)
+        MARKER.write_text(f"claimed {datetime.now(timezone.utc).isoformat()} pid={os.getpid()}\n")
+        log(f"slot claimed via marker {MARKER}")
+
     cmd = [
         sys.executable, str(REPO / "scripts/submit_gated.py"),
         "--kernel", KERNEL, "--version", str(EXPECTED_VERSION),
         "--notebook", str(LOCAL_NOTEBOOK), "--message", MESSAGE,
+        # Bound submit_gated's COMPLETE wait by our own window: without it a kernel
+        # stuck in RUNNING keeps its 6-hour loop alive and could submit at 06:00Z,
+        # hours outside the window this runner pre-registered.
+        "--not-after", WINDOW_END_UTC.isoformat(),
     ]
     if args.mock:
         cmd.append("--dry-run")
     log("invoking: " + " ".join(cmd[:8]) + " …")
     proc = subprocess.run(cmd, cwd=REPO)
     log(f"submit_gated exit code: {proc.returncode}")
+    if proc.returncode != 0 and not args.mock:
+        # Release the claim so a deliberate manual retry inside the window is not
+        # blocked by our own marker.
+        MARKER.unlink(missing_ok=True)
+        log("submit_gated failed — marker released for a manual retry in-window")
     return proc.returncode
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except BaseException as exc:  # noqa: BLE001 — nothing may die silently here
+        log(f"UNHANDLED {exc!r}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(2)

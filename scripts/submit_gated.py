@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import re
 import subprocess
 import sys
 import time
@@ -123,33 +124,75 @@ def check_builder_honesty(message: str, notebook: Path) -> list[str]:
     lowered = message.lower()
     missing = []
     for keyword, markers in PACK_MARKERS.items():
-        if keyword in lowered and not any(marker in src for marker in markers):
+        # WHOLE-WORD match, not substring. A bare `keyword in lowered` made short
+        # keys into landmines: 'struct' matched "construction", "structural",
+        # "instructions", "infrastructure". In a campaign literally named the
+        # structural campaign, the next duck-base draw whose message said
+        # "structural campaign context" would have tripped this gate against a
+        # notebook with no TAAF_STRUCT and REFUSED — burning the slot on a
+        # description word. Boundaries make 'struct-v9' match and 'structural' not.
+        if not re.search(rf"\b{re.escape(keyword)}\b", lowered):
+            continue
+        if not any(marker in src for marker in markers):
             missing.append(f"{keyword!r} (needs one of {markers})")
     return missing
 
 
-def kernel_status(slug: str) -> str:
-    """Positive status string, retrying transient unreadable replies."""
-    out = subprocess.run(
-        ["kaggle", "kernels", "status", slug],
-        capture_output=True, text=True, timeout=120,
-    )
-    return (out.stdout + out.stderr).strip()
+# A POSITIVE status reply looks like:  <slug> has status "KernelWorkerStatus.COMPLETE"
+# Anything else — a proxy error, a 500, a rate-limit body — is TRANSPORT NOISE and
+# must never be read as a kernel verdict. This matters because the CLI prints
+# transport failures to stderr, and strings like NewConnectionError / "500 Server
+# Error" contain the substring ERROR; the previous `"ERROR" in status` test turned a
+# DNS hiccup into "REFUSED: kernel reports terminal failure" and burned the day.
+_STATUS_RE = re.compile(r'has status\s+"([^"]+)"', re.IGNORECASE)
 
 
-def wait_for_complete(slug: str, max_wait_s: int = 6 * 3600) -> None:
-    """Block until the kernel positively reads COMPLETE; abort on ERROR/CANCEL."""
+def kernel_status(slug: str) -> str | None:
+    """The kernel's POSITIVE status, or None if the reply was transport noise."""
+    try:
+        out = subprocess.run(
+            ["python3", "-m", "kaggle", "kernels", "status", slug],
+            capture_output=True, text=True, timeout=120,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        log(f"kernel status: transport failure ({exc!r}) — treating as unreadable")
+        return None
+    combined = (out.stdout + out.stderr).strip()
+    match = _STATUS_RE.search(combined)
+    if not match:
+        log(f"kernel status: no positive status in reply — treating as unreadable: {combined[:160]}")
+        return None
+    return match.group(1).strip()
+
+
+def wait_for_complete(slug: str, max_wait_s: int = 6 * 3600,
+                      not_after: datetime | None = None) -> None:
+    """Block until the kernel positively reads COMPLETE; abort on ERROR/CANCEL.
+
+    Only a POSITIVE status line can end this loop. Transport noise is retried, so a
+    network blip at fire time costs a minute, not the slot.
+
+    `not_after` bounds the wait against a caller's pre-registered window: without it
+    a kernel stuck in RUNNING could keep this loop alive for six hours and submit
+    long outside the window the caller promised to fire in.
+    """
     deadline = time.time() + max_wait_s
     attempt = 0
     while time.time() < deadline:
+        if not_after is not None and datetime.now(timezone.utc) >= not_after:
+            raise SystemExit(
+                f"REFUSED: kernel not COMPLETE before the caller's window closed at "
+                f"{not_after:%Y-%m-%d %H:%M}Z"
+            )
         attempt += 1
         status = kernel_status(slug)
         log(f"kernel status (attempt {attempt}): {status or '<unreadable>'}")
-        upper = status.upper()
-        if "COMPLETE" in upper:
-            return
-        if "ERROR" in upper or "CANCEL" in upper:
-            raise SystemExit(f"REFUSED: kernel reports terminal failure: {status}")
+        if status is not None:
+            upper = status.upper()
+            if "COMPLETE" in upper:
+                return
+            if "ERROR" in upper or "CANCEL" in upper:
+                raise SystemExit(f"REFUSED: kernel reports terminal failure: {status}")
         # unreadable or still running -> retry; an unknown is never a failure
         time.sleep(60)
     raise SystemExit(f"REFUSED: kernel never read COMPLETE within {max_wait_s}s")
@@ -298,7 +341,17 @@ def main() -> int:
     parser.add_argument("--file", default="submission.parquet")
     parser.add_argument("--dry-run", action="store_true",
                         help="run every pre-submit gate, then stop WITHOUT submitting")
+    parser.add_argument("--not-after", default=None,
+                        help="ISO-8601 UTC instant; refuse to keep waiting for COMPLETE "
+                             "past it. One-shot runners pass their window end so a kernel "
+                             "stuck in RUNNING cannot submit hours outside the window.")
     args = parser.parse_args()
+
+    not_after = None
+    if args.not_after:
+        not_after = datetime.fromisoformat(args.not_after.replace("Z", "+00:00"))
+        if not_after.tzinfo is None:
+            not_after = not_after.replace(tzinfo=timezone.utc)
 
     if not args.notebook.is_file():
         raise SystemExit(f"REFUSED: notebook not found: {args.notebook}")
@@ -312,7 +365,7 @@ def main() -> int:
     log("gate 1 OK: every pack named in the message has markers in the notebook")
 
     # Gate 2 — kernel COMPLETE + settle.
-    wait_for_complete(args.kernel)
+    wait_for_complete(args.kernel, not_after=not_after)
     log(f"kernel COMPLETE — settling {SETTLE_SECONDS//60} min before submitting "
         "(a submit racing the version publish scores a never-played parquet)")
     if args.dry_run:
@@ -320,7 +373,12 @@ def main() -> int:
     else:
         time.sleep(SETTLE_SECONDS)
         recheck = kernel_status(args.kernel)
-        if "COMPLETE" not in recheck.upper():
+        # None == transport noise, NOT a regression. Only a positive status that
+        # fails to say COMPLETE is a real regression worth refusing on.
+        if recheck is None:
+            log("post-settle status unreadable (transport) — proceeding on the "
+                "pre-settle COMPLETE rather than burning the slot on a blip")
+        elif "COMPLETE" not in recheck.upper():
             raise SystemExit(f"REFUSED: status regressed during settle: {recheck}")
     log("gate 2 OK: COMPLETE and settled")
 
