@@ -80,6 +80,18 @@ PACK_MARKERS: dict[str, list[str]] = {
     "plan queue": ["patch_plan_queue", "TAAF_COMPACT"],
     "action7": ["patch_action7"],
     "burner": ["patch_dynamic_grid_burner", "TAAF_GRID_BURNER"],
+    # patches 16-22 (added 2026-08-09 with the struct v9 probe): the gate only
+    # covered packs through patch15, so a message naming any of these went
+    # unchecked. Keywords are how these packs are actually named in messages.
+    "diff-lines": ["patch_diff_lines", "TAAF_DIFF_LINES"],
+    "wiggle": ["patch_wiggle", "TAAF_WIGGLE"],
+    "run_probe": ["patch_run_probe", "TAAF_RUN_PROBE"],
+    "dispatch": ["patch_archetype_dispatch", "TAAF_DISPATCH"],
+    "verifier": ["patch_verify_at_commit", "TAAF_VERIFY"],
+    "struct": ["patch_struct_channel", "TAAF_STRUCT"],
+    "plan channel": ["patch_struct_channel", "TAAF_STRUCT"],
+    "brake": ["patch_struct_gates", "TAAF_STRUCT"],
+    "phase gate": ["patch_struct_gates", "TAAF_STRUCT"],
 }
 
 
@@ -157,10 +169,22 @@ def _kaggle_auth_header() -> str:
     return "Basic " + base64.b64encode(f"{user}:{key}".encode()).decode()
 
 
+def _ssl_context() -> "ssl.SSLContext":
+    """SSL context that can actually verify api.kaggle.com on macOS framework pythons."""
+    import ssl
+
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # noqa: BLE001 - fall back to the interpreter default
+        return ssl.create_default_context()
+
+
 def list_submissions(competition: str) -> list[dict]:
     url = f"https://www.kaggle.com/api/v1/competitions/submissions/list/{competition}?page=1"
     req = urllib.request.Request(url, headers={"Authorization": _kaggle_auth_header()})
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=60, context=_ssl_context()) as resp:
         rows = json.load(resp)
     return rows if isinstance(rows, list) else []
 
@@ -206,6 +230,26 @@ def watch_submission(competition: str, message: str, submitted_at: datetime) -> 
             age_s = (datetime.now(timezone.utc) - submitted_at).total_seconds()
             log(f"ref={ref} status={status} totalBytes={nbytes} "
                 f"publicScore={score} age={age_s/60:.0f}min")
+
+            try:
+                ledger_path = Path(__file__).resolve().parent.parent / "docs/submission-ledger.json"
+                if ledger_path.is_file():
+                    data = json.loads(ledger_path.read_text())
+                    if not any(r.get("submission_id") == ref for r in data.get("submissions", [])):
+                        entry = {
+                            "submission_id": ref,
+                            "date_utc": str(row.get("date")),
+                            "status": str(row.get("status")),
+                            "public_score": score,
+                            "total_bytes": nbytes,
+                            "description": message,
+                            "notes": "auto-appended by submit_gated.py",
+                        }
+                        data.setdefault("submissions", []).insert(0, entry)
+                        ledger_path.write_text(json.dumps(data, indent=2) + "\n")
+                        log(f"ledger row appended for submission {ref}")
+            except Exception as exc:  # noqa: BLE001
+                log(f"ledger append non-fatal warning: {exc!r}")
 
             if isinstance(nbytes, int) and 0 < nbytes <= NEVER_PLAYED_MAX_BYTES:
                 alarm(
