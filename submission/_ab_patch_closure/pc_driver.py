@@ -585,10 +585,19 @@ async def pc_main(bm, target, working_dir, arm, arm_env, hypothesis, geometry,
         # still runs, so a broken env_dir is caught before any filtering.
         focus = tuple(geometry.get("games") or ())
         if focus:
-            missing = [g for g in focus if g not in official]
+            # Official ids are "<stem>-<hash>" (e.g. ft09-7fbdac44), so focus is
+            # matched on the STEM using the same rule as the row writer below
+            # (`stem = src.split("-")[0]`). Matching full ids would require
+            # knowing a hash that changes between environment versions.
+            # 2026-08-09: the first version of this compared bare stems against
+            # full ids and matched nothing — both arms died at this guard.
+            stems = {g.split("-")[0]: g for g in official}
+            missing = [g for g in focus if g not in stems]
             if missing:
-                raise RuntimeError(f"geometry.games not in the official set: {missing}")
-            official = [g for g in official if g in focus]
+                raise RuntimeError(
+                    f"geometry.games not in the official set: {missing}; "
+                    f"available stems: {sorted(stems)}")
+            official = [stems[g] for g in focus]
             print(f"[pc] FOCUS SUBSET: {len(official)} game(s) {official} "
                   f"across {geometry['clones']} clones", flush=True)
         result["env_dir"] = env_dir
