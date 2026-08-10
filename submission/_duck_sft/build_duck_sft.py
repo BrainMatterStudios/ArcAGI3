@@ -25,6 +25,23 @@ MERGE_CELL_SOURCE = [
     "    merge_script = '''\n",
     "import glob, json, os, shutil, sys, time, gc\n",
     "import torch\n",
+    "# OFFLINE env-prep. The kernel image's stock transformers does not know\n",
+    "# model_type qwen3_5 and raises KeyError('qwen3_5') at AutoConfig — this is\n",
+    "# the defect that ERRORed subs 55102674 and 55160933 (both totalBytes 0).\n",
+    "# arc3-deps-prep bundles transformers-main (5.14.0.dev0) + peft 0.19.1 with\n",
+    "# torch/nvidia/triton stripped, so the image's Blackwell torch is kept — the\n",
+    "# exact deps run-8 trained with. Fixed in 6cde0c8 for _ab_wmr on 2026-08-04;\n",
+    "# back-ported here 2026-08-10. Scoped to THIS subprocess: the notebook\n",
+    "# process and vLLM (own site-packages) are untouched.\n",
+    "_deps = sorted(p for p in glob.glob('/kaggle/input/**/deps', recursive=True)\n",
+    "               if 'deps-prep' in p)\n",
+    "assert _deps, 'arc3-deps-prep deps dir not found under /kaggle/input'\n",
+    "sys.path.insert(0, _deps[0])\n",
+    "import transformers\n",
+    "print(f'[duck-sft-subprocess] deps on path: {_deps[0]} | '\n",
+    "      f'transformers {transformers.__version__} | torch {torch.__version__}', flush=True)\n",
+    "assert tuple(int(x) for x in transformers.__version__.split('.')[:2]) >= (5, 6), \\\\\n",
+    "    f'qwen3_5 needs transformers>=5.6.2, got {transformers.__version__}'\n",
     "CORPUS = os.path.dirname(sorted(glob.glob('/kaggle/input/**/train.jsonl', recursive=True))[0])\n",
     "sys.path.insert(0, CORPUS)\n",
     "from sft_common import dequantize_fp8_inplace, strip_quantization_runtime\n",
@@ -178,7 +195,12 @@ meta = {
     "competition_sources": [
         "arc-prize-2026-arc-agi-3"
     ],
-    "kernel_sources": [],
+    # arc3-deps-prep — offline transformers-main/peft for the merge subprocess.
+    # Its ABSENCE is what ERRORed subs 55102674 and 55160933: without it the
+    # merge dies at KeyError('qwen3_5'). Never remove this.
+    "kernel_sources": [
+        "ahmedmobasher86/arc3-deps-prep"
+    ],
     "model_sources": []
 }
 

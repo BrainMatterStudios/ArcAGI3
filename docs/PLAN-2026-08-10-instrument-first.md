@@ -140,7 +140,10 @@ is sent, so vLLM grants `max_model_len − prompt_len`; at 65536 that starves ge
 
 ## 4. Track 3 — what earns GPU (next fresh quota, Saturday)
 
-Quota resets Saturday; ~3h remain this week, so **~1 wave, not 11** (the "11 waves"
+**CORRECTED 2026-08-10: ~18h were available (Ahmed, measured from the Kaggle UI), not ~3h — the ~3h
+figure was inherited from a stale handoff and nearly killed a viable experiment on false budget
+grounds.** After the ft09 ablation (4.4h) and the K3 A/B (4.4h), roughly 9h remain. The "~11 waves"
+figure is still wrong for a different reason (the "11 waves"
 figure is a fresh-quota number quoted from `build_rig.py:23`).
 
 - **Wave A (first, once Track 0 lands):** the Track 2 free-win stack vs base, scored on
