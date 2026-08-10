@@ -228,7 +228,27 @@ def classify_result(
         for g in REGRESSION_GAMES
         if _levels(base, g) - _levels(candidate, g) >= thresholds.regression_levels
     }
+    # THE OBJECTIVE, reported FIRST for both arms. The level deltas beneath it
+    # are uncorrelated with the real score (r = -0.009 across the eight banked
+    # waves), so a verdict read off them is not a verdict.
+    #
+    # READ THIS BEFORE INTERPRETING ANY DELTA HERE: the "base" arm is the
+    # SETTLED PATCHED config (WATCHDOG/HUD_MASK/WIN_REPLAY/ANTIFREEZE on), NOT
+    # the config we actually ship. duck-base v2 — the live pinned submission —
+    # contains no duck_patches at all. On the live ledger the patched family
+    # averages 0.788 (n=5) against base's 0.965 (n=10), so this baseline may
+    # itself underperform what we ship by ~0.18. Every delta below is relative
+    # to an unshipped reference.
+    from true_score import true_score_metrics  # local import: avoids a cycle
+
+    excl = tuple(LEVELS_EXCLUDED_GAMES)
     metrics = {
+        "true_score": {
+            "base": true_score_metrics(base, excluded=excl),
+            "candidate": true_score_metrics(candidate, excluded=excl),
+        },
+        "baseline_caveat": ("'base' here is the settled PATCHED arm, not the shipped "
+                            "duck-base v2 (which carries no patches at all)"),
         "levels_excl_ft09": {
             "base": level_sum(base),
             "candidate": level_sum(candidate),

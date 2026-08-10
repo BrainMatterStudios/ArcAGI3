@@ -184,7 +184,14 @@ def classify_screen(
     unlocks = [g for g in TARGET_GAMES if _levels(package, g) >= 1]
     rows = package.get("rows") or []
     acts = [int(r.get("actions_total") or 0) for r in rows]
+    # THE OBJECTIVE, reported FIRST. The level count beneath it is uncorrelated
+    # with the real score (r = -0.009 across the eight banked waves). Note also
+    # that the banked "base" comparator is the settled PATCHED arm, not the
+    # shipped duck-base v2 (which carries no patches at all).
+    from true_score import true_score_metrics  # local import: avoids a cycle
+
     metrics = {
+        **true_score_metrics(package, excluded=tuple(LEVELS_EXCLUDED_GAMES)),
         "levels_excl_ft09": levels,
         "banked_base_levels_excl_ft09": BANKED_BASE["levels_excl_ft09_by_wave"],
         "new_target_unlocks": unlocks,
