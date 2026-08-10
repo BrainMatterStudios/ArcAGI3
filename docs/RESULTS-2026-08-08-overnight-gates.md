@@ -237,3 +237,68 @@ justify it. Stage 2 is cancelled, not deferred.
 - **The pre-registration did its job.** At p=0.088 with the sign in the predicted
   direction, the pull to run stage 2 "to see" was real; the bar written before launch is
   the only reason it was not spent.
+
+---
+
+## 2026-08-10 — K3 adapter behavioural A/B (round 5): NEGATIVE. Distillation track CLOSED.
+
+The campaign's central unanswered question, answered. The K3 run-8 checkpoint-8 LoRA had
+never been put in front of a real game; it was built and dry-run-validated on 2026-08-04
+and never pushed. Kernel `ab-wmr` v6, COMPLETE 4.40h, waves M,B,B,M, 10-game panel,
+3600s/game, concurrency 28, identical duck config both arms. 0 slots spent.
+
+**Serving identity PROVEN.** Temperature-0 logprob fingerprint per wave: both B waves
+returned *identical* logprobs (-0.104786, -3.9e-05) — a clean determinism control — while
+both M waves differed (-0.066082, -0.052289) and served `/tmp/merged_sft`. The arms
+provably served different weights. This is NOT another silent-base-serving failure.
+
+### Read against the pre-registered contract (written 2026-08-04, before the run)
+
+**1. Deliberation signature (primary) — the style hypothesis FAILS.**
+| arm | median gen_tokens/game |
+|---|---|
+| B (base) | 56,670 |
+| M (K3 adapter) | 45,951 |
+
+M generates **18.9% FEWER tokens**. Round 4's synth adapter dropped ~30% and was diagnosed
+as under-deliberating because its targets were short (263 tokens). Run-8's corpus has
+long-form targets (**~1,487 avg**, verified: corpus v1 and v3 have identical
+`qwen_target_tokens` 646,744 over 435 rows — same K3 data, differing only in split). The
+pre-registration predicted run-8 should therefore NOT show the drop. **It does.**
+Long-form targets did not prevent under-deliberation. That is the most transferable
+finding here: the defect is not corpus target *length*.
+
+**2. Generalization readout (m0r0 + dc22 ONLY) — no signal.**
+8 of the 10 panel games are in run-8's training corpus, so level gains there are
+memorization-confounded; the contract restricts generalization to the two clean games.
+- m0r0: M [0,0] vs B [0,1]
+- dc22: M [0,0] vs B [0,0]
+
+**No M-only unlock on a clean game.** The pre-registered signal is absent.
+
+**3. Paired levels (primary).** M 7 vs B 11 across 20 game-runs each. Paired by game:
+M better on 2 (cn04, tu93), worse on 5, tied on 3 — two-sided sign test **p = 0.453**.
+Directionally negative, NOT statistically significant.
+
+**4. Score deltas — NOT headlined, per the contract.** The true-objective means (M 0.681
+vs B 1.430) are recorded for completeness but the pre-registration explicitly disqualifies
+them: *"Score deltas at 2 waves/arm are noise (A/A floor RMS 0.707 levels/game-run) — do
+not headline them."* My computation validated against the stored per-row score, 40/40 rows,
+0 mismatches. An earlier draft of this analysis led with the -52.3% figure; that violated
+the contract and is withdrawn.
+
+### Verdict
+
+The contract says *"Neither outcome ships anything by itself."* Nothing ships. There is no
+evidence the K3 adapter helps play, and positive evidence it under-deliberates the same way
+the synth adapter did despite having the corpus property that was supposed to prevent it.
+
+**The distillation track closes on a genuine negative result** — the first this track has
+produced. Its four prior attempts were engineering failures (two silent base servings, two
+merge ERRORs), not measurements. Combined with the campaign's own pre-registered EV for
+SFT (+0.05-0.07 against +0.50 needed) and the fact that a real training run needs ~26h
+against a 12h kernel cap, this track should not be reopened without a fundamentally
+different hypothesis about WHY imitation reduces deliberation.
+
+Cost: 4.40h GPU, 0 submission slots. Result artifact banked to
+`scratchpad/banked_waves_20260809/k3_ab_round5.json`.

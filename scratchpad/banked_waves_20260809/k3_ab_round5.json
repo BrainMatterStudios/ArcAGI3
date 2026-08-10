@@ -1,0 +1,3669 @@
+{
+ "experiment": "ab_round5_k3_adapter",
+ "pre_registered_reading": {
+  "question": "Does DELIBERATION-SHAPED SFT move real play at 27B? The K3 run-8 checkpoint-8 LoRA (corpus v1 \u2014 NOT v3, label corrected 2026-08-04; Kimi-K3 teacher, long-form deliberation targets; NLL val -12.5%; Gate 0 merge +13.51%, 98.2% retained) was never behaviorally validated. Round 4's synth adapter failed by under-deliberating (~30% gen_tokens drop, learned-short style); run-8's data has the right style \u2014 this is the cleanest test.",
+  "primary": "Paired per-game LEVELS + gen_tokens/game (the DELIBERATION SIGNATURE: the synth adapter showed a ~30% token drop vs base; run-8 should NOT if the style hypothesis is right), M (merged adapter) vs B (base). Unlock events on the newly-unlocking targets ['lf52', 'cn04'] and never-unlocked targets ['wa30', 'm0r0', 'g50t', 'dc22']: an M-only unlock on a never-unlocked game = signal \u2014 STRONGEST on the clean games m0r0/dc22 (not in run-8's training corpus); on trained-on games it is memorization-confounded (see 'contamination'). Plus actions_per_level and watchdog/HUD/replay texture on the full 10-game panel.",
+  "contamination": "PANEL DECONTAMINATION (2026-08-04). Run-8 trained on corpus v1 (dataset arc3-sft-k3-corpus, uploaded 2026-07-24 \u2014 the only version of that slug in existence when run 8 trained on 2026-07-26; row counts 392 train / 43 val match this build's verified lineage note exactly, whereas corpus_v3 is 379/56). Corpus v1 has a ROW-level split covering 20 of 25 dev games, so the contamination is far wider than the 'vc33/sc25/lp85' trio previously recorded: panel games IN the training set = lf52(6), cn04(18), wa30(18), g50t(21), ft09(21), re86(20), tu93(13), su15(29) train rows each \u2014 and vc33(35), the worst case, which this round REMOVES from the panel (replaced by dc22; sc25/lp85 were never panel members). The only dev games absent from corpus v1 are dc22, m0r0, sk48, tn36, tr87; of these, dc22 was chosen (target-class, 6 levels, frontier-teacher census game; sk48/tn36 similar but census-aligned dc22 preferred; tr87 excluded \u2014 perception-confounded at upscale 4). READING RULE: level gains on trained-on games do NOT demonstrate generalization; the generalization readout is m0r0 + dc22 only.",
+  "secondary": "Continuity games ['ft09', 're86', 'tu93', 'su15'] for unlock-sensitive regression; which weights actually served each wave (serving-assert --model arg + temperature-0 logprob fingerprint) is logged into every wave record.",
+  "not_a_readout": "NLL is NOT a criterion (round 4 disqualified NLL-only gates: NLL said +36% transfer, play said -47% levels). Score deltas at 2 waves/arm are noise (A/A floor RMS 0.707 levels/game-run) \u2014 do not headline them. Neither outcome ships anything by itself.",
+  "adapter_provenance": "Dataset ahmedmobasher86/arc3-sft-k3-ckpts, current version = the 2026-07-26 v2 upload (run 8, the FIRST VALID run; runs 1-5 trained on a corrupted base and their v1 upload is fully superseded), path sft_out/checkpoint-8 \u2014 the checkpoint pre-registered by docs/A1-PROTOCOL-2026-08.md par.3 (ties break toward ckpt-8) and the only artifact that passed Gate 0 (serve-verify-k3 v9, 2026-08-01). Identity hard-asserted at merge time: trainer_state global_step 8 / max_steps 15 / step-8 loss 0.7335078716278076, adapter 467062560 bytes (verified against the live listing 2026-08-04)."
+ },
+ "arms": {
+  "M": {
+   "TAAF_WATCHDOG": "1",
+   "TAAF_HUD_MASK": "1",
+   "TAAF_WIN_REPLAY": "1",
+   "TAAF_GRID_BURNER": "0",
+   "TAAF_GRAPH": "0",
+   "TAAF_COMPACT": "0",
+   "TAAF_PLAYBOOK": "0",
+   "TAAF_ANTIFREEZE": "1"
+  },
+  "B": {
+   "TAAF_WATCHDOG": "1",
+   "TAAF_HUD_MASK": "1",
+   "TAAF_WIN_REPLAY": "1",
+   "TAAF_GRID_BURNER": "0",
+   "TAAF_GRAPH": "0",
+   "TAAF_COMPACT": "0",
+   "TAAF_PLAYBOOK": "0",
+   "TAAF_ANTIFREEZE": "1"
+  }
+ },
+ "arm_models": {
+  "M": "merged(base + k3 run-8 checkpoint-8) at /tmp/merged_sft",
+  "B": "base fp8 snapshot"
+ },
+ "games": [
+  "lf52",
+  "cn04",
+  "wa30",
+  "m0r0",
+  "g50t",
+  "dc22",
+  "ft09",
+  "re86",
+  "tu93",
+  "su15"
+ ],
+ "target_games": [
+  "lf52",
+  "cn04",
+  "wa30",
+  "m0r0",
+  "g50t",
+  "dc22"
+ ],
+ "newly_unlocking_games": [
+  "lf52",
+  "cn04"
+ ],
+ "never_unlocked_games": [
+  "wa30",
+  "m0r0",
+  "g50t",
+  "dc22"
+ ],
+ "continuity_games": [
+  "ft09",
+  "re86",
+  "tu93",
+  "su15"
+ ],
+ "waves_planned": [
+  "M",
+  "B",
+  "B",
+  "M"
+ ],
+ "per_game_budget_s": 3600.0,
+ "deadline_s_from_start": 21600.0,
+ "dry_run": false,
+ "stage": "done",
+ "error": null,
+ "patch_proof": {
+  "watchdog_should_stop_patched": true,
+  "graph_should_stop_patched": true,
+  "graph_step_env_patched": true,
+  "hud_or_outer_execute_patched": true,
+  "play_patched": true,
+  "plan_queue_analyze_patched": true,
+  "compaction_history_patched": true,
+  "compact_prompt_injector_patched": true,
+  "playbook_system_prompt_patched": true,
+  "antifreeze_user_prompt_patched": true,
+  "execute_chain_repr": "<function install.<locals>._execute_action at 0x7866ec5820c0>",
+  "play_chain_repr": "<function patch_struct_channel.<locals>.play at 0x7866ec5814e0>"
+ },
+ "config": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20,
+  "context_window": 32768,
+  "concurrency": 28,
+  "model": "vrfai/Qwen3.6-27B-FP8"
+ },
+ "waves": [
+  {
+   "wave": 0,
+   "arm": "M",
+   "env": {
+    "TAAF_WATCHDOG": "1",
+    "TAAF_HUD_MASK": "1",
+    "TAAF_WIN_REPLAY": "1",
+    "TAAF_GRID_BURNER": "0",
+    "TAAF_GRAPH": "0",
+    "TAAF_COMPACT": "0",
+    "TAAF_PLAYBOOK": "0",
+    "TAAF_ANTIFREEZE": "1"
+   },
+   "served_model": "/tmp/merged_sft",
+   "serve": {
+    "arm": "M",
+    "desired_model": "/tmp/merged_sft",
+    "pid_before": 279,
+    "model_before": "/tmp/merged_sft",
+    "restarted": false
+   },
+   "serving_assert": {
+    "checks": [
+     {
+      "check": "analyzer_base_url",
+      "ok": true,
+      "base_url": "http://127.0.0.1:1234/v1",
+      "expected_id": "vrfai/Qwen3.6-27B-FP8"
+     },
+     {
+      "check": "endpoint_models",
+      "ok": true,
+      "served_ids": [
+       "vrfai/Qwen3.6-27B-FP8"
+      ]
+     },
+     {
+      "check": "generation_logprobs",
+      "ok": true,
+      "text": "ok",
+      "n_logprobs": 2,
+      "first_logprobs": [
+       -0.066082,
+       -9.3e-05
+      ]
+     },
+     {
+      "check": "server_model_arg",
+      "ok": true,
+      "pid": 279,
+      "model_arg": "/tmp/merged_sft",
+      "arm": "M",
+      "merged_index_present": true,
+      "config_quant_free": true
+     }
+    ],
+    "fingerprint": {
+     "tokens": [
+      "ok",
+      "<|im_end|>"
+     ],
+     "logprobs": [
+      -0.066082,
+      -9.3e-05
+     ]
+    }
+   },
+   "weights_fingerprint": {
+    "tokens": [
+     "ok",
+     "<|im_end|>"
+    ],
+    "logprobs": [
+     -0.066082,
+     -9.3e-05
+    ]
+   },
+   "toggles_verified": {
+    "TAAF_WATCHDOG": true,
+    "TAAF_HUD_MASK": true,
+    "TAAF_WIN_REPLAY": true,
+    "TAAF_GRAPH": false,
+    "TAAF_COMPACT": false,
+    "TAAF_PLAYBOOK": false,
+    "TAAF_ANTIFREEZE": true,
+    "TAAF_GRID_BURNER": false
+   },
+   "patch_proof_wave": {
+    "graph_step_env_patched": true,
+    "watchdog_should_stop_patched": true,
+    "plan_queue_analyze_patched": true,
+    "compaction_history_patched": true,
+    "playbook_system_prompt_patched": true,
+    "antifreeze_user_prompt_patched": true
+   },
+   "playbook_proof": {
+    "marker": "Mechanic playbook \u2014 recurring hidden-mechanic families. Check BEFORE calling a level impossible or retrying a failed plan:",
+    "expected_present": false,
+    "n_prompts_sampled": 10,
+    "n_mismatches": 0,
+    "probe_before_wave": {
+     "marker": "Mechanic playbook \u2014 recurring hidden-mechanic families. Check BEFORE calling a level impossible or retrying a failed plan:",
+     "present": false,
+     "expected": false,
+     "prompt_sha256": "b8b31c36c36977cdaffa705e5f4b547430c4592c6403882e116a0d4f07eea8c8",
+     "prompt_chars": 12951
+    },
+    "sample_sha256": "ff2ff0e8f8bf23c0c10a02e75d1c0b23386f122b7f46bfab10bea6f72e8e2258",
+    "sample_chars": 12951
+   },
+   "wall_s": 3618.8,
+   "started_at_elapsed_s": 739.8,
+   "rows": [
+    {
+     "clone_id": "k000",
+     "source_game": "lf52-271a04aa",
+     "levels_completed": 1,
+     "levels_total": 10,
+     "actions_per_level": [
+      18,
+      155,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 173,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.5256240720005,
+     "gen_tokens": 46703,
+     "solver_note": "tokens=46703",
+     "score": 1.8182,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 7,
+      "mask_cells": 64,
+      "confirmed_lines": 2,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 57
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 46703,
+      "total": 1365514
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 173,
+     "action_count": 173
+    },
+    {
+     "clone_id": "k001",
+     "source_game": "cn04-2fe56bfb",
+     "levels_completed": 0,
+     "levels_total": 6,
+     "actions_per_level": [
+      380,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 380,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.346630655,
+     "gen_tokens": 46142,
+     "solver_note": "tokens=47169",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 25,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 25
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 47169,
+      "total": 1328611
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 380,
+     "action_count": 380
+    },
+    {
+     "clone_id": "k002",
+     "source_game": "wa30-ee6fef47",
+     "levels_completed": 0,
+     "levels_total": 9,
+     "actions_per_level": [
+      110,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 110,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.465587143,
+     "gen_tokens": 43231,
+     "solver_note": "tokens=43231",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 4,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 6
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 43231,
+      "total": 1148066
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 110,
+     "action_count": 110
+    },
+    {
+     "clone_id": "k003",
+     "source_game": "m0r0-492f87ba",
+     "levels_completed": 0,
+     "levels_total": 6,
+     "actions_per_level": [
+      36,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 36,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.2183836369995,
+     "gen_tokens": 35751,
+     "solver_note": "tokens=35751",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 1,
+      "killed": null
+     },
+     "hud": {
+      "segments": 2,
+      "mask_cells": 0,
+      "confirmed_lines": 0,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 35751,
+      "total": 1483728
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 36,
+     "action_count": 36
+    },
+    {
+     "clone_id": "k004",
+     "source_game": "g50t-5849a774",
+     "levels_completed": 0,
+     "levels_total": 7,
+     "actions_per_level": [
+      37,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 37,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.180922038,
+     "gen_tokens": 35908,
+     "solver_note": "tokens=35908",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 1,
+      "killed": null
+     },
+     "hud": {
+      "segments": 2,
+      "mask_cells": 0,
+      "confirmed_lines": 0,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 35908,
+      "total": 766636
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 37,
+     "action_count": 37
+    },
+    {
+     "clone_id": "k005",
+     "source_game": "dc22-fdcac232",
+     "levels_completed": 0,
+     "levels_total": 6,
+     "actions_per_level": [
+      437,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 437,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3618.5246355680006,
+     "gen_tokens": 44822,
+     "solver_note": "tokens=45061",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 25,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 1
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 45061,
+      "total": 1318038
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 437,
+     "action_count": 437
+    },
+    {
+     "clone_id": "k006",
+     "source_game": "ft09-0d8bbf25",
+     "levels_completed": 0,
+     "levels_total": 6,
+     "actions_per_level": [
+      79,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 79,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.231783636,
+     "gen_tokens": 41180,
+     "solver_note": "tokens=48109",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 1,
+      "killed": null
+     },
+     "hud": {
+      "segments": 7,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 48109,
+      "total": 1366344
+     },
+     "antifreeze": {
+      "triggers": 4,
+      "last_streak": 6
+     },
+     "trace_len": 79,
+     "action_count": 79
+    },
+    {
+     "clone_id": "k007",
+     "source_game": "re86-8af5384d",
+     "levels_completed": 0,
+     "levels_total": 8,
+     "actions_per_level": [
+      260,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 260,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.2416512759996,
+     "gen_tokens": 46280,
+     "solver_note": "tokens=46280",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 14,
+      "mask_cells": 63,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 2,
+      "dropped_cells": 127,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 46280,
+      "total": 637294
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 260,
+     "action_count": 260
+    },
+    {
+     "clone_id": "k008",
+     "source_game": "tu93-0768757b",
+     "levels_completed": 2,
+     "levels_total": 9,
+     "actions_per_level": [
+      70,
+      17,
+      10,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 97,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.1751120179997,
+     "gen_tokens": 45851,
+     "solver_note": "tokens=45851",
+     "score": 4.1007,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 12,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 2
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 45851,
+      "total": 483839
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 97,
+     "action_count": 97
+    },
+    {
+     "clone_id": "k009",
+     "source_game": "su15-1944f8ab",
+     "levels_completed": 0,
+     "levels_total": 9,
+     "actions_per_level": [
+      52,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 52,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.1991228370002,
+     "gen_tokens": 35228,
+     "solver_note": "tokens=35228",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 1,
+      "killed": null
+     },
+     "hud": {
+      "segments": 4,
+      "mask_cells": 0,
+      "confirmed_lines": 0,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 35228,
+      "total": 1241144
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 52,
+     "action_count": 52
+    }
+   ],
+   "antifreeze_diag_delta": {
+    "triggers": 4
+   },
+   "antifreeze_diag_cumulative": {
+    "triggers": 4
+   },
+   "compact_diag_delta": {
+    "evictions_seen": 0,
+    "compactions_done": 0,
+    "compaction_failures": 0,
+    "compaction_tokens": 0,
+    "queue_plans": 0,
+    "queue_plans_rejected": 0,
+    "queue_steps_executed": 0,
+    "queue_aborts": 0,
+    "llm_calls_saved": 0
+   },
+   "compact_diag_cumulative": {
+    "evictions_seen": 0,
+    "compactions_done": 0,
+    "compaction_failures": 0,
+    "compaction_tokens": 0,
+    "queue_plans": 0,
+    "queue_plans_rejected": 0,
+    "queue_steps_executed": 0,
+    "queue_aborts": 0,
+    "llm_calls_saved": 0
+   },
+   "behav_cumulative": {
+    "unresolved_games": 0,
+    "n_games": 10,
+    "corpus": {
+     "actions": 1661,
+     "turns": 943,
+     "actions_per_turn": 1.7614,
+     "noop_raw": 0.053,
+     "noop_masked": 0.1421,
+     "dead_reissue_of_actions": 0.0777,
+     "dead_reissue_of_opportunities": 0.1604,
+     "immediate_repeat": 0.6261,
+     "key_repeat": 0.6288,
+     "click_repeat": 0.6219,
+     "distinct_states_per_action": 0.3648,
+     "distinct_states_per_turn": 0.6426,
+     "productive_actions_per_turn": 1.5111
+    },
+    "per_game": {
+     "cn04": {
+      "actions": 380,
+      "noop_raw": 0.0789,
+      "noop_masked": 0.1447,
+      "dead_reissue_of_actions": 0.1316,
+      "dead_reissue_of_opportunities": 0.2732,
+      "immediate_repeat": 0.7605,
+      "distinct_states_per_action": 0.4026
+     },
+     "wa30": {
+      "actions": 110,
+      "noop_raw": 0.1818,
+      "noop_masked": 0.2545,
+      "dead_reissue_of_actions": 0.1636,
+      "dead_reissue_of_opportunities": 0.6207,
+      "immediate_repeat": 0.5182,
+      "distinct_states_per_action": 0.5273
+     },
+     "re86": {
+      "actions": 260,
+      "noop_raw": 0.0,
+      "noop_masked": 0.0,
+      "dead_reissue_of_actions": 0.0,
+      "dead_reissue_of_opportunities": 0.0,
+      "immediate_repeat": 0.6885,
+      "distinct_states_per_action": 0.5577
+     },
+     "m0r0": {
+      "actions": 36,
+      "noop_raw": 0.2222,
+      "noop_masked": 0.2222,
+      "dead_reissue_of_actions": 0.0,
+      "dead_reissue_of_opportunities": 0.0,
+      "immediate_repeat": 0.4167,
+      "distinct_states_per_action": 0.7778
+     },
+     "su15": {
+      "actions": 52,
+      "noop_raw": 0.1731,
+      "noop_masked": 0.1731,
+      "dead_reissue_of_actions": 0.0192,
+      "dead_reissue_of_opportunities": 1.0,
+      "immediate_repeat": 0.0769,
+      "distinct_states_per_action": 0.7885
+     },
+     "lf52": {
+      "actions": 173,
+      "noop_raw": 0.0,
+      "noop_masked": 0.4451,
+      "dead_reissue_of_actions": 0.2081,
+      "dead_reissue_of_opportunities": 0.5455,
+      "immediate_repeat": 0.2948,
+      "distinct_states_per_action": 0.2023
+     },
+     "g50t": {
+      "actions": 37,
+      "noop_raw": 0.027,
+      "noop_masked": 0.027,
+      "dead_reissue_of_actions": 0.0,
+      "dead_reissue_of_opportunities": 0.0,
+      "immediate_repeat": 0.1622,
+      "distinct_states_per_action": 0.973
+     },
+     "tu93": {
+      "actions": 97,
+      "noop_raw": 0.0,
+      "noop_masked": 0.3196,
+      "dead_reissue_of_actions": 0.2062,
+      "dead_reissue_of_opportunities": 0.5,
+      "immediate_repeat": 0.4845,
+      "distinct_states_per_action": 0.433
+     },
+     "dc22": {
+      "actions": 437,
+      "noop_raw": 0.016,
+      "noop_masked": 0.032,
+      "dead_reissue_of_actions": 0.0092,
+      "dead_reissue_of_opportunities": 0.0097,
+      "immediate_repeat": 0.897,
+      "distinct_states_per_action": 0.0114
+     },
+     "ft09": {
+      "actions": 79,
+      "noop_raw": 0.1646,
+      "noop_masked": 0.1646,
+      "dead_reissue_of_actions": 0.0,
+      "dead_reissue_of_opportunities": 0.0,
+      "immediate_repeat": 0.0,
+      "distinct_states_per_action": 0.7975
+     }
+    }
+   },
+   "behav_raw_cumulative": {
+    "cn04": {
+     "actions": 380,
+     "noop_raw": 30,
+     "noop_masked": 55,
+     "dead_reissue": 50,
+     "reissue_opportunities": 183,
+     "turns": 41,
+     "immediate_repeat": 289,
+     "key_actions": 380,
+     "key_repeat": 289,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "wa30": {
+     "actions": 110,
+     "noop_raw": 20,
+     "noop_masked": 28,
+     "dead_reissue": 18,
+     "reissue_opportunities": 29,
+     "turns": 110,
+     "immediate_repeat": 57,
+     "key_actions": 110,
+     "key_repeat": 57,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "re86": {
+     "actions": 260,
+     "noop_raw": 0,
+     "noop_masked": 0,
+     "dead_reissue": 0,
+     "reissue_opportunities": 72,
+     "turns": 29,
+     "immediate_repeat": 179,
+     "key_actions": 260,
+     "key_repeat": 179,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "m0r0": {
+     "actions": 36,
+     "noop_raw": 8,
+     "noop_masked": 8,
+     "dead_reissue": 0,
+     "reissue_opportunities": 0,
+     "turns": 36,
+     "immediate_repeat": 15,
+     "key_actions": 33,
+     "key_repeat": 15,
+     "click_actions": 3,
+     "click_repeat": 0
+    },
+    "su15": {
+     "actions": 52,
+     "noop_raw": 9,
+     "noop_masked": 9,
+     "dead_reissue": 1,
+     "reissue_opportunities": 1,
+     "turns": 32,
+     "immediate_repeat": 4,
+     "key_actions": 14,
+     "key_repeat": 1,
+     "click_actions": 38,
+     "click_repeat": 3
+    },
+    "lf52": {
+     "actions": 173,
+     "noop_raw": 0,
+     "noop_masked": 77,
+     "dead_reissue": 36,
+     "reissue_opportunities": 66,
+     "turns": 173,
+     "immediate_repeat": 51,
+     "key_actions": 73,
+     "key_repeat": 43,
+     "click_actions": 100,
+     "click_repeat": 8
+    },
+    "g50t": {
+     "actions": 37,
+     "noop_raw": 1,
+     "noop_masked": 1,
+     "dead_reissue": 0,
+     "reissue_opportunities": 0,
+     "turns": 33,
+     "immediate_repeat": 6,
+     "key_actions": 37,
+     "key_repeat": 6,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "tu93": {
+     "actions": 97,
+     "noop_raw": 0,
+     "noop_masked": 31,
+     "dead_reissue": 20,
+     "reissue_opportunities": 40,
+     "turns": 20,
+     "immediate_repeat": 47,
+     "key_actions": 97,
+     "key_repeat": 47,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "dc22": {
+     "actions": 437,
+     "noop_raw": 7,
+     "noop_masked": 14,
+     "dead_reissue": 4,
+     "reissue_opportunities": 412,
+     "turns": 437,
+     "immediate_repeat": 392,
+     "key_actions": 6,
+     "key_repeat": 0,
+     "click_actions": 431,
+     "click_repeat": 392
+    },
+    "ft09": {
+     "actions": 79,
+     "noop_raw": 13,
+     "noop_masked": 13,
+     "dead_reissue": 0,
+     "reissue_opportunities": 1,
+     "turns": 32,
+     "immediate_repeat": 0,
+     "key_actions": 3,
+     "key_repeat": 0,
+     "click_actions": 76,
+     "click_repeat": 0
+    }
+   }
+  },
+  {
+   "wave": 1,
+   "arm": "B",
+   "env": {
+    "TAAF_WATCHDOG": "1",
+    "TAAF_HUD_MASK": "1",
+    "TAAF_WIN_REPLAY": "1",
+    "TAAF_GRID_BURNER": "0",
+    "TAAF_GRAPH": "0",
+    "TAAF_COMPACT": "0",
+    "TAAF_PLAYBOOK": "0",
+    "TAAF_ANTIFREEZE": "1"
+   },
+   "served_model": "/kaggle/input/datasets/driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot",
+   "serve": {
+    "arm": "B",
+    "desired_model": "/kaggle/input/datasets/driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot",
+    "pid_before": 279,
+    "model_before": "/tmp/merged_sft",
+    "stop": {
+     "pid": 279,
+     "model_arg_before": "/tmp/merged_sft",
+     "terminated": true,
+     "gpu_mem_used_mib_after": 0
+    },
+    "start": {
+     "pid": 4170,
+     "model": "/kaggle/input/datasets/driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot"
+    },
+    "restarted": true,
+    "restart_wall_s": 282.0
+   },
+   "serving_assert": {
+    "checks": [
+     {
+      "check": "analyzer_base_url",
+      "ok": true,
+      "base_url": "http://127.0.0.1:1234/v1",
+      "expected_id": "vrfai/Qwen3.6-27B-FP8"
+     },
+     {
+      "check": "endpoint_models",
+      "ok": true,
+      "served_ids": [
+       "vrfai/Qwen3.6-27B-FP8"
+      ]
+     },
+     {
+      "check": "generation_logprobs",
+      "ok": true,
+      "text": "ok",
+      "n_logprobs": 2,
+      "first_logprobs": [
+       -0.104786,
+       -3.9e-05
+      ]
+     },
+     {
+      "check": "server_model_arg",
+      "ok": true,
+      "pid": 4170,
+      "model_arg": "/kaggle/input/datasets/driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot",
+      "arm": "B"
+     }
+    ],
+    "fingerprint": {
+     "tokens": [
+      "ok",
+      "<|im_end|>"
+     ],
+     "logprobs": [
+      -0.104786,
+      -3.9e-05
+     ]
+    }
+   },
+   "weights_fingerprint": {
+    "tokens": [
+     "ok",
+     "<|im_end|>"
+    ],
+    "logprobs": [
+     -0.104786,
+     -3.9e-05
+    ]
+   },
+   "toggles_verified": {
+    "TAAF_WATCHDOG": true,
+    "TAAF_HUD_MASK": true,
+    "TAAF_WIN_REPLAY": true,
+    "TAAF_GRAPH": false,
+    "TAAF_COMPACT": false,
+    "TAAF_PLAYBOOK": false,
+    "TAAF_ANTIFREEZE": true,
+    "TAAF_GRID_BURNER": false
+   },
+   "patch_proof_wave": {
+    "graph_step_env_patched": true,
+    "watchdog_should_stop_patched": true,
+    "plan_queue_analyze_patched": true,
+    "compaction_history_patched": true,
+    "playbook_system_prompt_patched": true,
+    "antifreeze_user_prompt_patched": true
+   },
+   "playbook_proof": {
+    "marker": "Mechanic playbook \u2014 recurring hidden-mechanic families. Check BEFORE calling a level impossible or retrying a failed plan:",
+    "expected_present": false,
+    "n_prompts_sampled": 10,
+    "n_mismatches": 0,
+    "probe_before_wave": {
+     "marker": "Mechanic playbook \u2014 recurring hidden-mechanic families. Check BEFORE calling a level impossible or retrying a failed plan:",
+     "present": false,
+     "expected": false,
+     "prompt_sha256": "b8b31c36c36977cdaffa705e5f4b547430c4592c6403882e116a0d4f07eea8c8",
+     "prompt_chars": 12951
+    },
+    "sample_sha256": "ff2ff0e8f8bf23c0c10a02e75d1c0b23386f122b7f46bfab10bea6f72e8e2258",
+    "sample_chars": 12951
+   },
+   "wall_s": 3608.4,
+   "started_at_elapsed_s": 4359.5,
+   "rows": [
+    {
+     "clone_id": "k000",
+     "source_game": "lf52-271a04aa",
+     "levels_completed": 1,
+     "levels_total": 10,
+     "actions_per_level": [
+      34,
+      59,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 93,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.144258370001,
+     "gen_tokens": 56903,
+     "solver_note": "tokens=56903",
+     "score": 1.6106,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 4,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 14
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 56903,
+      "total": 1500753
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 93,
+     "action_count": 93
+    },
+    {
+     "clone_id": "k001",
+     "source_game": "cn04-2fe56bfb",
+     "levels_completed": 0,
+     "levels_total": 6,
+     "actions_per_level": [
+      229,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 229,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.638043801,
+     "gen_tokens": 56072,
+     "solver_note": "tokens=56072",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 15,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 2
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 56072,
+      "total": 1253598
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 229,
+     "action_count": 229
+    },
+    {
+     "clone_id": "k002",
+     "source_game": "wa30-ee6fef47",
+     "levels_completed": 0,
+     "levels_total": 9,
+     "actions_per_level": [
+      393,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 393,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3608.2712273810002,
+     "gen_tokens": 54197,
+     "solver_note": "tokens=55117",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 18,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 33
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 55117,
+      "total": 2754797
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 393,
+     "action_count": 393
+    },
+    {
+     "clone_id": "k003",
+     "source_game": "m0r0-492f87ba",
+     "levels_completed": 0,
+     "levels_total": 6,
+     "actions_per_level": [
+      197,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 197,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.2167043989994,
+     "gen_tokens": 49730,
+     "solver_note": "tokens=49730",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 9,
+      "mask_cells": 128,
+      "confirmed_lines": 2,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 37
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 49730,
+      "total": 2311423
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 197,
+     "action_count": 197
+    },
+    {
+     "clone_id": "k004",
+     "source_game": "g50t-5849a774",
+     "levels_completed": 0,
+     "levels_total": 7,
+     "actions_per_level": [
+      52,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 52,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.3809154950004,
+     "gen_tokens": 57393,
+     "solver_note": "tokens=57393",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 2,
+      "mask_cells": 0,
+      "confirmed_lines": 0,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 57393,
+      "total": 1019308
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 52,
+     "action_count": 52
+    },
+    {
+     "clone_id": "k005",
+     "source_game": "dc22-fdcac232",
+     "levels_completed": 0,
+     "levels_total": 6,
+     "actions_per_level": [
+      80,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 80,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.2865968279993,
+     "gen_tokens": 55665,
+     "solver_note": "tokens=55665",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 3,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 4
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 55665,
+      "total": 1916954
+     },
+     "antifreeze": {
+      "triggers": 3,
+      "last_streak": 1
+     },
+     "trace_len": 80,
+     "action_count": 80
+    },
+    {
+     "clone_id": "k006",
+     "source_game": "ft09-0d8bbf25",
+     "levels_completed": 2,
+     "levels_total": 6,
+     "actions_per_level": [
+      4,
+      8,
+      106,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 118,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.0935036010005,
+     "gen_tokens": 57729,
+     "solver_note": "tokens=57729",
+     "score": 14.2857,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 1,
+      "killed": null
+     },
+     "hud": {
+      "segments": 7,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 57729,
+      "total": 962997
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 118,
+     "action_count": 118
+    },
+    {
+     "clone_id": "k007",
+     "source_game": "re86-8af5384d",
+     "levels_completed": 1,
+     "levels_total": 8,
+     "actions_per_level": [
+      55,
+      181,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 236,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.399171956,
+     "gen_tokens": 54862,
+     "solver_note": "tokens=56554",
+     "score": 0.6208,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 12,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 35
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 56554,
+      "total": 1577826
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 236,
+     "action_count": 236
+    },
+    {
+     "clone_id": "k008",
+     "source_game": "tu93-0768757b",
+     "levels_completed": 2,
+     "levels_total": 9,
+     "actions_per_level": [
+      21,
+      26,
+      20,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 67,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.3689680359994,
+     "gen_tokens": 47646,
+     "solver_note": "tokens=55732",
+     "score": 3.5022,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 16,
+      "mask_cells": 0,
+      "confirmed_lines": 0,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 55732,
+      "total": 719315
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 67,
+     "action_count": 67
+    },
+    {
+     "clone_id": "k009",
+     "source_game": "su15-1944f8ab",
+     "levels_completed": 1,
+     "levels_total": 9,
+     "actions_per_level": [
+      19,
+      59,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 78,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.1457186499993,
+     "gen_tokens": 42064,
+     "solver_note": "tokens=42064",
+     "score": 2.2222,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 1,
+      "killed": null
+     },
+     "hud": {
+      "segments": 5,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 4
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 42064,
+      "total": 1503869
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 78,
+     "action_count": 78
+    }
+   ],
+   "antifreeze_diag_delta": {
+    "triggers": 3
+   },
+   "antifreeze_diag_cumulative": {
+    "triggers": 7
+   },
+   "compact_diag_delta": {
+    "evictions_seen": 0,
+    "compactions_done": 0,
+    "compaction_failures": 0,
+    "compaction_tokens": 0,
+    "queue_plans": 0,
+    "queue_plans_rejected": 0,
+    "queue_steps_executed": 0,
+    "queue_aborts": 0,
+    "llm_calls_saved": 0
+   },
+   "compact_diag_cumulative": {
+    "evictions_seen": 0,
+    "compactions_done": 0,
+    "compaction_failures": 0,
+    "compaction_tokens": 0,
+    "queue_plans": 0,
+    "queue_plans_rejected": 0,
+    "queue_steps_executed": 0,
+    "queue_aborts": 0,
+    "llm_calls_saved": 0
+   },
+   "behav_cumulative": {
+    "unresolved_games": 0,
+    "n_games": 10,
+    "corpus": {
+     "actions": 3204,
+     "turns": 1425,
+     "actions_per_turn": 2.2484,
+     "noop_raw": 0.0989,
+     "noop_masked": 0.1882,
+     "dead_reissue_of_actions": 0.1183,
+     "dead_reissue_of_opportunities": 0.2991,
+     "immediate_repeat": 0.6052,
+     "key_repeat": 0.6686,
+     "click_repeat": 0.4457,
+     "distinct_states_per_action": 0.4351,
+     "distinct_states_per_turn": 0.9782,
+     "productive_actions_per_turn": 1.8253
+    },
+    "per_game": {
+     "cn04": {
+      "actions": 609,
+      "noop_raw": 0.0608,
+      "noop_masked": 0.11,
+      "dead_reissue_of_actions": 0.0952,
+      "dead_reissue_of_opportunities": 0.2407,
+      "immediate_repeat": 0.7455,
+      "distinct_states_per_action": 0.4072
+     },
+     "wa30": {
+      "actions": 503,
+      "noop_raw": 0.2127,
+      "noop_masked": 0.3101,
+      "dead_reissue_of_actions": 0.2366,
+      "dead_reissue_of_opportunities": 0.7778,
+      "immediate_repeat": 0.6759,
+      "distinct_states_per_action": 0.5706
+     },
+     "re86": {
+      "actions": 496,
+      "noop_raw": 0.0423,
+      "noop_masked": 0.1129,
+      "dead_reissue_of_actions": 0.1048,
+      "dead_reissue_of_opportunities": 0.3077,
+      "immediate_repeat": 0.7742,
+      "distinct_states_per_action": 0.4919
+     },
+     "m0r0": {
+      "actions": 233,
+      "noop_raw": 0.3476,
+      "noop_masked": 0.3476,
+      "dead_reissue_of_actions": 0.2489,
+      "dead_reissue_of_opportunities": 0.9508,
+      "immediate_repeat": 0.6738,
+      "distinct_states_per_action": 0.6223
+     },
+     "su15": {
+      "actions": 130,
+      "noop_raw": 0.1,
+      "noop_masked": 0.1,
+      "dead_reissue_of_actions": 0.0077,
+      "dead_reissue_of_opportunities": 0.25,
+      "immediate_repeat": 0.0538,
+      "distinct_states_per_action": 0.8462
+     },
+     "lf52": {
+      "actions": 266,
+      "noop_raw": 0.0,
+      "noop_masked": 0.4398,
+      "dead_reissue_of_actions": 0.1992,
+      "dead_reissue_of_opportunities": 0.5248,
+      "immediate_repeat": 0.3083,
+      "distinct_states_per_action": 0.1767
+     },
+     "g50t": {
+      "actions": 89,
+      "noop_raw": 0.0787,
+      "noop_masked": 0.0787,
+      "dead_reissue_of_actions": 0.0225,
+      "dead_reissue_of_opportunities": 0.5,
+      "immediate_repeat": 0.3596,
+      "distinct_states_per_action": 0.8764
+     },
+     "tu93": {
+      "actions": 164,
+      "noop_raw": 0.0,
+      "noop_masked": 0.2012,
+      "dead_reissue_of_actions": 0.1341,
+      "dead_reissue_of_opportunities": 0.2157,
+      "immediate_repeat": 0.4207,
+      "distinct_states_per_action": 0.2744
+     },
+     "dc22": {
+      "actions": 517,
+      "noop_raw": 0.0406,
+      "noop_masked": 0.0832,
+      "dead_reissue_of_actions": 0.0271,
+      "dead_reissue_of_opportunities": 0.0326,
+      "immediate_repeat": 0.8008,
+      "distinct_states_per_action": 0.0561
+     },
+     "ft09": {
+      "actions": 197,
+      "noop_raw": 0.1523,
+      "noop_masked": 0.1523,
+      "dead_reissue_of_actions": 0.0,
+      "dead_reissue_of_opportunities": 0.0,
+      "immediate_repeat": 0.0,
+      "distinct_states_per_action": 0.8173
+     }
+    }
+   },
+   "behav_raw_cumulative": {
+    "cn04": {
+     "actions": 609,
+     "noop_raw": 37,
+     "noop_masked": 67,
+     "dead_reissue": 58,
+     "reissue_opportunities": 241,
+     "turns": 119,
+     "immediate_repeat": 454,
+     "key_actions": 609,
+     "key_repeat": 454,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "wa30": {
+     "actions": 503,
+     "noop_raw": 107,
+     "noop_masked": 156,
+     "dead_reissue": 119,
+     "reissue_opportunities": 153,
+     "turns": 188,
+     "immediate_repeat": 340,
+     "key_actions": 503,
+     "key_repeat": 340,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "re86": {
+     "actions": 496,
+     "noop_raw": 21,
+     "noop_masked": 56,
+     "dead_reissue": 52,
+     "reissue_opportunities": 169,
+     "turns": 61,
+     "immediate_repeat": 384,
+     "key_actions": 496,
+     "key_repeat": 384,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "m0r0": {
+     "actions": 233,
+     "noop_raw": 81,
+     "noop_masked": 81,
+     "dead_reissue": 58,
+     "reissue_opportunities": 61,
+     "turns": 103,
+     "immediate_repeat": 157,
+     "key_actions": 227,
+     "key_repeat": 157,
+     "click_actions": 6,
+     "click_repeat": 0
+    },
+    "su15": {
+     "actions": 130,
+     "noop_raw": 13,
+     "noop_masked": 13,
+     "dead_reissue": 1,
+     "reissue_opportunities": 4,
+     "turns": 67,
+     "immediate_repeat": 7,
+     "key_actions": 18,
+     "key_repeat": 1,
+     "click_actions": 112,
+     "click_repeat": 6
+    },
+    "lf52": {
+     "actions": 266,
+     "noop_raw": 0,
+     "noop_masked": 117,
+     "dead_reissue": 53,
+     "reissue_opportunities": 101,
+     "turns": 239,
+     "immediate_repeat": 82,
+     "key_actions": 129,
+     "key_repeat": 74,
+     "click_actions": 137,
+     "click_repeat": 8
+    },
+    "g50t": {
+     "actions": 89,
+     "noop_raw": 7,
+     "noop_masked": 7,
+     "dead_reissue": 2,
+     "reissue_opportunities": 4,
+     "turns": 63,
+     "immediate_repeat": 32,
+     "key_actions": 89,
+     "key_repeat": 32,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "tu93": {
+     "actions": 164,
+     "noop_raw": 0,
+     "noop_masked": 33,
+     "dead_reissue": 22,
+     "reissue_opportunities": 102,
+     "turns": 47,
+     "immediate_repeat": 69,
+     "key_actions": 164,
+     "key_repeat": 69,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "dc22": {
+     "actions": 517,
+     "noop_raw": 21,
+     "noop_masked": 43,
+     "dead_reissue": 14,
+     "reissue_opportunities": 430,
+     "turns": 487,
+     "immediate_repeat": 414,
+     "key_actions": 54,
+     "key_repeat": 22,
+     "click_actions": 463,
+     "click_repeat": 392
+    },
+    "ft09": {
+     "actions": 197,
+     "noop_raw": 30,
+     "noop_masked": 30,
+     "dead_reissue": 0,
+     "reissue_opportunities": 2,
+     "turns": 51,
+     "immediate_repeat": 0,
+     "key_actions": 4,
+     "key_repeat": 0,
+     "click_actions": 193,
+     "click_repeat": 0
+    }
+   }
+  },
+  {
+   "wave": 2,
+   "arm": "B",
+   "env": {
+    "TAAF_WATCHDOG": "1",
+    "TAAF_HUD_MASK": "1",
+    "TAAF_WIN_REPLAY": "1",
+    "TAAF_GRID_BURNER": "0",
+    "TAAF_GRAPH": "0",
+    "TAAF_COMPACT": "0",
+    "TAAF_PLAYBOOK": "0",
+    "TAAF_ANTIFREEZE": "1"
+   },
+   "served_model": "/kaggle/input/datasets/driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot",
+   "serve": {
+    "arm": "B",
+    "desired_model": "/kaggle/input/datasets/driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot",
+    "pid_before": 4170,
+    "model_before": "/kaggle/input/datasets/driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot",
+    "restarted": false
+   },
+   "serving_assert": {
+    "checks": [
+     {
+      "check": "analyzer_base_url",
+      "ok": true,
+      "base_url": "http://127.0.0.1:1234/v1",
+      "expected_id": "vrfai/Qwen3.6-27B-FP8"
+     },
+     {
+      "check": "endpoint_models",
+      "ok": true,
+      "served_ids": [
+       "vrfai/Qwen3.6-27B-FP8"
+      ]
+     },
+     {
+      "check": "generation_logprobs",
+      "ok": true,
+      "text": "ok",
+      "n_logprobs": 2,
+      "first_logprobs": [
+       -0.104786,
+       -3.9e-05
+      ]
+     },
+     {
+      "check": "server_model_arg",
+      "ok": true,
+      "pid": 4170,
+      "model_arg": "/kaggle/input/datasets/driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot",
+      "arm": "B"
+     }
+    ],
+    "fingerprint": {
+     "tokens": [
+      "ok",
+      "<|im_end|>"
+     ],
+     "logprobs": [
+      -0.104786,
+      -3.9e-05
+     ]
+    }
+   },
+   "weights_fingerprint": {
+    "tokens": [
+     "ok",
+     "<|im_end|>"
+    ],
+    "logprobs": [
+     -0.104786,
+     -3.9e-05
+    ]
+   },
+   "toggles_verified": {
+    "TAAF_WATCHDOG": true,
+    "TAAF_HUD_MASK": true,
+    "TAAF_WIN_REPLAY": true,
+    "TAAF_GRAPH": false,
+    "TAAF_COMPACT": false,
+    "TAAF_PLAYBOOK": false,
+    "TAAF_ANTIFREEZE": true,
+    "TAAF_GRID_BURNER": false
+   },
+   "patch_proof_wave": {
+    "graph_step_env_patched": true,
+    "watchdog_should_stop_patched": true,
+    "plan_queue_analyze_patched": true,
+    "compaction_history_patched": true,
+    "playbook_system_prompt_patched": true,
+    "antifreeze_user_prompt_patched": true
+   },
+   "playbook_proof": {
+    "marker": "Mechanic playbook \u2014 recurring hidden-mechanic families. Check BEFORE calling a level impossible or retrying a failed plan:",
+    "expected_present": false,
+    "n_prompts_sampled": 10,
+    "n_mismatches": 0,
+    "probe_before_wave": {
+     "marker": "Mechanic playbook \u2014 recurring hidden-mechanic families. Check BEFORE calling a level impossible or retrying a failed plan:",
+     "present": false,
+     "expected": false,
+     "prompt_sha256": "b8b31c36c36977cdaffa705e5f4b547430c4592c6403882e116a0d4f07eea8c8",
+     "prompt_chars": 12951
+    },
+    "sample_sha256": "ff2ff0e8f8bf23c0c10a02e75d1c0b23386f122b7f46bfab10bea6f72e8e2258",
+    "sample_chars": 12951
+   },
+   "wall_s": 3603.6,
+   "started_at_elapsed_s": 8250.9,
+   "rows": [
+    {
+     "clone_id": "k000",
+     "source_game": "lf52-271a04aa",
+     "levels_completed": 1,
+     "levels_total": 10,
+     "actions_per_level": [
+      24,
+      91,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 115,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3603.4707119039995,
+     "gen_tokens": 57240,
+     "solver_note": "tokens=58396",
+     "score": 1.8182,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 4,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 30
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 58396,
+      "total": 1312315
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 115,
+     "action_count": 115
+    },
+    {
+     "clone_id": "k001",
+     "source_game": "cn04-2fe56bfb",
+     "levels_completed": 0,
+     "levels_total": 6,
+     "actions_per_level": [
+      289,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 289,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.21810654,
+     "gen_tokens": 55700,
+     "solver_note": "tokens=55700",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 17,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 23
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 55700,
+      "total": 1373622
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 289,
+     "action_count": 289
+    },
+    {
+     "clone_id": "k002",
+     "source_game": "wa30-ee6fef47",
+     "levels_completed": 0,
+     "levels_total": 9,
+     "actions_per_level": [
+      297,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 297,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.727535821001,
+     "gen_tokens": 56436,
+     "solver_note": "tokens=56436",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 14,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 28
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 56436,
+      "total": 2041242
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 297,
+     "action_count": 297
+    },
+    {
+     "clone_id": "k003",
+     "source_game": "m0r0-492f87ba",
+     "levels_completed": 1,
+     "levels_total": 6,
+     "actions_per_level": [
+      123,
+      44,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 167,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.117363352001,
+     "gen_tokens": 57341,
+     "solver_note": "tokens=57341",
+     "score": 0.2833,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 1,
+      "killed": null
+     },
+     "hud": {
+      "segments": 7,
+      "mask_cells": 128,
+      "confirmed_lines": 2,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 17
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 57341,
+      "total": 1852333
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 167,
+     "action_count": 167
+    },
+    {
+     "clone_id": "k004",
+     "source_game": "g50t-5849a774",
+     "levels_completed": 0,
+     "levels_total": 7,
+     "actions_per_level": [
+      96,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 96,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.2381510590003,
+     "gen_tokens": 57491,
+     "solver_note": "tokens=57491",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 4,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 7
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 57491,
+      "total": 2646917
+     },
+     "antifreeze": {
+      "triggers": 2,
+      "last_streak": 0
+     },
+     "trace_len": 96,
+     "action_count": 96
+    },
+    {
+     "clone_id": "k005",
+     "source_game": "dc22-fdcac232",
+     "levels_completed": 0,
+     "levels_total": 6,
+     "actions_per_level": [
+      82,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 82,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.402687685999,
+     "gen_tokens": 58155,
+     "solver_note": "tokens=58155",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 3,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 6
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 58155,
+      "total": 1512861
+     },
+     "antifreeze": {
+      "triggers": 3,
+      "last_streak": 0
+     },
+     "trace_len": 82,
+     "action_count": 82
+    },
+    {
+     "clone_id": "k006",
+     "source_game": "ft09-0d8bbf25",
+     "levels_completed": 0,
+     "levels_total": 6,
+     "actions_per_level": [
+      122,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 122,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.2707818199997,
+     "gen_tokens": 58117,
+     "solver_note": "tokens=58117",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 9,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 58117,
+      "total": 1347846
+     },
+     "antifreeze": {
+      "triggers": 2,
+      "last_streak": 0
+     },
+     "trace_len": 122,
+     "action_count": 122
+    },
+    {
+     "clone_id": "k007",
+     "source_game": "re86-8af5384d",
+     "levels_completed": 1,
+     "levels_total": 8,
+     "actions_per_level": [
+      23,
+      124,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 147,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.093587493,
+     "gen_tokens": 58448,
+     "solver_note": "tokens=58448",
+     "score": 2.7778,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 1,
+      "killed": null
+     },
+     "hud": {
+      "segments": 6,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 9
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 58448,
+      "total": 1148796
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 147,
+     "action_count": 147
+    },
+    {
+     "clone_id": "k008",
+     "source_game": "tu93-0768757b",
+     "levels_completed": 0,
+     "levels_total": 9,
+     "actions_per_level": [
+      119,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 119,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 2480.0014323529995,
+     "gen_tokens": 30708,
+     "solver_note": "tokens=40788",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 1,
+      "killed": "stall"
+     },
+     "hud": {
+      "segments": 7,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 32
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 40788,
+      "total": 499388
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 119,
+     "action_count": 119
+    },
+    {
+     "clone_id": "k009",
+     "source_game": "su15-1944f8ab",
+     "levels_completed": 1,
+     "levels_total": 9,
+     "actions_per_level": [
+      27,
+      68,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 95,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.1252839220015,
+     "gen_tokens": 57946,
+     "solver_note": "tokens=57946",
+     "score": 1.4754,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 6,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 57946,
+      "total": 961627
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 95,
+     "action_count": 95
+    }
+   ],
+   "antifreeze_diag_delta": {
+    "triggers": 7
+   },
+   "antifreeze_diag_cumulative": {
+    "triggers": 14
+   },
+   "compact_diag_delta": {
+    "evictions_seen": 0,
+    "compactions_done": 0,
+    "compaction_failures": 0,
+    "compaction_tokens": 0,
+    "queue_plans": 0,
+    "queue_plans_rejected": 0,
+    "queue_steps_executed": 0,
+    "queue_aborts": 0,
+    "llm_calls_saved": 0
+   },
+   "compact_diag_cumulative": {
+    "evictions_seen": 0,
+    "compactions_done": 0,
+    "compaction_failures": 0,
+    "compaction_tokens": 0,
+    "queue_plans": 0,
+    "queue_plans_rejected": 0,
+    "queue_steps_executed": 0,
+    "queue_aborts": 0,
+    "llm_calls_saved": 0
+   },
+   "behav_cumulative": {
+    "unresolved_games": 0,
+    "n_games": 10,
+    "corpus": {
+     "actions": 4733,
+     "turns": 2227,
+     "actions_per_turn": 2.1253,
+     "noop_raw": 0.1113,
+     "noop_masked": 0.217,
+     "dead_reissue_of_actions": 0.1447,
+     "dead_reissue_of_opportunities": 0.3669,
+     "immediate_repeat": 0.5969,
+     "key_repeat": 0.6774,
+     "click_repeat": 0.3548,
+     "distinct_states_per_action": 0.4304,
+     "distinct_states_per_turn": 0.9147,
+     "productive_actions_per_turn": 1.6641
+    },
+    "per_game": {
+     "cn04": {
+      "actions": 898,
+      "noop_raw": 0.0746,
+      "noop_masked": 0.1359,
+      "dead_reissue_of_actions": 0.1147,
+      "dead_reissue_of_opportunities": 0.2588,
+      "immediate_repeat": 0.7684,
+      "distinct_states_per_action": 0.3508
+     },
+     "wa30": {
+      "actions": 800,
+      "noop_raw": 0.2062,
+      "noop_masked": 0.305,
+      "dead_reissue_of_actions": 0.2375,
+      "dead_reissue_of_opportunities": 0.7336,
+      "immediate_repeat": 0.7125,
+      "distinct_states_per_action": 0.5537
+     },
+     "re86": {
+      "actions": 643,
+      "noop_raw": 0.042,
+      "noop_masked": 0.1104,
+      "dead_reissue_of_actions": 0.1011,
+      "dead_reissue_of_opportunities": 0.3125,
+      "immediate_repeat": 0.7714,
+      "distinct_states_per_action": 0.4992
+     },
+     "m0r0": {
+      "actions": 400,
+      "noop_raw": 0.34,
+      "noop_masked": 0.34,
+      "dead_reissue_of_actions": 0.245,
+      "dead_reissue_of_opportunities": 0.8673,
+      "immediate_repeat": 0.675,
+      "distinct_states_per_action": 0.6
+     },
+     "su15": {
+      "actions": 225,
+      "noop_raw": 0.0711,
+      "noop_masked": 0.0711,
+      "dead_reissue_of_actions": 0.0044,
+      "dead_reissue_of_opportunities": 0.1667,
+      "immediate_repeat": 0.0711,
+      "distinct_states_per_action": 0.8578
+     },
+     "lf52": {
+      "actions": 381,
+      "noop_raw": 0.0,
+      "noop_masked": 0.4777,
+      "dead_reissue_of_actions": 0.2493,
+      "dead_reissue_of_opportunities": 0.5307,
+      "immediate_repeat": 0.3491,
+      "distinct_states_per_action": 0.126
+     },
+     "g50t": {
+      "actions": 185,
+      "noop_raw": 0.1568,
+      "noop_masked": 0.1568,
+      "dead_reissue_of_actions": 0.0432,
+      "dead_reissue_of_opportunities": 0.5714,
+      "immediate_repeat": 0.3351,
+      "distinct_states_per_action": 0.7676
+     },
+     "tu93": {
+      "actions": 283,
+      "noop_raw": 0.0,
+      "noop_masked": 0.3428,
+      "dead_reissue_of_actions": 0.2968,
+      "dead_reissue_of_opportunities": 0.3889,
+      "immediate_repeat": 0.4912,
+      "distinct_states_per_action": 0.1625
+     },
+     "dc22": {
+      "actions": 599,
+      "noop_raw": 0.0701,
+      "noop_masked": 0.1419,
+      "dead_reissue_of_actions": 0.0651,
+      "dead_reissue_of_opportunities": 0.0835,
+      "immediate_repeat": 0.7462,
+      "distinct_states_per_action": 0.0534
+     },
+     "ft09": {
+      "actions": 319,
+      "noop_raw": 0.1411,
+      "noop_masked": 0.1411,
+      "dead_reissue_of_actions": 0.0063,
+      "dead_reissue_of_opportunities": 0.2857,
+      "immediate_repeat": 0.0063,
+      "distinct_states_per_action": 0.8056
+     }
+    }
+   },
+   "behav_raw_cumulative": {
+    "cn04": {
+     "actions": 898,
+     "noop_raw": 67,
+     "noop_masked": 122,
+     "dead_reissue": 103,
+     "reissue_opportunities": 398,
+     "turns": 386,
+     "immediate_repeat": 690,
+     "key_actions": 898,
+     "key_repeat": 690,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "wa30": {
+     "actions": 800,
+     "noop_raw": 165,
+     "noop_masked": 244,
+     "dead_reissue": 190,
+     "reissue_opportunities": 259,
+     "turns": 270,
+     "immediate_repeat": 570,
+     "key_actions": 800,
+     "key_repeat": 570,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "re86": {
+     "actions": 643,
+     "noop_raw": 27,
+     "noop_masked": 71,
+     "dead_reissue": 65,
+     "reissue_opportunities": 208,
+     "turns": 85,
+     "immediate_repeat": 496,
+     "key_actions": 643,
+     "key_repeat": 496,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "m0r0": {
+     "actions": 400,
+     "noop_raw": 136,
+     "noop_masked": 136,
+     "dead_reissue": 98,
+     "reissue_opportunities": 113,
+     "turns": 169,
+     "immediate_repeat": 270,
+     "key_actions": 389,
+     "key_repeat": 270,
+     "click_actions": 11,
+     "click_repeat": 0
+    },
+    "su15": {
+     "actions": 225,
+     "noop_raw": 16,
+     "noop_masked": 16,
+     "dead_reissue": 1,
+     "reissue_opportunities": 6,
+     "turns": 101,
+     "immediate_repeat": 16,
+     "key_actions": 35,
+     "key_repeat": 10,
+     "click_actions": 190,
+     "click_repeat": 6
+    },
+    "lf52": {
+     "actions": 381,
+     "noop_raw": 0,
+     "noop_masked": 182,
+     "dead_reissue": 95,
+     "reissue_opportunities": 179,
+     "turns": 354,
+     "immediate_repeat": 133,
+     "key_actions": 209,
+     "key_repeat": 119,
+     "click_actions": 172,
+     "click_repeat": 14
+    },
+    "g50t": {
+     "actions": 185,
+     "noop_raw": 29,
+     "noop_masked": 29,
+     "dead_reissue": 8,
+     "reissue_opportunities": 14,
+     "turns": 142,
+     "immediate_repeat": 62,
+     "key_actions": 185,
+     "key_repeat": 62,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "tu93": {
+     "actions": 283,
+     "noop_raw": 0,
+     "noop_masked": 97,
+     "dead_reissue": 84,
+     "reissue_opportunities": 216,
+     "turns": 59,
+     "immediate_repeat": 139,
+     "key_actions": 283,
+     "key_repeat": 139,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "dc22": {
+     "actions": 599,
+     "noop_raw": 42,
+     "noop_masked": 85,
+     "dead_reissue": 39,
+     "reissue_opportunities": 467,
+     "turns": 561,
+     "immediate_repeat": 447,
+     "key_actions": 103,
+     "key_repeat": 50,
+     "click_actions": 496,
+     "click_repeat": 397
+    },
+    "ft09": {
+     "actions": 319,
+     "noop_raw": 45,
+     "noop_masked": 45,
+     "dead_reissue": 2,
+     "reissue_opportunities": 7,
+     "turns": 100,
+     "immediate_repeat": 2,
+     "key_actions": 7,
+     "key_repeat": 0,
+     "click_actions": 312,
+     "click_repeat": 2
+    }
+   }
+  },
+  {
+   "wave": 3,
+   "arm": "M",
+   "env": {
+    "TAAF_WATCHDOG": "1",
+    "TAAF_HUD_MASK": "1",
+    "TAAF_WIN_REPLAY": "1",
+    "TAAF_GRID_BURNER": "0",
+    "TAAF_GRAPH": "0",
+    "TAAF_COMPACT": "0",
+    "TAAF_PLAYBOOK": "0",
+    "TAAF_ANTIFREEZE": "1"
+   },
+   "served_model": "/tmp/merged_sft",
+   "serve": {
+    "arm": "M",
+    "desired_model": "/tmp/merged_sft",
+    "pid_before": 4170,
+    "model_before": "/kaggle/input/datasets/driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot",
+    "stop": {
+     "pid": 4170,
+     "model_arg_before": "/kaggle/input/datasets/driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot",
+     "terminated": false,
+     "gpu_mem_used_mib_after": 0
+    },
+    "start": {
+     "pid": 11373,
+     "model": "/tmp/merged_sft"
+    },
+    "restarted": true,
+    "restart_wall_s": 340.0
+   },
+   "serving_assert": {
+    "checks": [
+     {
+      "check": "analyzer_base_url",
+      "ok": true,
+      "base_url": "http://127.0.0.1:1234/v1",
+      "expected_id": "vrfai/Qwen3.6-27B-FP8"
+     },
+     {
+      "check": "endpoint_models",
+      "ok": true,
+      "served_ids": [
+       "vrfai/Qwen3.6-27B-FP8"
+      ]
+     },
+     {
+      "check": "generation_logprobs",
+      "ok": true,
+      "text": "ok",
+      "n_logprobs": 2,
+      "first_logprobs": [
+       -0.052289,
+       -9.2e-05
+      ]
+     },
+     {
+      "check": "server_model_arg",
+      "ok": true,
+      "pid": 11373,
+      "model_arg": "/tmp/merged_sft",
+      "arm": "M",
+      "merged_index_present": true,
+      "config_quant_free": true
+     }
+    ],
+    "fingerprint": {
+     "tokens": [
+      "ok",
+      "<|im_end|>"
+     ],
+     "logprobs": [
+      -0.052289,
+      -9.2e-05
+     ]
+    }
+   },
+   "weights_fingerprint": {
+    "tokens": [
+     "ok",
+     "<|im_end|>"
+    ],
+    "logprobs": [
+     -0.052289,
+     -9.2e-05
+    ]
+   },
+   "toggles_verified": {
+    "TAAF_WATCHDOG": true,
+    "TAAF_HUD_MASK": true,
+    "TAAF_WIN_REPLAY": true,
+    "TAAF_GRAPH": false,
+    "TAAF_COMPACT": false,
+    "TAAF_PLAYBOOK": false,
+    "TAAF_ANTIFREEZE": true,
+    "TAAF_GRID_BURNER": false
+   },
+   "patch_proof_wave": {
+    "graph_step_env_patched": true,
+    "watchdog_should_stop_patched": true,
+    "plan_queue_analyze_patched": true,
+    "compaction_history_patched": true,
+    "playbook_system_prompt_patched": true,
+    "antifreeze_user_prompt_patched": true
+   },
+   "playbook_proof": {
+    "marker": "Mechanic playbook \u2014 recurring hidden-mechanic families. Check BEFORE calling a level impossible or retrying a failed plan:",
+    "expected_present": false,
+    "n_prompts_sampled": 10,
+    "n_mismatches": 0,
+    "probe_before_wave": {
+     "marker": "Mechanic playbook \u2014 recurring hidden-mechanic families. Check BEFORE calling a level impossible or retrying a failed plan:",
+     "present": false,
+     "expected": false,
+     "prompt_sha256": "b8b31c36c36977cdaffa705e5f4b547430c4592c6403882e116a0d4f07eea8c8",
+     "prompt_chars": 12951
+    },
+    "sample_sha256": "ff2ff0e8f8bf23c0c10a02e75d1c0b23386f122b7f46bfab10bea6f72e8e2258",
+    "sample_chars": 12951
+   },
+   "wall_s": 3647.7,
+   "started_at_elapsed_s": 11855.1,
+   "rows": [
+    {
+     "clone_id": "k000",
+     "source_game": "lf52-271a04aa",
+     "levels_completed": 0,
+     "levels_total": 10,
+     "actions_per_level": [
+      47,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 47,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.3656882170017,
+     "gen_tokens": 37123,
+     "solver_note": "tokens=39063",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 1,
+      "mask_cells": 0,
+      "confirmed_lines": 0,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 39063,
+      "total": 743161
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 47,
+     "action_count": 47
+    },
+    {
+     "clone_id": "k001",
+     "source_game": "cn04-2fe56bfb",
+     "levels_completed": 1,
+     "levels_total": 6,
+     "actions_per_level": [
+      30,
+      43,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 73,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.1410453809985,
+     "gen_tokens": 48397,
+     "solver_note": "tokens=48397",
+     "score": 4.4497,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 3,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 48397,
+      "total": 904633
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 73,
+     "action_count": 73
+    },
+    {
+     "clone_id": "k002",
+     "source_game": "wa30-ee6fef47",
+     "levels_completed": 0,
+     "levels_total": 9,
+     "actions_per_level": [
+      68,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 68,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.101338500999,
+     "gen_tokens": 48738,
+     "solver_note": "tokens=48738",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 2,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 48738,
+      "total": 1092456
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 68,
+     "action_count": 68
+    },
+    {
+     "clone_id": "k003",
+     "source_game": "m0r0-492f87ba",
+     "levels_completed": 0,
+     "levels_total": 6,
+     "actions_per_level": [
+      120,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 120,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.106716860999,
+     "gen_tokens": 48612,
+     "solver_note": "tokens=48612",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 5,
+      "mask_cells": 128,
+      "confirmed_lines": 2,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 10
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 48612,
+      "total": 810310
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 120,
+     "action_count": 120
+    },
+    {
+     "clone_id": "k004",
+     "source_game": "g50t-5849a774",
+     "levels_completed": 0,
+     "levels_total": 7,
+     "actions_per_level": [
+      57,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 57,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.1197423110007,
+     "gen_tokens": 34719,
+     "solver_note": "tokens=34719",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 1,
+      "killed": null
+     },
+     "hud": {
+      "segments": 3,
+      "mask_cells": 0,
+      "confirmed_lines": 0,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 34719,
+      "total": 909832
+     },
+     "antifreeze": {
+      "triggers": 1,
+      "last_streak": 0
+     },
+     "trace_len": 57,
+     "action_count": 57
+    },
+    {
+     "clone_id": "k005",
+     "source_game": "dc22-fdcac232",
+     "levels_completed": 0,
+     "levels_total": 6,
+     "actions_per_level": [
+      73,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 73,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.0985840209996,
+     "gen_tokens": 47801,
+     "solver_note": "tokens=47801",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 3,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 1
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 47801,
+      "total": 1039241
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 73,
+     "action_count": 73
+    },
+    {
+     "clone_id": "k006",
+     "source_game": "ft09-0d8bbf25",
+     "levels_completed": 0,
+     "levels_total": 6,
+     "actions_per_level": [
+      118,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 118,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3614.1031808499993,
+     "gen_tokens": 46051,
+     "solver_note": "tokens=48868",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 9,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 48868,
+      "total": 1650374
+     },
+     "antifreeze": {
+      "triggers": 3,
+      "last_streak": 1
+     },
+     "trace_len": 118,
+     "action_count": 118
+    },
+    {
+     "clone_id": "k007",
+     "source_game": "re86-8af5384d",
+     "levels_completed": 0,
+     "levels_total": 8,
+     "actions_per_level": [
+      162,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 162,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3600.155107700999,
+     "gen_tokens": 47822,
+     "solver_note": "tokens=47822",
+     "score": 0.0,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 8,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 0
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 47822,
+      "total": 856932
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 162,
+     "action_count": 162
+    },
+    {
+     "clone_id": "k008",
+     "source_game": "tu93-0768757b",
+     "levels_completed": 2,
+     "levels_total": 9,
+     "actions_per_level": [
+      86,
+      35,
+      45,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 166,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3614.1233488789985,
+     "gen_tokens": 46730,
+     "solver_note": "tokens=48559",
+     "score": 1.0373,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 23,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 35
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 48559,
+      "total": 1039222
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 166,
+     "action_count": 166
+    },
+    {
+     "clone_id": "k009",
+     "source_game": "su15-1944f8ab",
+     "levels_completed": 1,
+     "levels_total": 9,
+     "actions_per_level": [
+      21,
+      264,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "actions_total": 285,
+     "apl_sum_matches_history": true,
+     "state": "gave_up",
+     "wallclock_s": 3647.494036086,
+     "gen_tokens": 40824,
+     "solver_note": "tokens=41481",
+     "score": 2.2222,
+     "watchdog": {
+      "stall_s": 600.0,
+      "resets_done": 0,
+      "killed": null
+     },
+     "hud": {
+      "segments": 24,
+      "mask_cells": 64,
+      "confirmed_lines": 1,
+      "guard_dead_lines": 0,
+      "dropped_cells": 0,
+      "suppressed_hud_only": 30
+     },
+     "replay": {
+      "status": "skipped",
+      "reason": "not WON"
+     },
+     "analyzer_tokens": {
+      "generated": 41481,
+      "total": 1200220
+     },
+     "antifreeze": {
+      "triggers": 0,
+      "last_streak": 0
+     },
+     "trace_len": 285,
+     "action_count": 285
+    }
+   ],
+   "antifreeze_diag_delta": {
+    "triggers": 4
+   },
+   "antifreeze_diag_cumulative": {
+    "triggers": 18
+   },
+   "compact_diag_delta": {
+    "evictions_seen": 0,
+    "compactions_done": 0,
+    "compaction_failures": 0,
+    "compaction_tokens": 0,
+    "queue_plans": 0,
+    "queue_plans_rejected": 0,
+    "queue_steps_executed": 0,
+    "queue_aborts": 0,
+    "llm_calls_saved": 0
+   },
+   "compact_diag_cumulative": {
+    "evictions_seen": 0,
+    "compactions_done": 0,
+    "compaction_failures": 0,
+    "compaction_tokens": 0,
+    "queue_plans": 0,
+    "queue_plans_rejected": 0,
+    "queue_steps_executed": 0,
+    "queue_aborts": 0,
+    "llm_calls_saved": 0
+   },
+   "behav_cumulative": {
+    "unresolved_games": 0,
+    "n_games": 10,
+    "corpus": {
+     "actions": 5902,
+     "turns": 2982,
+     "actions_per_turn": 1.9792,
+     "noop_raw": 0.1056,
+     "noop_masked": 0.2087,
+     "dead_reissue_of_actions": 0.1394,
+     "dead_reissue_of_opportunities": 0.3666,
+     "immediate_repeat": 0.5534,
+     "key_repeat": 0.6514,
+     "click_repeat": 0.2867,
+     "distinct_states_per_action": 0.4471,
+     "distinct_states_per_turn": 0.885,
+     "productive_actions_per_turn": 1.5661
+    },
+    "per_game": {
+     "cn04": {
+      "actions": 971,
+      "noop_raw": 0.07,
+      "noop_masked": 0.1267,
+      "dead_reissue_of_actions": 0.1061,
+      "dead_reissue_of_opportunities": 0.2531,
+      "immediate_repeat": 0.7652,
+      "distinct_states_per_action": 0.3749
+     },
+     "wa30": {
+      "actions": 868,
+      "noop_raw": 0.2097,
+      "noop_masked": 0.3076,
+      "dead_reissue_of_actions": 0.2408,
+      "dead_reissue_of_opportunities": 0.6967,
+      "immediate_repeat": 0.6843,
+      "distinct_states_per_action": 0.5207
+     },
+     "re86": {
+      "actions": 805,
+      "noop_raw": 0.0335,
+      "noop_masked": 0.0882,
+      "dead_reissue_of_actions": 0.0807,
+      "dead_reissue_of_opportunities": 0.3009,
+      "immediate_repeat": 0.7143,
+      "distinct_states_per_action": 0.564
+     },
+     "m0r0": {
+      "actions": 520,
+      "noop_raw": 0.3192,
+      "noop_masked": 0.3192,
+      "dead_reissue_of_actions": 0.2192,
+      "dead_reissue_of_opportunities": 0.8261,
+      "immediate_repeat": 0.6846,
+      "distinct_states_per_action": 0.6096
+     },
+     "su15": {
+      "actions": 510,
+      "noop_raw": 0.0667,
+      "noop_masked": 0.0667,
+      "dead_reissue_of_actions": 0.0235,
+      "dead_reissue_of_opportunities": 0.2222,
+      "immediate_repeat": 0.1118,
+      "distinct_states_per_action": 0.8
+     },
+     "lf52": {
+      "actions": 428,
+      "noop_raw": 0.0,
+      "noop_masked": 0.493,
+      "dead_reissue_of_actions": 0.2734,
+      "dead_reissue_of_opportunities": 0.5417,
+      "immediate_repeat": 0.3505,
+      "distinct_states_per_action": 0.1145
+     },
+     "g50t": {
+      "actions": 242,
+      "noop_raw": 0.1488,
+      "noop_masked": 0.1488,
+      "dead_reissue_of_actions": 0.0372,
+      "dead_reissue_of_opportunities": 0.45,
+      "immediate_repeat": 0.3884,
+      "distinct_states_per_action": 0.7645
+     },
+     "tu93": {
+      "actions": 449,
+      "noop_raw": 0.0,
+      "noop_masked": 0.3697,
+      "dead_reissue_of_actions": 0.3163,
+      "dead_reissue_of_opportunities": 0.388,
+      "immediate_repeat": 0.461,
+      "distinct_states_per_action": 0.1069
+     },
+     "dc22": {
+      "actions": 672,
+      "noop_raw": 0.0685,
+      "noop_masked": 0.1399,
+      "dead_reissue_of_actions": 0.0685,
+      "dead_reissue_of_opportunities": 0.09,
+      "immediate_repeat": 0.7068,
+      "distinct_states_per_action": 0.0565
+     },
+     "ft09": {
+      "actions": 437,
+      "noop_raw": 0.1465,
+      "noop_masked": 0.1465,
+      "dead_reissue_of_actions": 0.0137,
+      "dead_reissue_of_opportunities": 0.3529,
+      "immediate_repeat": 0.0343,
+      "distinct_states_per_action": 0.7414
+     }
+    }
+   },
+   "behav_raw_cumulative": {
+    "cn04": {
+     "actions": 971,
+     "noop_raw": 68,
+     "noop_masked": 123,
+     "dead_reissue": 103,
+     "reissue_opportunities": 407,
+     "turns": 417,
+     "immediate_repeat": 743,
+     "key_actions": 971,
+     "key_repeat": 743,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "wa30": {
+     "actions": 868,
+     "noop_raw": 182,
+     "noop_masked": 267,
+     "dead_reissue": 209,
+     "reissue_opportunities": 300,
+     "turns": 319,
+     "immediate_repeat": 594,
+     "key_actions": 868,
+     "key_repeat": 594,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "re86": {
+     "actions": 805,
+     "noop_raw": 27,
+     "noop_masked": 71,
+     "dead_reissue": 65,
+     "reissue_opportunities": 216,
+     "turns": 123,
+     "immediate_repeat": 575,
+     "key_actions": 805,
+     "key_repeat": 575,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "m0r0": {
+     "actions": 520,
+     "noop_raw": 166,
+     "noop_masked": 166,
+     "dead_reissue": 114,
+     "reissue_opportunities": 138,
+     "turns": 289,
+     "immediate_repeat": 356,
+     "key_actions": 507,
+     "key_repeat": 356,
+     "click_actions": 13,
+     "click_repeat": 0
+    },
+    "su15": {
+     "actions": 510,
+     "noop_raw": 34,
+     "noop_masked": 34,
+     "dead_reissue": 12,
+     "reissue_opportunities": 54,
+     "turns": 370,
+     "immediate_repeat": 57,
+     "key_actions": 67,
+     "key_repeat": 30,
+     "click_actions": 443,
+     "click_repeat": 27
+    },
+    "lf52": {
+     "actions": 428,
+     "noop_raw": 0,
+     "noop_masked": 211,
+     "dead_reissue": 117,
+     "reissue_opportunities": 216,
+     "turns": 401,
+     "immediate_repeat": 150,
+     "key_actions": 236,
+     "key_repeat": 135,
+     "click_actions": 192,
+     "click_repeat": 15
+    },
+    "g50t": {
+     "actions": 242,
+     "noop_raw": 36,
+     "noop_masked": 36,
+     "dead_reissue": 9,
+     "reissue_opportunities": 20,
+     "turns": 170,
+     "immediate_repeat": 94,
+     "key_actions": 242,
+     "key_repeat": 94,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "tu93": {
+     "actions": 449,
+     "noop_raw": 0,
+     "noop_masked": 166,
+     "dead_reissue": 142,
+     "reissue_opportunities": 366,
+     "turns": 139,
+     "immediate_repeat": 207,
+     "key_actions": 449,
+     "key_repeat": 207,
+     "click_actions": 0,
+     "click_repeat": 0
+    },
+    "dc22": {
+     "actions": 672,
+     "noop_raw": 46,
+     "noop_masked": 94,
+     "dead_reissue": 46,
+     "reissue_opportunities": 511,
+     "turns": 595,
+     "immediate_repeat": 475,
+     "key_actions": 160,
+     "key_repeat": 77,
+     "click_actions": 512,
+     "click_repeat": 398
+    },
+    "ft09": {
+     "actions": 437,
+     "noop_raw": 64,
+     "noop_masked": 64,
+     "dead_reissue": 6,
+     "reissue_opportunities": 17,
+     "turns": 159,
+     "immediate_repeat": 15,
+     "key_actions": 10,
+     "key_repeat": 0,
+     "click_actions": 427,
+     "click_repeat": 15
+    }
+   }
+  }
+ ],
+ "antifreeze_counter_installed": true,
+ "env_dir": "/kaggle/input/competitions/arc-prize-2026-arc-agi-3/environment_files",
+ "chosen_ids": [
+  "lf52-271a04aa",
+  "cn04-2fe56bfb",
+  "wa30-ee6fef47",
+  "m0r0-492f87ba",
+  "g50t-5849a774",
+  "dc22-fdcac232",
+  "ft09-0d8bbf25",
+  "re86-8af5384d",
+  "tu93-0768757b",
+  "su15-1944f8ab"
+ ],
+ "elapsed_s": 15844.5
+}
