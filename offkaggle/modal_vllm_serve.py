@@ -254,6 +254,11 @@ _CONTAINER_ENV = {
     "HF_HOME": f"{CACHE_DIR}/huggingface",
     "HF_HUB_ENABLE_HF_TRANSFER": "1",
     "ARC3_MAX_LIFETIME_S": str(MAX_LIFETIME_S),
+    # The 27B's GDN prefill path makes flashinfer JIT-compile CUDA modules at
+    # first request (gen_gdn_prefill_sm90_module) — that needs nvcc, hence the
+    # cuda-devel base image below. Persist the JIT artifacts in the volume so
+    # the multi-minute compile is paid once, not per cold start.
+    "FLASHINFER_WORKSPACE_BASE": f"{CACHE_DIR}/flashinfer",
 }
 
 
@@ -261,8 +266,13 @@ if modal is not None:
     app = modal.App(APP_NAME)
     hf_cache_vol = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 
+    # cuda-DEVEL base (not slim): flashinfer JIT needs nvcc + CUDA headers at
+    # /usr/local/cuda (first smoke failed with "Could not find nvcc" on
+    # debian_slim — Kaggle's image ships the toolkit, so the scored runs never
+    # hit this). 12.8 devel matches the torch 2.10 cu12x runtime ABI.
     image = (
-        modal.Image.debian_slim(python_version="3.12")
+        modal.Image.from_registry(
+            "nvidia/cuda:12.8.1-devel-ubuntu22.04", add_python="3.12")
         .uv_pip_install(
             f"vllm=={VLLM_VERSION}",
             f"torch=={TORCH_VERSION}",
