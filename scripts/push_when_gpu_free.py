@@ -21,7 +21,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-FULL_MARKER = "Maximum batch GPU session count"
+# Both are transient-capacity conditions worth polling through: concurrent
+# session cap (frees in minutes-hours) and the weekly quota cap (frees at the
+# weekly reset — poll hourly with a multi-day --max-hours). Discovered
+# 2026-08-10: the 45h weekly quota can be exhausted by OTHER projects on the
+# account, so a rig launch must be able to wait for the reset unattended.
+RETRYABLE_MARKERS = (
+    "Maximum batch GPU session count",
+    "Maximum weekly GPU quota",
+)
 
 
 def log(msg: str) -> None:
@@ -61,8 +69,8 @@ def main() -> int:
         if ok:
             log(f"PUSHED on attempt {attempt}: {msg}")
             return 0
-        if FULL_MARKER in msg:
-            log(f"attempt {attempt}: GPU sessions still full — retry in {args.interval}s")
+        if any(marker in msg for marker in RETRYABLE_MARKERS):
+            log(f"attempt {attempt}: GPU capacity/quota unavailable — retry in {args.interval}s")
         else:
             # Anything that is NOT the capacity error is a real problem: a bad
             # notebook, an auth failure, a metadata error. Retrying would just

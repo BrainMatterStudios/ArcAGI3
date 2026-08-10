@@ -213,9 +213,15 @@ def hook_cell(arm: str, arm_env: dict[str, str]) -> str:
 
 def run_cell(arm: str, source_hash: str, patch_hash: str,
              hypothesis: str, reading: dict | None = None,
-             geometry: dict | None = None) -> str:
+             geometry: dict | None = None,
+             prelude: str | None = None) -> str:
     reading_line = (
         f"    reading={json.dumps(reading, sort_keys=True)},\n" if reading is not None else "")
+    # `prelude` (optional) is inserted AFTER the inlined driver and BEFORE the
+    # pc_main call, so an arm can rebind driver-level helpers (the shipped
+    # screen's absence-proof shims). None (the default) emits the exact
+    # historical bytes — the closure/package/struct builds are unchanged.
+    prelude_block = (prelude.rstrip() + "\n\n") if prelude else ""
     # Default is the frozen eval geometry. An override exists so a wave can name
     # a FOCUS SUBSET (geometry["games"]): the clone map is round-robin over the
     # official list, so a full-25 wave gives n=1 per game. Overriding anything
@@ -230,6 +236,7 @@ def run_cell(arm: str, source_hash: str, patch_hash: str,
         "\n"
         f"{DRIVER.read_text()}\n"
         "\n"
+        f"{prelude_block}"
         "_pc_result = await pc_main(\n"
         "    bm=bm, target=target, working_dir=WORKING_DIR,\n"
         "    arm=PC_ARM, arm_env=PC_ARM_ENV,\n"
@@ -257,17 +264,29 @@ def build_kernel(arm: str, slug: str, arm_env: dict[str, str], hypothesis: str,
                  reading: dict | None = None, code_stem: str | None = None,
                  output_root: Path | None = None,
                  post_run_cell: str | None = None,
-                 geometry: dict | None = None) -> Path:
+                 geometry: dict | None = None,
+                 hook_override: str | None = None,
+                 run_prelude: str | None = None,
+                 patch_sha256_override: str | None = None) -> Path:
     """Parameterized kernel builder shared by the closure arms and the
     package screen; returns the notebook path.
 
     `post_run_cell` (optional) is inserted as a NEW code cell immediately
     AFTER the run cell — it executes only once patch_closure_result.json is
     written, so it can never contaminate the arm result.
+
+    `hook_override` / `run_prelude` / `patch_sha256_override` (all optional,
+    default None = the exact historical bytes) exist for the SHIPPED screen:
+    an arm that must NOT inline duck_patches replaces the hook cell wholesale,
+    shims two driver checks that hard-assert patch presence, and stamps a
+    sentinel where the inlined-patch hash would otherwise be.
     """
     source_hash, patch_hash = _source_hashes()
-    hook_src = hook_cell(arm, arm_env)
-    run_src = run_cell(arm, source_hash, patch_hash, hypothesis, reading, geometry)
+    if patch_sha256_override is not None:
+        patch_hash = patch_sha256_override
+    hook_src = hook_cell(arm, arm_env) if hook_override is None else hook_override
+    run_src = run_cell(arm, source_hash, patch_hash, hypothesis, reading, geometry,
+                       prelude=run_prelude)
     # ast.parse, not compile(): IPython executes cells per-statement, so the
     # inlined modules' mid-cell `from __future__` lines are runtime-legal (the
     # COMPLETE ab-wmr kernels carry the same byte pattern) but a strict module
