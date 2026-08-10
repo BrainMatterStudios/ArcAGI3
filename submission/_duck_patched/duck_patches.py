@@ -7494,6 +7494,94 @@ def patch_struct_gates() -> str:
     return "patch22 gates: OK (dormant — opt in with TAAF_STRUCT=1)"
 
 
+# ---------------------------------------------------------------------------
+# PATCH 23 — token-estimator correction (MEASURED, not speculative).
+#
+# `tool_agent._estimate_tokens` is `(len(json.dumps(payload)) + 2) // 3`. Measured
+# against real `usage.prompt_tokens` over 3,556 recorded requests the ratio is
+# 1.44x (p50 1.39, p90 1.66) — see submission/_duck_levers/harness_levers.py:10-16.
+# Two effects compound: JSON escaping inflates the rendered string, and 3
+# chars/token is far below the ~4.3 this content actually achieves.
+#
+# The trimmer drops oldest history until the ESTIMATE fits the budget, so a 1.44x
+# overcount means the agent discards history it could have afforded. Dividing by 4
+# still errs high (~1.08x), which is the safe direction: underestimating would
+# overrun the served window and get the request rejected.
+#
+# HONEST SCOPE — this is NOT a free win, and an earlier note in this campaign that
+# called it "zero additional prefill cost" was wrong. Keeping more history means
+# longer prompts, and prompt tokens are ~19-29x generated tokens per game with
+# prefill and decode costing roughly the same wall-clock. The offsetting effect is
+# that fewer trims means fewer prefix-cache invalidations (measured hit rate 49.3%,
+# and the trimmer drops from the FRONT, invalidating everything past the ~3.1k
+# system prompt). Which effect dominates is UNMEASURED. Games die on wall-clock,
+# never on an action budget (140/140 recorded runs), so this must be certified by
+# a wave before it is believed.
+#
+# Opt-in only (TAAF_TOKEN_EST=1). Default OFF.
+# ---------------------------------------------------------------------------
+
+TOKEN_EST_DIAGNOSTICS = {"calls": 0, "chars": 0, "est_new": 0, "est_old": 0}
+
+
+def _token_est_enabled() -> bool:
+    """Opt-in only (TAAF_TOKEN_EST=1). Default OFF."""
+    import os
+
+    return os.environ.get("TAAF_TOKEN_EST", "0").strip() in {"1", "true", "True"}
+
+
+def _token_est_divisor() -> int:
+    """Chars per token. 4 is the measured-safe value; overridable for a sweep."""
+    import os
+
+    try:
+        return max(1, int(os.environ.get("TAAF_TOKEN_EST_DIV", "").strip() or 4))
+    except (TypeError, ValueError):
+        return 4
+
+
+def patch_token_estimator() -> str:
+    """Replace the chars/3 token estimator with a measured-accurate chars/4."""
+    from inference.agent import tool_agent
+
+    original = getattr(tool_agent, "_estimate_tokens", None)
+    if original is None:
+        return "patch23 token-est: FAIL (tool_agent._estimate_tokens not found)"
+    if getattr(original, "_token_est_patched", False):
+        return "patch23 token-est: SKIP (already applied)"
+
+    def _estimate_tokens(value: Any) -> int:
+        # Gated at CALL time so the flag can disarm it without a rebuild, and so
+        # a disabled run is byte-identical in behaviour to the unpatched duck.
+        if not _token_est_enabled():
+            return original(value)
+        import json as _json
+
+        try:
+            rendered = _json.dumps(value, ensure_ascii=True, sort_keys=True, default=str)
+        except TypeError:
+            rendered = str(value)
+        div = _token_est_divisor()
+        est = max(1, (len(rendered) + div - 1) // div)
+        try:
+            TOKEN_EST_DIAGNOSTICS["calls"] += 1
+            TOKEN_EST_DIAGNOSTICS["chars"] += len(rendered)
+            TOKEN_EST_DIAGNOSTICS["est_new"] += est
+            TOKEN_EST_DIAGNOSTICS["est_old"] += max(1, (len(rendered) + 2) // 3)
+        except Exception:  # noqa: BLE001 - accounting must never break a turn
+            pass
+        return est
+
+    _estimate_tokens._token_est_patched = True  # type: ignore[attr-defined]
+    _forward_patch_markers(_estimate_tokens, original)
+    tool_agent._estimate_tokens = _estimate_tokens
+
+    if _token_est_enabled():
+        return f"patch23 token-est: OK (TAAF_TOKEN_EST=1 — chars/{_token_est_divisor()})"
+    return "patch23 token-est: OK (dormant — opt in with TAAF_TOKEN_EST=1)"
+
+
 def apply_all(verbose: bool = True) -> list[str]:
     """Apply every patch. Each is independent; one failing does not block the others."""
     results = []
@@ -7541,6 +7629,10 @@ def apply_all(verbose: bool = True) -> list[str]:
         # lines render at the very top and its valid_actions kwarg filter runs
         # before every inner prompt renderer reads the menu.
         patch_struct_gates,
+        # patch 23: independent of every prompt/action seam — it rebinds a
+        # module-level helper the trimmer calls. Order is irrelevant, so it
+        # goes last where it cannot perturb the established sequence.
+        patch_token_estimator,
     ):
         try:
             results.append(fn())
