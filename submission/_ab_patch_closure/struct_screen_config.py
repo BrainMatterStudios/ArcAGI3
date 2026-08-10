@@ -35,6 +35,7 @@ from patch_closure_config import (  # noqa: E402
     SCHEMA_VERSION,
     TARGET_GAMES,
 )
+from true_score import true_score_metrics  # noqa: E402
 
 STRUCT_HYPOTHESIS = "struct-screen-2026-08-09"
 
@@ -246,7 +247,12 @@ def classify_struct(
     if not adoption_rec:
         infra.append("adoption block missing from the result — the headline "
                      "metric of this screen was not recorded")
+    # THE OBJECTIVE, reported FIRST. The level count beneath it is uncorrelated
+    # with the actual score (r = -0.009 across the eight banked waves), so a
+    # report that omits this block cannot support a verdict.
+    objective = true_score_metrics(result, excluded=tuple(LEVELS_EXCLUDED_GAMES))
     metrics = {
+        **objective,
         "levels_excl_ft09": levels,
         "banked": BANKED,
         "new_target_unlocks": unlocks,
