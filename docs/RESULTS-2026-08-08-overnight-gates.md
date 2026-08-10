@@ -168,3 +168,72 @@ expected mid-morning; classification per the frozen 0.69–1.27 band rule.
   `level_tags`, `baseline_actions`), so tag-driven archetype dispatch has a real channel on hidden
   — game-ID-keyed scripts do not. Vision/multimodality is genuinely untested; "stronger base" is
   dead (both swap gates NO_GO with controls).
+
+---
+
+## 2026-08-10 — ft09 ablation stage 1: AMBIGUOUS, stopped per pre-registration
+
+**Verdict: AMBIGUOUS. Stage 2 NOT run.** The pre-registration (written before launch,
+`ft09_ablation_config.py`) required gap >= 5.0 AND Mann-Whitney one-sided p < 0.01 to
+proceed. Observed gap **+3.32**, **p = 0.088**. Direction as predicted, bars not met.
+
+### Result (n=28 per arm, all 28 clones on ft09, eval geometry 7920s/28-way)
+
+| arm | n | mean | sd | median | zeros | L1 actions (completers) |
+|---|---|---|---|---|---|---|
+| base | 28 | **8.6042** | 8.65 | 9.013 | 12/28 | median 24 (4-109) |
+| struct | 28 | **5.2883** | 8.33 | 0.179 | 14/28 | median 39 (14-157) |
+
+Re-scoring implementation validated against the driver's stored score: 56/56 rows, 0 mismatches.
+
+### What this does to the 08-09 finding
+
+**The "ft09 accounts for 102% of the base-vs-others gap" claim does not survive.**
+It was computed from n=1 per game. At n=28:
+
+| | ft09 gap | contribution to a 25-game mean |
+|---|---|---|
+| n=1 banked estimate | ~13.6 | 0.545 |
+| **n=28 measurement** | **3.32** | **0.133** |
+
+A 4x overestimate — textbook regression to the mean from a single-clone measurement.
+ft09 is still the largest single contributor and still favours base, but it explains
+roughly a quarter of what it appeared to, and the difference is not significant.
+
+### The pre-registered confound is REFUTED (my hypothesis, killed by its own test)
+
+I proposed that base's ft09 advantage might be an artifact of the stall watchdog
+terminating its runs early (~3700-4240s) and thereby preserving an efficient score,
+while other arms ran the full box. The data says the opposite:
+
+| arm | stall-killed | ran full box |
+|---|---|---|
+| base | n=10, mean 7.77 | n=18, mean **9.07** |
+| struct | n=4, mean 9.85 | n=24, mean 4.53 |
+
+Base's stall-killed clones scored **lower**, not higher. Early termination is not the
+mechanism. The confound is dead and the (weak) effect is not explained by it.
+
+### What IS consistent
+
+Base is more action-efficient on ft09 level 1 — median 24 actions vs struct's 39 among
+clones that completed it. Directionally the same story as the banked rows, but the
+banked extremes (base 7-14 vs struct 68-124) were tail draws, not typical.
+
+### Why stage 2 is not worth booking
+
+Certifying a 3.32 gap at 80% power needs ~103 clones per arm = 3.7 waves per arm,
+**~16h of GPU for one public game** — and attribution across four flags would multiply
+that. The prize (0.133 of a 25-game public mean, transfer to hidden unknown) does not
+justify it. Stage 2 is cancelled, not deferred.
+
+### Cost and process notes
+
+- GPU: 4.40h (2.20h per arm) + ~0.3h lost to a first launch that died at the focus-subset
+  guard (bare stems vs hashed ids; fixed, pinned by `test_focus_subset.py`).
+- The focus-subset mechanism works and is the durable win here: it converts n=1 per game
+  into n=28 in one wave, and it is what exposed the n=1 artifact. Every per-game verdict
+  in this rig's history was single-clone.
+- **The pre-registration did its job.** At p=0.088 with the sign in the predicted
+  direction, the pull to run stage 2 "to see" was real; the bar written before launch is
+  the only reason it was not spent.
