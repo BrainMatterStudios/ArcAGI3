@@ -47,8 +47,8 @@ COMPETITION = "arc-prize-2026-arc-agi-3"
 
 # --- phase 1: duck-mem v1 (CPU platform probe) ------------------------------
 MEM_KERNEL = "ahmedmobasher86/arc-agi-3-duck-mem"
-MEM_EXPECTED_VERSION = 2  # v1's commit ERRORed on the CPU machine's wheel-mount form
-MEM_EXPECTED_HASH = "3d890a4692dc66c11853f98bf308ed99ac09017ed783776c6fb99e02f32dd2e0"
+MEM_EXPECTED_VERSION = 3  # v1: wheel-mount ERROR; v2: environment_files-mount ERROR (both CPU-machine forms)
+MEM_EXPECTED_HASH = "401f551f6f6914df3edb3ced6ee756d05a6acaacd4a27935f62a36db7b23255f"
 MEM_LOCAL_NOTEBOOK = REPO / "submission/_duck_mem/duck-mem.ipynb"
 # Pins that MUST be in the remote bytes: the four default-armed duck-mem
 # patches, and the two gates that must be ABSENT/OFF.
@@ -62,14 +62,14 @@ MEM_REQUIRED_MARKERS = (
 )
 
 MEM_MESSAGE = (
-    "PLATFORM PROBE + duck-mem debut [duck-mem-v2-cpu-3d890a46]: CPU-committed "
+    "PLATFORM PROBE + duck-mem debut [duck-mem-v3-cpu-401f551f]: CPU-committed "
     "version of duck-mem (shipped base v2 + P1-P4 anti-waste stack: estimator "
     "chars/4, middle-drop trimmer, minimize-actions prompt neutralized, "
     "repeated-no-effect guard; P5/P6 gated OFF). PRE-REGISTERED: primary "
     "hypothesis is about the PLATFORM — scored-rerun hardware follows the "
     "version's accelerator, so this CPU version should ERROR at the GPU assert "
     "with no slot cost (07-30 precedent); an in-window fallback then fires "
-    "struct-v9 draw #2. IF this scores instead: rerun hardware is "
+    "the attested duck-patched v9 for its draw #2. IF this scores instead: rerun hardware is "
     "competition-fixed (week-unlocking fact) and the score reads against the "
     "base band 0.69-1.30 (n=10 mean 0.9650 sd 0.2082), mid-band ambiguous, "
     "4-variable stack so no per-lever attribution."

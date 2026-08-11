@@ -71,6 +71,22 @@ def ledg_hash(nb: dict) -> str:
     return hashlib.sha256("\n".join(sources).encode("utf-8")).hexdigest()[:16]
 
 
+# The commit-mode (NOT TRUE_SUBMISSION) branch hardcodes the same mount form
+# for environment_files — v2's commit died there after the install fix worked.
+# Scored reruns never touch this branch (they use the gateway), so probing both
+# forms is commit-only behavior.
+ENVFILES_OLD = ('    competition_env_files = str(Path("/kaggle/input/competitions/'
+                'arc-prize-2026-arc-agi-3/arc_agi_3_wheels").parent / "environment_files")')
+ENVFILES_NEW = '''\
+    _dm_env_candidates = [
+        "/kaggle/input/competitions/arc-prize-2026-arc-agi-3/environment_files",
+        "/kaggle/input/arc-prize-2026-arc-agi-3/environment_files",
+    ]
+    competition_env_files = next(
+        (p for p in _dm_env_candidates if Path(p).is_dir()), _dm_env_candidates[0])\
+'''
+
+
 def main() -> None:
     nb = json.loads(BASE.read_text())
     patches_src = PATCHES.read_text()
@@ -104,6 +120,17 @@ def main() -> None:
     nb["cells"][install_idx]["source"] = INSTALL_NEW.splitlines(keepends=True)
     nb["cells"][install_idx]["outputs"] = []
     nb["cells"][install_idx]["execution_count"] = None
+
+    replaced_env = False
+    for cell in nb["cells"]:
+        if cell["cell_type"] != "code":
+            continue
+        src = "".join(cell["source"])
+        if ENVFILES_OLD in src:
+            cell["source"] = src.replace(ENVFILES_OLD, ENVFILES_NEW).splitlines(keepends=True)
+            replaced_env = True
+    if not replaced_env:
+        raise SystemExit("FATAL: environment_files line not found in duck-base.ipynb")
 
     OUT.write_text(json.dumps(nb, indent=1) + "\n")
     print(f"built {OUT}")
