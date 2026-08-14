@@ -29,6 +29,25 @@ T2 (per clicked color — the generalization over ACTION6 coordinates):
   * ClickNullRule — clicking color c never changes the board. Feeds the menu
     (predicted-dead clicks go last), not the edge set.
 
+Stage 2b additions:
+  * MoveBlockedRule (T1) — per-direction blocked-POSITION predicate for the
+    tu93/re86/tr87/wa30 class where legality is memory, not layout (invisible
+    fences: the frame shows nothing at the blocked cell). Learns the mover
+    blob's colors from successful relocations, then keys null outcomes by the
+    blob's bbox anchor: a position observed blocked >= min_fit times (and
+    never moved-from) predicts null FROM ANY BOARD STATE with the blob there
+    — exactly the generalization T0 cannot make (T0 re-probes the fence at
+    every new state).
+  * WinRule (game-level, scope per action id) — cross-level win-condition
+    predicate learned from observed win transitions (the graph is per-level;
+    this is the only cross-level channel besides T1/T2). Signature = the
+    action id, plus the clicked masked color for ACTION6; precondition = the
+    color-presence envelope of observed win sources (colors present at every
+    win must be present; colors never seen at any win source must be absent).
+    Serves candidate (state, action) pairs so commit-mode can target
+    PREDICTED wins on levels with no observed win edge; every attempt is
+    verified on execution and a hard failure cap kills a wrong predicate.
+
 Held-out accuracy: prequential (test-THEN-train)
 ------------------------------------------------
 Every incoming transition in a rule's scope is first used to score the rule's
@@ -110,6 +129,17 @@ class EffectConfig:
     max_pred_nodes: int = 1500   # predicted expansions per plan call
     max_shift: int = 12          # translation search radius
     max_blob_ratio: float = 3.0  # decline translation if blob grew this much
+    # Stage 2b — the ft09 fix: every audit_every-th frontier plan MUST probe
+    # the cheapest rule-predicted untried pair. Without this the effect-guided
+    # sweep is a de-facto PRUNE: on a game whose unpredicted frontier grows
+    # forever (ft09 L1: c=9 clicks change the board 97% of the time, spawning
+    # fresh states each step), goal 2c is never reached and a win behind a
+    # gated click_null color is starved for the whole budget (measured:
+    # s2a ft09 L1 = 3732 actions, 0 wins; T0-control found it).
+    audit_every: int = 8
+    # Stage 2b — win predicate
+    win_min_obs: int = 2         # observed wins before the predicate gates
+    max_win_failures: int = 5    # live failed attempts before it dies
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +150,11 @@ class Rule:
     """One hypothesis for one scope, with prequential gate bookkeeping."""
 
     family: str = "?"
+    # prediction precedence among gated rules (higher first, before window
+    # accuracy). Position-specific MEMORY must trump generic dynamics: a
+    # gated TranslationRule happily predicts a move THROUGH a learned fence
+    # (the frame shows clear cells), while MoveBlockedRule knows better.
+    priority: int = 0
 
     def __init__(self, scope: str, cfg: EffectConfig) -> None:
         self.scope = scope
@@ -567,6 +602,222 @@ class ConstantDiffRule(Rule):
 
 
 # ---------------------------------------------------------------------------
+# T1: blocked-move position predicate (Stage 2b)
+# ---------------------------------------------------------------------------
+
+class MoveBlockedRule(Rule):
+    """Per-direction blocked (position) predicate learned from failed moves.
+
+    tu93/re86/tr87/wa30 pattern: a move action returns a null transition at
+    specific avatar positions regardless of what the rest of the board shows
+    (invisible fences — legality is memory, not layout). The predicate:
+
+        blocked(p, A)  :=  action A observed null >= min_fit times with the
+                           mover blob anchored at p, and never observed to
+                           move from p
+
+    predicts identity (null) from ANY board state where the mover sits at p.
+    The mover is identified from successful `_fit_blob_relocate` fits (colors
+    + pixel-size range, majority vote); with zero or several candidate blobs
+    on a frame the rule declines. A position later observed to move (a door
+    opened) stops predicting immediately, and the prequential window de-gates
+    the rule if blockedness turns out to be state- rather than
+    position-driven.
+    """
+
+    family = "move_blocked"
+    priority = 1  # fence memory outranks generic movement dynamics
+
+    def __init__(self, scope: str, cfg: EffectConfig) -> None:
+        super().__init__(scope, cfg)
+        # frozenset(colors) -> {"n": supporters, "lo": px, "hi": px}
+        self._color_votes: dict[frozenset[int], dict] = {}
+        self._mover: frozenset[int] | None = None
+        self.blocked: Counter = Counter()   # (y0, x0) -> null observations
+        self.moved: Counter = Counter()     # (y0, x0) -> successful moves
+
+    def _refresh_mover(self) -> None:
+        best = None
+        for colors, v in self._color_votes.items():
+            if v["n"] < self.cfg.min_fit:
+                continue
+            if best is None or (v["n"], sorted(colors)) > \
+                    (self._color_votes[best]["n"], sorted(best)):
+                best = colors
+        self._mover = best
+
+    def _anchor(self, frame: np.ndarray) -> tuple[int, int] | None:
+        """bbox min-corner of the UNIQUE mover-colored component within the
+        learned pixel-size range; None when zero or ambiguous."""
+        if self._mover is None:
+            return None
+        v = self._color_votes[self._mover]
+        lab, n = ndimage.label(np.isin(frame, sorted(self._mover)),
+                               structure=_S4)
+        hits = []
+        for i in range(1, n + 1):
+            px = int((lab == i).sum())
+            if v["lo"] <= px <= v["hi"]:
+                hits.append(i)
+                if len(hits) > 1:
+                    return None
+        if len(hits) != 1:
+            return None
+        ys, xs = np.nonzero(lab == hits[0])
+        return (int(ys.min()), int(xs.min()))
+
+    def try_predict(self, frame: np.ndarray,
+                    akey: ActionKey) -> np.ndarray | None:
+        p = self._anchor(frame)
+        if p is None:
+            return None
+        if self.blocked[p] >= self.cfg.min_fit and self.moved[p] == 0:
+            return frame  # identity = deliberate null prediction
+        return None
+
+    def train(self, frame: np.ndarray, akey: ActionKey,
+              dst: np.ndarray) -> None:
+        if self.dead:
+            return
+        if np.array_equal(frame, dst):
+            p = self._anchor(frame)
+            if p is not None:
+                self.blocked[p] += 1
+            return
+        fit = _fit_blob_relocate(frame, dst)
+        if fit is None:
+            return  # unexplained non-null pair: the window judges it
+        colors, _delta, _bg, _layout, _mask, (px_s, px_d), _trav = fit
+        v = self._color_votes.setdefault(
+            frozenset(colors), {"n": 0, "lo": min(px_s, px_d),
+                                "hi": max(px_s, px_d)})
+        v["n"] += 1
+        v["lo"] = min(v["lo"], px_s, px_d)
+        v["hi"] = max(v["hi"], px_s, px_d)
+        self._refresh_mover()
+        p = self._anchor(frame)
+        if p is not None:
+            self.moved[p] += 1
+
+
+# ---------------------------------------------------------------------------
+# Game-level: win-condition predicate (Stage 2b)
+# ---------------------------------------------------------------------------
+
+class WinRule(Rule):
+    """Cross-level win-signature predicate, scope per action id.
+
+    Learned from observed win (level-up) transitions — the one regularity the
+    per-level graph cannot carry across levels. Gates once >= win_min_obs
+    wins share the signature (same action id; for ACTION6 also the same
+    clicked masked color). The precondition is the color-presence envelope of
+    the observed win sources; a level state with a color no win source ever
+    showed (or missing a color every win source had) is declined —
+    conservative on novel levels.
+
+    This rule never predicts frames. It serves candidate (state, action)
+    pairs via `candidates()`; the planner targets them as predicted wins and
+    the agent verifies on execution: `attempt_result(False)` counts toward a
+    hard failure cap (a predicate that keeps not winning is wrong — dead), a
+    success feeds the prequential window like any verified prediction.
+    """
+
+    family = "win_sig"
+
+    def __init__(self, scope: str, cfg: EffectConfig, aid: int) -> None:
+        super().__init__(scope, cfg)
+        self.aid = aid
+        self.win_colors: list[frozenset[int]] = []
+        self.click_colors: Counter = Counter()
+        self.attempt_failures = 0
+        self.attempt_successes = 0
+
+    def observe_win(self, frame: np.ndarray, akey: ActionKey) -> None:
+        """One observed level-up transition sourced at masked `frame`."""
+        self.win_colors.append(
+            frozenset(int(v) for v in np.unique(frame)))
+        if self.aid == 6:
+            _, x, y = akey
+            if 0 <= y < frame.shape[0] and 0 <= x < frame.shape[1]:
+                self.click_colors[int(frame[y, x])] += 1
+
+    @property
+    def signature_color(self) -> int | None:
+        """For ACTION6: the one clicked color every observed win shares."""
+        if len(self.click_colors) == 1:
+            return next(iter(self.click_colors))
+        return None
+
+    @property
+    def gated(self) -> bool:  # override: gate = consistent win evidence
+        if self.dead or len(self.win_colors) < self.cfg.win_min_obs:
+            return False
+        if self.aid == 6 and self.signature_color is None:
+            return False
+        return True
+
+    def precondition(self, frame: np.ndarray) -> bool:
+        """Colors present at EVERY observed win must be present. The stricter
+        no-novel-colors test applies only to non-click predicates: measured
+        on vc33, every level introduces a fresh color (L0:11, L1:14, L2:15),
+        so requiring colors <= union(win sources) made the ACTION6 predicate
+        permanently inert on exactly the new levels it exists for. Click
+        predicates are already localized by the signature color and bounded
+        by the failure cap; bare-action predicates have no such filter and
+        keep the conservative envelope."""
+        colors = {int(v) for v in np.unique(frame)}
+        always = set(self.win_colors[0])
+        union: set[int] = set()
+        for cs in self.win_colors:
+            always &= cs
+            union |= cs
+        if not always <= colors:
+            return False
+        return self.aid == 6 or colors <= union
+
+    def candidates(self, frame: np.ndarray, avail: tuple[int, ...],
+                   menu: list[ActionKey]) -> list[ActionKey]:
+        """Predicted-win action keys at a masked frame, menu order."""
+        if not self.gated or self.aid not in avail:
+            return []
+        if not self.precondition(frame):
+            return []
+        if self.aid != 6:
+            return [(self.aid, -1, -1)]
+        c = self.signature_color
+        h, w = frame.shape
+        return [a for a in menu
+                if a[0] == 6 and 0 <= a[2] < h and 0 <= a[1] < w
+                and int(frame[a[2], a[1]]) == c]
+
+    def attempt_result(self, success: bool) -> None:
+        if success:
+            self.attempt_successes += 1
+            self.note_outcome(True)
+        else:
+            self.attempt_failures += 1
+            self.note_outcome(False)
+            if self.attempt_failures >= self.cfg.max_win_failures:
+                self.dead = True
+
+    # frame-prediction interface unused — this rule serves candidates instead
+    def try_predict(self, frame: np.ndarray,
+                    akey: ActionKey) -> np.ndarray | None:
+        return None
+
+    def train(self, frame: np.ndarray, akey: ActionKey,
+              dst: np.ndarray) -> None:
+        pass
+
+    def stats(self) -> dict[str, Any]:
+        out = super().stats()
+        out["win_obs"] = len(self.win_colors)
+        out["attempts"] = self.attempt_successes + self.attempt_failures
+        out["attempt_successes"] = self.attempt_successes
+        return out
+
+
+# ---------------------------------------------------------------------------
 # T2: click rules (generalization over ACTION6 coordinates)
 # ---------------------------------------------------------------------------
 
@@ -701,12 +952,20 @@ class EffectEngine:
         scope = f"A{aid}"
         out: list[Rule] = []
         for family in (TranslationRule, BlobRelocateRule, ColorMapRule,
-                       ConstantDiffRule):
+                       ConstantDiffRule, MoveBlockedRule):
             k = (family.family, scope)
             if k not in self.rules:
                 self.rules[k] = family(scope, self.cfg)
             out.append(self.rules[k])
         return out
+
+    def _win_rule(self, aid: int) -> WinRule:
+        k = ("win_sig", f"A{aid}")
+        rule = self.rules.get(k)
+        if not isinstance(rule, WinRule):
+            rule = WinRule(f"A{aid}", self.cfg, aid)
+            self.rules[k] = rule
+        return rule
 
     def _t2_rules(self, color: int) -> list[Rule]:
         scope = f"click:c={color}"
@@ -776,7 +1035,8 @@ class EffectEngine:
         frame = np.asarray(self.perception.mask_frame(
             np.asarray(frame, dtype=np.int16)))
         candidates = [r for r in self._rules_for(frame, akey) if r.gated]
-        candidates.sort(key=lambda r: -(r.window_accuracy or 0.0))
+        candidates.sort(key=lambda r: (-r.priority,
+                                       -(r.window_accuracy or 0.0)))
         for rule in candidates:
             pred = rule.try_predict(frame, akey)
             if pred is None:
@@ -810,6 +1070,45 @@ class EffectEngine:
                 assert p.key is not None and p.frame is not None
                 out.append((akey, p.key, p.frame, p.penalty))
         return out
+
+    # -- win predicate (Stage 2b) -------------------------------------------
+
+    def observe_win(self, src_frame: np.ndarray, akey: ActionKey) -> None:
+        """One observed level-up transition (RAW source frame; masked here).
+        Terminal transitions stay OUT of `observe`; this is their channel."""
+        src = np.asarray(self.perception.mask_frame(
+            np.asarray(src_frame, dtype=np.int16)))
+        rule = self._win_rule(akey[0])
+        rule.transitions_seen += 1
+        rule.observe_win(src, akey)
+        self.version += 1
+        self._cache.clear()
+
+    def win_rules(self) -> list[WinRule]:
+        return [r for r in self.rules.values()
+                if isinstance(r, WinRule) and r.gated]
+
+    @property
+    def has_win_rules(self) -> bool:
+        return bool(self.win_rules())
+
+    def win_candidates(self, frame: np.ndarray, avail: tuple[int, ...],
+                       menu: list[ActionKey]) -> list[ActionKey]:
+        """Predicted-win action keys at a RAW frame (masked here)."""
+        f = np.asarray(self.perception.mask_frame(
+            np.asarray(frame, dtype=np.int16)))
+        out: list[ActionKey] = []
+        for rule in self.win_rules():
+            out.extend(rule.candidates(f, avail, menu))
+        return out
+
+    def win_attempt_result(self, akey: ActionKey, success: bool) -> None:
+        """The agent executed a predicted-win action; the env has spoken."""
+        rule = self.rules.get(("win_sig", f"A{akey[0]}"))
+        if isinstance(rule, WinRule):
+            rule.attempt_result(success)
+            self.version += 1
+            self._cache.clear()
 
     # -- level boundary -----------------------------------------------------
 

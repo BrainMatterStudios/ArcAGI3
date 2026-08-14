@@ -67,6 +67,15 @@ class EffectsPort(Protocol):
         """[(akey, key, frame, penalty)] successors of a predicted frame."""
         ...
 
+    # Stage 2b — win predicate (optional; looked up with getattr so bare
+    # test ports without it keep working)
+    @property
+    def has_win(self) -> bool: ...  # any gated win predicate?
+
+    def win_candidates(self, key: NodeKey, menu: list) -> list:
+        """Predicted-win ActionKeys at a REAL node, menu order."""
+        ...
+
 
 @dataclass
 class Plan:
@@ -80,12 +89,13 @@ class Plan:
     there must demote the rule that proposed it. kind="none": no goal.
     """
 
-    kind: str  # "win" | "frontier" | "none"
+    kind: str  # "win" | "win_pred" | "frontier" | "none"
     actions: list[ActionKey] = field(default_factory=list)
     expected: list[NodeKey] = field(default_factory=list)
     predicted: list[bool] = field(default_factory=list)
     cost: float = INF
     target: NodeKey | None = None
+    audit: bool = False  # this plan probes a rule-predicted pair (Stage 2b)
 
 
 def dijkstra(
@@ -236,6 +246,7 @@ def plan(
     greedy_rank_max: int = 3,
     fatal_retry_cap: int = 2,
     effects: EffectsPort | None = None,
+    audit: bool = False,
 ) -> Plan:
     """Best next plan from `current` (see module docstring for the goal
     ladder). With effects=None this is exactly the Stage-1 T0 planner.
@@ -245,18 +256,55 @@ def plan(
     prior_penalty <= 0.3 no other probe can beat cost 1 + 0.3*3 = 1.9, since
     reaching any other node costs >= 2. Predicted pairs are excluded: probing
     what a gated rule already knows is the Stage-1b waste this tier removes.
+
+    audit=True (Stage 2b): the effect-guided sweep must reorder, never prune.
+    On games whose unpredicted frontier grows without bound, goal 2c is
+    unreachable and every predicted pair is starved forever (the measured
+    ft09-L1 regression). The agent therefore forces every N-th frontier plan
+    through here: probe the cheapest rule-PREDICTED untried pair first, so
+    predicted pairs get a guaranteed 1/N share of probes instead of "later".
     """
     use_fx = effects is not None and effects.active
+    use_win = use_fx and bool(getattr(effects, "has_win", False))
 
     def unpredicted(key: NodeKey, untried: list[ActionKey]) -> list[ActionKey]:
         if not use_fx:
             return untried
         return [a for a in untried if effects.classify(key, a) is None]
 
+    def cheapest_untried(
+        dist: dict[NodeKey, float], only_predicted: bool = False,
+    ) -> tuple[float, NodeKey, ActionKey] | None:
+        """Cheapest reachable untried pair; optionally restricted to pairs a
+        gated rule predicts (the audit set). only_predicted=False gives the
+        FULL pair set (T0 completeness, goal 2c)."""
+        best: tuple[float, float, NodeKey, ActionKey] | None = None
+        for key in graph.nodes:
+            d = dist.get(key, INF)
+            if d == INF:
+                continue
+            if best is not None and d + 1 > best[0]:
+                continue  # cannot beat the incumbent even at rank 0
+            menu = menu_of(key)
+            untried = graph.untried(key, menu)
+            if only_predicted:
+                untried = [a for a in untried
+                           if effects.classify(key, a) is not None]
+            if not untried:
+                continue
+            action = min(untried, key=menu.index)
+            cost = d + 1 + prior_penalty * menu.index(action)
+            if best is None or (cost, d) < (best[0], best[1]):
+                best = (cost, d, key, action)
+        if best is None:
+            return None
+        return best[0], best[2], best[3]
+
     # commit-mode precedence: the greedy probe shortcut is only legal while
     # NO win edge is known — otherwise exploration would preempt the replay
-    # (the "stop exploring once the win is known" contract).
-    if not graph.win_edges:
+    # (the "stop exploring once the win is known" contract). An audit plan
+    # and a gated win predicate also bypass it: both need the full scan.
+    if not graph.win_edges and not audit and not use_win:
         cur_menu = menu_of(current)
         cur_untried = unpredicted(current, graph.untried(current, cur_menu))
         if cur_untried:
@@ -296,6 +344,41 @@ def plan(
         return Plan(kind="win", actions=actions + [action],
                     expected=expected, predicted=predicted + [False],
                     cost=cost, target=src)
+
+    # goal 1.5 (Stage 2b): predicted win — a gated cross-level win predicate
+    # proposes untried (state, action) pairs; commit-mode targets the
+    # cheapest one. Verified on execution (failure feeds the predicate's cap).
+    if use_win:
+        best_wp: tuple[float, NodeKey, ActionKey] | None = None
+        for key in graph.nodes:
+            d = dist.get(key, INF)
+            if d == INF:
+                continue
+            if best_wp is not None and d + 1 >= best_wp[0]:
+                continue
+            menu = menu_of(key)
+            cands = graph.untried(key, effects.win_candidates(key, menu))
+            if cands:
+                best_wp = (d + 1, key, cands[0])
+        if best_wp is not None:
+            cost, key, action = best_wp
+            actions, expected = _path_to(parent, current, key)
+            return Plan(kind="win_pred", actions=actions + [action],
+                        expected=expected,
+                        predicted=[False] * (len(actions) + 1),
+                        cost=cost, target=key)
+
+    # audit (Stage 2b): guaranteed probe share for rule-predicted pairs —
+    # reorder-not-prune. Runs BELOW commit goals, ABOVE the normal frontier.
+    if audit and use_fx:
+        hit = cheapest_untried(dist, only_predicted=True)
+        if hit is not None:
+            cost, key, action = hit
+            actions, expected = _path_to(parent, current, key)
+            return Plan(kind="frontier", actions=actions + [action],
+                        expected=expected,
+                        predicted=[False] * (len(actions) + 1),
+                        cost=cost, target=key, audit=True)
 
     # goal 2a: cheapest reachable UNPREDICTED frontier pair
     best: tuple[float, float, NodeKey, ActionKey] | None = None
@@ -340,23 +423,9 @@ def plan(
     # goal 2c: predicted-but-untried pairs, cheapest first (T0 completeness:
     # a wrong "null"/known-successor prediction cannot hide a win forever)
     if use_fx:
-        best_c: tuple[float, float, NodeKey, ActionKey] | None = None
-        for key in graph.nodes:
-            d = dist.get(key, INF)
-            if d == INF:
-                continue
-            if best_c is not None and d + 1 > best_c[0]:
-                continue
-            menu = menu_of(key)
-            untried = graph.untried(key, menu)
-            if not untried:
-                continue
-            action = min(untried, key=menu.index)
-            cost = d + 1 + prior_penalty * menu.index(action)
-            if best_c is None or (cost, d) < (best_c[0], best_c[1]):
-                best_c = (cost, d, key, action)
-        if best_c is not None:
-            cost, _, key, action = best_c
+        hit = cheapest_untried(dist, only_predicted=False)
+        if hit is not None:
+            cost, key, action = hit
             actions, expected = _path_to(parent, current, key)
             return Plan(kind="frontier", actions=actions + [action],
                         expected=expected,

@@ -109,6 +109,10 @@ class GameReport:
     effect_stats: list[dict[str, Any]] = field(default_factory=list)
     rule_mispredictions: int = 0     # live predicted-edge failures
     predicted_steps_taken: int = 0   # executed steps that rode predicted edges
+    # Stage 2b additions
+    audit_plans: int = 0             # forced probes of rule-predicted pairs
+    win_pred_attempts: int = 0       # predicted-win actions executed
+    win_pred_hits: int = 0           # ... that actually leveled up / won
 
     @property
     def completed_level_actions(self) -> list[int]:
@@ -190,6 +194,16 @@ class _PlannerEffects:
 
     def chain(self, key: Any, frame: np.ndarray, avail: tuple[int, ...]):
         return self.engine.chain_successors(key, frame, avail)
+
+    @property
+    def has_win(self) -> bool:
+        return self.engine.has_win_rules
+
+    def win_candidates(self, key: NodeKey, menu: list[ActionKey]) -> list[ActionKey]:
+        node = self.graph.nodes.get(key)
+        if node is None:
+            return []
+        return self.engine.win_candidates(node.frame, node.avail, menu)
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +288,10 @@ class EngineeredAgent:
             self._cur_key = None
         elif state == str(GameState.WIN) or lc_after > lc_before:
             g.observe(src, akey, None, level_up=True)
+            # Stage 2b: win transitions feed the cross-level win predicate
+            # (they stay OUT of effects.observe — rules model board dynamics)
+            if self.effects_engine is not None:
+                self.effects_engine.observe_win(prev_frame, akey)
             if state == str(GameState.WIN):
                 self._cur_key = None
             else:
@@ -478,6 +496,10 @@ class EngineeredAgent:
         self.effects_engine: EffectEngine | None = None
         self.rule_mispredictions = 0
         self.predicted_steps = 0
+        self.audit_plans = 0
+        self.win_pred_attempts = 0
+        self.win_pred_hits = 0
+        self._plans_since_audit = 0
         self.action_tries: Counter = Counter()
         self.action_nulls: Counter = Counter()
         self._pending: list[_RawT] = []
@@ -557,24 +579,38 @@ class EngineeredAgent:
             menu_fn = lambda k, _g=g, _t=tier: self._menu(_g, k, _t)  # noqa: E731
             fx = (_PlannerEffects(self.effects_engine, g)
                   if self.effects_engine is not None else None)
+            # Stage 2b audit share: every audit_every-th frontier plan must
+            # probe a rule-predicted pair (reorder-not-prune; the ft09 fix)
+            audit_due = (fx is not None and fx.active
+                         and self._plans_since_audit
+                         >= cfg.effect_config.audit_every)
             p: Plan = plan(g, self._cur_key, menu_fn,
                            prior_penalty=cfg.prior_penalty,
                            greedy_rank_max=cfg.greedy_rank_max,
-                           effects=fx)
+                           effects=fx, audit=audit_due)
             if p.kind == "none":
                 if tier < len(cfg.lattice_steps):
                     tier += 1
                     continue
                 end_reason = "frontier_exhausted"
                 break
+            if p.kind == "frontier":
+                if p.audit:
+                    self.audit_plans += 1
+                    self._plans_since_audit = 0
+                else:
+                    self._plans_since_audit += 1
 
             src_key = self._cur_key  # source of step i (for rule demotion)
+            executed_last = False
             for i, akey in enumerate(p.actions):
                 step_predicted = bool(p.predicted) and i < len(p.predicted) \
                     and p.predicted[i]
                 obs = self._step(renv, akey)
                 if step_predicted:
                     self.predicted_steps += 1
+                if i == len(p.actions) - 1:
+                    executed_last = True
                 if str(obs.state) != str(GameState.NOT_FINISHED):
                     break
                 if int(obs.levels_completed or 0) != level:
@@ -590,6 +626,16 @@ class EngineeredAgent:
                         self.rule_mispredictions += 1
                     break
                 src_key = p.expected[i] if i < len(p.expected) else self._cur_key
+
+            # Stage 2b: a predicted-win attempt is verified by the env —
+            # success = the final action leveled up (or won the game)
+            if p.kind == "win_pred" and executed_last \
+                    and self.effects_engine is not None:
+                success = (int(obs.levels_completed or 0) > level
+                           or str(obs.state) == str(GameState.WIN))
+                self.effects_engine.win_attempt_result(p.actions[-1], success)
+                self.win_pred_attempts += 1
+                self.win_pred_hits += int(success)
 
         levels = self.max_level
         if won and win_levels:
@@ -614,6 +660,9 @@ class EngineeredAgent:
                           if self.effects_engine is not None else []),
             rule_mispredictions=self.rule_mispredictions,
             predicted_steps_taken=self.predicted_steps,
+            audit_plans=self.audit_plans,
+            win_pred_attempts=self.win_pred_attempts,
+            win_pred_hits=self.win_pred_hits,
         )
 
 
