@@ -60,6 +60,15 @@ def test_stop_loss_ends_game(arcade: Any, gid_of: dict[str, str]) -> None:
     assert report.actions_total < 200
 
 
+def test_r11l_efficiency_with_effects_on(arcade: Any, gid_of: dict[str, str]) -> None:
+    """Stage-2a regression guard: r11l is the one game T0 already did right
+    (Stage-1b: 37 actions for L1 vs human median 34.5 = 1.07x). With the
+    effect model ON it must stay <= 1.5x human median for its first level."""
+    report, _ = _play(arcade, gid_of, "r11l", budget=600, wall_s=120)
+    assert report.levels_completed >= 1
+    assert report.per_level_actions[0] <= 1.5 * 34.5
+
+
 @pytest.mark.xfail(
     strict=True,
     reason="Measured 2026-08-14: sb26 L0 is a combinatorial assignment "

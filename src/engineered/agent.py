@@ -44,6 +44,7 @@ from engineered.battery import (
     PerceptionProfile,
     ProbeBattery,
 )
+from engineered.effects import EffectConfig, EffectEngine
 from engineered.envs import game_stem
 from engineered.graph import (
     ActionKey,
@@ -81,6 +82,9 @@ class AgentConfig:
     # for us — levels are sequential) past multiplier * human_apl[stem]
     level_stop_multiplier: float | None = None
     human_apl: dict[str, float] = field(default_factory=dict)
+    # Stage 2a: T1/T2 effect model + predicted-edge planning
+    effects_enabled: bool = True
+    effect_config: EffectConfig = field(default_factory=EffectConfig)
     verbose: bool = False
 
 
@@ -101,6 +105,10 @@ class GameReport:
     wall_s: float
     archetype: str
     graph_stats: dict[int, dict[str, int]]
+    # Stage 2a additions (defaulted so Stage-1 call sites stay valid)
+    effect_stats: list[dict[str, Any]] = field(default_factory=list)
+    rule_mispredictions: int = 0     # live predicted-edge failures
+    predicted_steps_taken: int = 0   # executed steps that rode predicted edges
 
     @property
     def completed_level_actions(self) -> list[int]:
@@ -155,6 +163,33 @@ def _action_id(action: Any) -> int:
 # (prev_frame, prev_avail, lc_before, akey, frame, avail_after, state, lc_after)
 _RawT = tuple[np.ndarray, tuple[int, ...], int, ActionKey, np.ndarray,
               tuple[int, ...], str, int]
+
+
+# ---------------------------------------------------------------------------
+# Planner port over the effect engine (design doc §2 Layer 4)
+# ---------------------------------------------------------------------------
+
+class _PlannerEffects:
+    """Adapts one level's graph + the game's EffectEngine to EffectsPort."""
+
+    def __init__(self, engine: EffectEngine, graph: LevelGraph) -> None:
+        self.engine = engine
+        self.graph = graph
+        self.max_pred_depth = engine.cfg.max_pred_depth
+        self.max_pred_nodes = engine.cfg.max_pred_nodes
+
+    @property
+    def active(self) -> bool:
+        return bool(self.engine.gated_rules())
+
+    def classify(self, key: NodeKey, akey: ActionKey):
+        node = self.graph.nodes.get(key)
+        if node is None:
+            return None
+        return self.engine.predict(key, node.frame, akey)
+
+    def chain(self, key: Any, frame: np.ndarray, avail: tuple[int, ...]):
+        return self.engine.chain_successors(key, frame, avail)
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +288,11 @@ class EngineeredAgent:
             g.observe(src, akey, dst)
             if dst == src:
                 self.action_nulls[akey] += 1
+            # T1/T2 rule learning: prequential test-then-train on every
+            # within-level, non-terminal transition (terminal transitions
+            # model level boundaries, not board dynamics — excluded)
+            if self.effects_engine is not None:
+                self.effects_engine.observe(prev_frame, akey, frame)
             self._cur_key = dst
 
     # -- menus -------------------------------------------------------------
@@ -297,7 +337,9 @@ class EngineeredAgent:
             at menu build time (a node's menu is built when it is first
             planned from, so counts are fresh where it matters).
         """
-        cache_key = (g.level, key, tier)
+        engine = self.effects_engine
+        cache_key = (g.level, key, tier,
+                     engine.version if engine is not None else -1)
         cached = self._menu_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -346,9 +388,27 @@ class EngineeredAgent:
         # completeness is preserved, the sweep order just stops paying the
         # dead cells first.
         nulls, tries = self.action_nulls, self.action_tries
-        keep = [a for a in menu
-                if tries[a] < 6 or nulls[a] / tries[a] < 0.9]
-        dead = [a for a in menu if a not in keep]
+        dead_set = {a for a in menu
+                    if tries[a] >= 6 and nulls[a] / tries[a] >= 0.9}
+        # T2 click-null generalization: colors whose clicks a GATED rule
+        # predicts null are demoted for ALL coordinates of that color —
+        # unlike the per-key counter above, this covers never-tried cells
+        # (ft09-class waste). Demotion, not deletion: completeness holds.
+        if engine is not None and 6 in avail:
+            null_colors = {
+                r.color for r in engine.gated_rules()
+                if getattr(r, "family", "") == "click_null"
+            }
+            if null_colors:
+                assert self.perception is not None
+                masked = self.perception.mask_frame(
+                    np.asarray(node.frame, dtype=np.int16))
+                for a in menu:
+                    if a[0] == 6 and a not in dead_set:
+                        if int(masked[a[2], a[1]]) in null_colors:
+                            dead_set.add(a)
+        keep = [a for a in menu if a not in dead_set]
+        dead = [a for a in menu if a in dead_set]
         menu = keep + dead
         self._menu_cache[cache_key] = menu
         return menu
@@ -415,6 +475,9 @@ class EngineeredAgent:
         self.archetype = ""
         self.max_level = 0
         self.plan_mismatches = 0
+        self.effects_engine: EffectEngine | None = None
+        self.rule_mispredictions = 0
+        self.predicted_steps = 0
         self.action_tries: Counter = Counter()
         self.action_nulls: Counter = Counter()
         self._pending: list[_RawT] = []
@@ -427,10 +490,13 @@ class EngineeredAgent:
         profile, bstate = battery.run(renv)  # calls renv.reset() once
         self.stem = profile.stem
         self.perception = profile.perception()
+        if cfg.effects_enabled:
+            self.effects_engine = EffectEngine(self.perception,
+                                               cfg.effect_config)
         self._absorb_profile(profile)
         self.archetype = profile.archetype
         battery_actions = bstate.actions_spent
-        self._replay_pending()
+        self._replay_pending()  # battery transitions also train the rules
 
         obs = renv.last_obs
         win_levels = getattr(obs, "win_levels", None)
@@ -457,8 +523,13 @@ class EngineeredAgent:
             if level != last_level:
                 last_level = level
                 tier = 0
+                if self.effects_engine is not None:
+                    self.effects_engine.on_level_up()
                 if cfg.reprobe_on_level_up:
-                    bcfg = BatteryConfig(budget=cfg.reprobe_budget)
+                    # the re-probe spends scored actions too: never past the
+                    # per-game budget (measured +7 overshoot on tu93)
+                    left = max(cfg.budget - renv.actions, 0)
+                    bcfg = BatteryConfig(budget=min(cfg.reprobe_budget, left))
                     st = self._fresh_battery_state(obs, bcfg)
                     # pass the pre-rooted state: run(state=None) would call
                     # env.reset() and replay the level
@@ -484,9 +555,12 @@ class EngineeredAgent:
                 self._cur_key = key
 
             menu_fn = lambda k, _g=g, _t=tier: self._menu(_g, k, _t)  # noqa: E731
+            fx = (_PlannerEffects(self.effects_engine, g)
+                  if self.effects_engine is not None else None)
             p: Plan = plan(g, self._cur_key, menu_fn,
                            prior_penalty=cfg.prior_penalty,
-                           greedy_rank_max=cfg.greedy_rank_max)
+                           greedy_rank_max=cfg.greedy_rank_max,
+                           effects=fx)
             if p.kind == "none":
                 if tier < len(cfg.lattice_steps):
                     tier += 1
@@ -494,8 +568,13 @@ class EngineeredAgent:
                 end_reason = "frontier_exhausted"
                 break
 
+            src_key = self._cur_key  # source of step i (for rule demotion)
             for i, akey in enumerate(p.actions):
+                step_predicted = bool(p.predicted) and i < len(p.predicted) \
+                    and p.predicted[i]
                 obs = self._step(renv, akey)
+                if step_predicted:
+                    self.predicted_steps += 1
                 if str(obs.state) != str(GameState.NOT_FINISHED):
                     break
                 if int(obs.levels_completed or 0) != level:
@@ -504,7 +583,13 @@ class EngineeredAgent:
                     break
                 if i < len(p.expected) and self._cur_key != p.expected[i]:
                     self.plan_mismatches += 1
+                    if step_predicted and self.effects_engine is not None:
+                        # a rule-proposed edge failed live: demote the rule,
+                        # flag the source state back to the Markov machinery
+                        self.effects_engine.live_mispredict(src_key, akey)
+                        self.rule_mispredictions += 1
                     break
+                src_key = p.expected[i] if i < len(p.expected) else self._cur_key
 
         levels = self.max_level
         if won and win_levels:
@@ -525,6 +610,10 @@ class EngineeredAgent:
             wall_s=round(time.monotonic() - t0, 2),
             archetype=self.archetype,
             graph_stats={lvl: g.stats() for lvl, g in sorted(self.graphs.items())},
+            effect_stats=(self.effects_engine.stats_rows()
+                          if self.effects_engine is not None else []),
+            rule_mispredictions=self.rule_mispredictions,
+            predicted_steps_taken=self.predicted_steps,
         )
 
 
