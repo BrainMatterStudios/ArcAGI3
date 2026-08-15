@@ -69,7 +69,11 @@ DEFAULT_OUT = REPO / "offkaggle/results"
 RESULT_FILENAME = "patch_closure_result.json"  # pc_driver's own artifact name
 ARMS = ("shipped", "base")
 
-SERVED_MODEL_NAME = "vrfai/Qwen3.6-27B-FP8"
+# ARC3_WAVE_SERVED_MODEL overrides for candidate-brain waves (e.g. the
+# Qwen3.8 arm on arc3-vllm38, 2026-08-15). Default = the scored contract;
+# test_offkaggle.py pins the default, not the override.
+SERVED_MODEL_NAME = os.environ.get(
+    "ARC3_WAVE_SERVED_MODEL", "vrfai/Qwen3.6-27B-FP8")
 
 # ---------------------------------------------------------------------------
 # The scored analyzer env block, copied FAITHFULLY from the setup_env dict in
