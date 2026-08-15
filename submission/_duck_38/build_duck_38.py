@@ -35,14 +35,18 @@ BASE = REPO / "submission/_duck_base/duck-base.ipynb"
 OUT = Path(__file__).parent / "duck-38.ipynb"
 
 OLD_SNAPSHOT_REF = "driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot"
-NEW_SNAPSHOT_REF = "ahmedmobasher86/qwen3-8-27b-fp8-hf-snapshot"
+# mustangliu's public dataset VERIFIED 2026-08-15 (crc32 manifest byte-identical
+# to the official HF snapshot; all 81 files, sizes exact; shards spot-hashed).
+# Our own upload (ahmedmobasher86/qwen3-8-27b-fp8-hf-snapshot) is the durable
+# fallback ref once its Kaggle processing completes.
+NEW_SNAPSHOT_REF = "mustangliu/qwen38-27b-fp8-hf-snapshot"
 
 # The exact constants inside the bundle's setup_commands.json PYSETUP blob
 # (scratchpad/taaf_scored_ref/setup_commands.json is the tracked reference).
 CMD_SWAPS = (
-    ("MODEL_OWNER = 'driessmit1'", "MODEL_OWNER = 'ahmedmobasher86'"),
+    ("MODEL_OWNER = 'driessmit1'", "MODEL_OWNER = 'mustangliu'"),
     ("MODEL_SLUG = 'vrfai-qwen3-6-27b-fp8-hf-snapshot'",
-     "MODEL_SLUG = 'qwen3-8-27b-fp8-hf-snapshot'"),
+     "MODEL_SLUG = 'qwen38-27b-fp8-hf-snapshot'"),
     ("SERVED_MODEL_NAME = 'vrfai/Qwen3.6-27B-FP8'",
      "SERVED_MODEL_NAME = 'Qwen/Qwen3.8-27B-FP8'"),
 )
@@ -57,9 +61,9 @@ RUN_LOOP_NEW = """\
     # execution. Each replacement must fire — a silent no-op here would serve
     # the wrong model while the submission claims 3.8 (fail loudly instead).
     _38_SWAPS = (
-        ("MODEL_OWNER = 'driessmit1'", "MODEL_OWNER = 'ahmedmobasher86'"),
+        ("MODEL_OWNER = 'driessmit1'", "MODEL_OWNER = 'mustangliu'"),
         ("MODEL_SLUG = 'vrfai-qwen3-6-27b-fp8-hf-snapshot'",
-         "MODEL_SLUG = 'qwen3-8-27b-fp8-hf-snapshot'"),
+         "MODEL_SLUG = 'qwen38-27b-fp8-hf-snapshot'"),
         ("SERVED_MODEL_NAME = 'vrfai/Qwen3.6-27B-FP8'",
          "SERVED_MODEL_NAME = 'Qwen/Qwen3.8-27B-FP8'"),
     )
