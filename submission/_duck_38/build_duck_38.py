@@ -14,7 +14,8 @@ vLLM 0.19.0 loaded it clean on the Modal exact-fidelity rig.
 
 MECHANISM (three coordinated text swaps, all asserted, zero other deltas):
   1. kernel-metadata.json dataset_sources: vrfai snapshot dataset →
-     ahmedmobasher86/qwen3-8-27b-fp8-hf-snapshot.
+     mustangliu/qwen38-27b-fp8-hf-snapshot (public primary; Ahmed's private
+     snapshot is retained as the durability fallback once processing completes).
   2. Notebook cell DATASET_SOURCES list: same swap (drives
      TAAF_KAGGLE_INPUT_PATHS, which resolve_kaggle_dataset_path consults).
   3. Cell 8's setup-command loop: rewrite the command TEXT before execution —
@@ -24,7 +25,13 @@ MECHANISM (three coordinated text swaps, all asserted, zero other deltas):
 Plus the commit-only probe-both mount cells proven by duck-mem v4 and
 duck-p3 v2 (the scored rerun never executes the environment_files branch).
 
-Usage:  .venv/bin/python submission/_duck_38/build_duck_38.py
+Usage:
+  .venv/bin/python submission/_duck_38/build_duck_38.py
+  kaggle kernels push -p submission/_duck_38 --accelerator NvidiaRtxPro6000
+
+The explicit accelerator flag is mandatory: Kaggle does not use the metadata
+machine_shape field to select the allocator, and a bare GPU push falls back to
+a P100 that cannot serve a 27B FP8 model.
 """
 import hashlib
 import json
@@ -33,13 +40,18 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 BASE = REPO / "submission/_duck_base/duck-base.ipynb"
 OUT = Path(__file__).parent / "duck-38.ipynb"
+METADATA = Path(__file__).parent / "kernel-metadata.json"
+MACHINE_SHAPE = "NvidiaRtxPro6000"
 
 OLD_SNAPSHOT_REF = "driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot"
 # mustangliu's public dataset VERIFIED 2026-08-15 (crc32 manifest byte-identical
-# to the official HF snapshot; all 81 files, sizes exact; shards spot-hashed).
+# to the official HF snapshot; all 66 required weights present in the 82-file,
+# 30.890 GB listing; layer-0 and outside shards spot-hashed).
 # Our own upload (ahmedmobasher86/qwen3-8-27b-fp8-hf-snapshot) is the durable
 # fallback ref once its Kaggle processing completes.
-NEW_SNAPSHOT_REF = "mustangliu/qwen38-27b-fp8-hf-snapshot"
+PRIMARY_SNAPSHOT_REF = "mustangliu/qwen38-27b-fp8-hf-snapshot"
+FALLBACK_SNAPSHOT_REF = "ahmedmobasher86/qwen3-8-27b-fp8-hf-snapshot"
+NEW_SNAPSHOT_REF = PRIMARY_SNAPSHOT_REF
 
 # The exact constants inside the bundle's setup_commands.json PYSETUP blob
 # (scratchpad/taaf_scored_ref/setup_commands.json is the tracked reference).
@@ -187,7 +199,14 @@ def main() -> None:
     assert "Qwen/Qwen3.8-27B-FP8" in joined, "new served name missing"
 
     OUT.write_text(json.dumps(nb, indent=1) + "\n")
+
+    metadata = json.loads(METADATA.read_text())
+    assert metadata.get("enable_gpu") is True, "duck-38 metadata must enable GPU"
+    metadata["machine_shape"] = MACHINE_SHAPE
+    METADATA.write_text(json.dumps(metadata, indent=2) + "\n")
+
     print(f"built {OUT}")
+    print(f"pinned accelerator metadata: {MACHINE_SHAPE}")
     print(f"canonical hash: {ledg_hash(nb)}")
 
 
