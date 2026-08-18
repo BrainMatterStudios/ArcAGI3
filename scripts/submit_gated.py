@@ -71,7 +71,10 @@ PACK_MARKERS: dict[str, list[str]] = {
     "wmr": ["patch_watchdog", "patch_hud_board_identity", "patch_win_replay"],
     "hud": ["patch_hud_board_identity", "TAAF_HUD_MASK"],
     "mask": ["patch_hud_board_identity", "TAAF_HUD_MASK"],
-    "replay": ["patch_win_replay", "TAAF_WIN_REPLAY"],
+    # 2026-08-18: the banking graft implements win-then-replay natively;
+    # its install banner is the marker proving the mechanism is in the bytes.
+    "replay": ["patch_win_replay", "TAAF_WIN_REPLAY", "[banking] armed"],
+    "banking": ["[banking] armed"],
     "graph": ["patch_frontier_graph", "TAAF_GRAPH"],
     "frontier": ["patch_frontier_graph", "TAAF_GRAPH"],
     "grinder": ["patch_frontier_graph", "TAAF_GRAPH"],
