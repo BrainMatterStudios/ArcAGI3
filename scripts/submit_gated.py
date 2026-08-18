@@ -66,18 +66,20 @@ FAST_COMPLETE_SECONDS = 60 * 60   # COMPLETE under this = never played
 # which must appear in the notebook's source. Keyed on how packs are actually
 # named in submission messages.
 PACK_MARKERS: dict[str, list[str]] = {
-    "depth": ["cross_level_notes", "depth_pack"],
+    "depth": ["cross_level_notes", "depth_pack", "[EXPLORER UNLOCK]"],
     "watchdog": ["patch_watchdog", "TAAF_WATCHDOG"],
     "wmr": ["patch_watchdog", "patch_hud_board_identity", "patch_win_replay"],
-    "hud": ["patch_hud_board_identity", "TAAF_HUD_MASK"],
-    "mask": ["patch_hud_board_identity", "TAAF_HUD_MASK"],
+    # 2026-08-18: explorer-graft era markers — the graft's own class/banner
+    # strings prove the claimed mechanism is in the bytes.
+    "hud": ["patch_hud_board_identity", "TAAF_HUD_MASK", "VolatilityMask"],
+    "mask": ["patch_hud_board_identity", "TAAF_HUD_MASK", "VolatilityMask"],
     # 2026-08-18: the banking graft implements win-then-replay natively;
     # its install banner is the marker proving the mechanism is in the bytes.
-    "replay": ["patch_win_replay", "TAAF_WIN_REPLAY", "[banking] armed"],
+    "replay": ["patch_win_replay", "TAAF_WIN_REPLAY", "[banking] armed", "reset-replay BFS"],
     "banking": ["[banking] armed"],
-    "graph": ["patch_frontier_graph", "TAAF_GRAPH"],
-    "frontier": ["patch_frontier_graph", "TAAF_GRAPH"],
-    "grinder": ["patch_frontier_graph", "TAAF_GRAPH"],
+    "graph": ["patch_frontier_graph", "TAAF_GRAPH", "FrontierGraph"],
+    "frontier": ["patch_frontier_graph", "TAAF_GRAPH", "FrontierGraph"],
+    "grinder": ["patch_frontier_graph", "TAAF_GRAPH", "FrontierGraph"],
     "compact": ["patch_compaction", "TAAF_COMPACT"],
     "compaction": ["patch_compaction", "TAAF_COMPACT"],
     "plan-queue": ["patch_plan_queue", "TAAF_COMPACT"],
