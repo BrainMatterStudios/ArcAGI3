@@ -413,6 +413,7 @@ def _session_state(session: Any) -> dict[str, Any]:
             "completed_levels": set(),
             "grinds_per_level": {},
             "grind_exhausted": set(),
+            "grind_unlocked_levels": set(),
             "grinding": False,
             "age_marks": {},
             "worker_thread": None,
@@ -472,13 +473,15 @@ def _maybe_grind(session: Any) -> None:
     if solver._is_run_complete(game) or solver._is_engine_game_over(game):
         return
 
-    # v4 ZERO-PROGRESS GATE (measurement-backed, 2026-08-19): grind actions
-    # permanently inflate a level's action counter, and on partial runs there
-    # is no 115-cap subsidy pool — a level the LLM later completes after a
-    # grind scores ~0 (measured: 100 -> 1.2 on the official scorer). Games
-    # with ANY completed level therefore NEVER grind; zero-progress games
-    # have nothing to ruin (their alternative is 0) and unlock is pure gain.
-    if int(game.current_state.levels_completed) > 0:
+    # v5 GRIND-OWNED GATE (supersedes v4's zero-progress gate): grind actions
+    # only destroy value on levels the LLM completes (measured: 100 -> 1.2 on
+    # the official scorer, no subsidy pool on partial runs). A game may grind
+    # iff NO level was ever completed by the LLM — either untouched (cached
+    # levels_completed == 0 pre-grind) or every completion is grinder-owned.
+    llm_completed = xs["completed_levels"] - xs["grind_unlocked_levels"]
+    if llm_completed:
+        return
+    if int(game.current_state.levels_completed) > 0 and not xs["grind_unlocked_levels"]:
         return
     level = solver._level_number(game)
     if level in xs["completed_levels"] or level in xs["grind_exhausted"]:
@@ -512,18 +515,21 @@ def _maybe_grind(session: Any) -> None:
 
 
 def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
-    """RESET-REPLAY BFS from the level start, driven DIRECTLY on the engine
-    wrapper (``game.env.step`` — the banking graft's proven fast path).
+    """v5 GRIND-TO-WIN-AND-BANK, direct on the engine wrapper.
 
-    v2 (2026-08-18): the v1 grind stepped through ``session._execute_action``
-    and measured ~2 actions/second on the scored GPU (each step pays payload
-    construction + animation rendering) — a 19k-action search would take
-    hours. Direct ``env.step`` runs at engine speed, counts identically on
-    the engine scorecard (free on a never-completed level), and leaves the
-    session history/trace untouched. This is byte-for-byte the algorithm the
-    offline gate validated at 4/5 zero-game unlocks (validate_explorer.py):
-    warmup (no freeze — the slow-tick band rule is monotone), then phased
-    BFS: moves-only, then moves + compact snap-to-body click candidates.
+    Per level: reset-replay BFS (warmup mask learning, phased candidates) — the
+    algorithm validated offline (4/5 zero-games) and on the scored GPU (4/4).
+    v5 additions, on GRIND-OWNED games only (no LLM-completed level ever):
+      1. CONTINUATION — after an unlock, if budget remains, keep grinding the
+         next level in the same engagement (BFS finds MINIMAL paths, so a
+         fully-searchable game can be cleared end-to-end, e.g. tu93 in 185
+         replay actions).
+      2. SELF-BANKING — on a full WIN, immediately RESET (post-WIN reset opens
+         a fresh play; engine-verified) and replay the concatenated minimal
+         per-level sequences: play #2 scores near-baseline efficiency and the
+         card takes the max. A zero game becomes a near-perfect game.
+    Self-harm theorem (measured 2026-08-19): grind actions only destroy value
+    on levels the LLM completes; grind-owned completions have no such term.
     """
     import time as _time
 
@@ -545,15 +551,13 @@ def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
     max_depth = max(1, _env_int("EXPLORER_MAX_DEPTH", 30))
     mask: VolatilityMask = xs["mask"]
 
-    print(f"[explorer] {game_id}: level-age on level {level} — direct-engine "
-          f"reset-replay BFS, budget {budget}/{time_cap_s}s", flush=True)
+    print(f"[explorer] {game_id}: engaging on level {level} — grind-to-win, "
+          f"budget {budget}/{time_cap_s}s", flush=True)
     xs["grinding"] = True
     executed = 0
-    states_seen = 0
     stop_reason = "budget"
     grind_t0 = _time.monotonic()
     resp = None
-    start_levels = int(game.current_state.levels_completed)
     val2name = {a.value: a.name for a in arcengine.GameAction}
 
     def out_of_budget() -> str | None:
@@ -595,8 +599,16 @@ def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
         resp = r
         return r
 
-    def unlocked() -> bool:
-        return resp is not None and int(resp.levels_completed) != start_levels
+    def plan_text(plan: tuple) -> str:
+        if plan[0] == "ACTION6" and len(plan) == 3:
+            return f"CLICK(x={plan[1]},y={plan[2]})"
+        return str(plan[0])
+
+    def narrate(text: str) -> None:
+        try:
+            _TLS.narration = {"text": text, "diag": xs["diag"]}
+        except Exception:  # noqa: BLE001
+            pass
 
     def cands(phase: int) -> list[tuple]:
         names = [val2name[v] for v in (resp.available_actions or []) if v in val2name]
@@ -607,45 +619,97 @@ def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
                 limit=_env_int("EXPLORER_BFS_CLICKS", 20)))
         return plans
 
-    def sig() -> tuple:
-        return graph.node_key(start_levels, grid_of(resp), mask.mask_cells())
+    def bfs_one_level(base_levels: int) -> tuple[str, list[tuple] | None]:
+        """BFS from the current level's start; returns (reason, winning seq)."""
 
-    def narrate(seq: list[tuple]) -> None:
-        xs["diag"]["levels_unlocked_by_grinder"] += 1
-        # the unlocked level is COMPLETED now — never grind it again (the
-        # session's cached current_state stays stale until the next LLM
-        # action, so the wrapper can't record this completion itself)
-        xs["completed_levels"].add(level)
-        try:
-            shown = seq[-max(1, _env_int("EXPLORER_NARRATE_K", 16)):]
-            items = []
-            for plan in shown:
-                if plan[0] == "ACTION6" and len(plan) == 3:
-                    items.append(f"CLICK(x={plan[1]},y={plan[2]})")
-                else:
-                    items.append(str(plan[0]))
-            _TLS.narration = {
-                "text": (
-                    f"[EXPLORER UNLOCK] Level {level} was just unlocked by an "
-                    "automated exhaustive search (RESET, then this exact action "
-                    f"sequence from the level start), NOT by your plan. The "
-                    f"winning sequence ({len(seq)} actions, last {len(shown)} "
-                    f"shown): {', '.join(items)}. The LAST action crossed the "
-                    "boundary. Infer this game's mechanic from that sequence "
-                    "and apply it deliberately on the current level."
-                ),
-                "diag": xs["diag"],
-            }
-        except Exception:  # noqa: BLE001
-            pass
+        def sig() -> tuple:
+            return graph.node_key(base_levels, grid_of(resp), mask.mask_cells())
+
+        def unlocked() -> bool:
+            return resp is not None and int(resp.levels_completed) != base_levels
+
+        for phase in (0, 1):
+            phase_exec0 = executed
+            phase_t0 = _time.monotonic()
+            seen: set[tuple] = set()
+            queue: deque = deque([[]])
+            if step(("RESET",)) is None:
+                return "reset_failed", None
+            if unlocked():
+                return "level_unlocked", [("RESET",)]
+            seen.add(sig())
+            while queue:
+                reason = out_of_budget()
+                if reason:
+                    return reason, None
+                if phase == 0 and (executed - phase_exec0 >= p0_budget
+                                   or _time.monotonic() - phase_t0 >= p0_time_s):
+                    break  # phase-0 share spent: move to click phase
+                seq = queue.popleft()
+                if len(seq) >= max_depth:
+                    continue
+                if step(("RESET",)) is None:
+                    return "reset_failed", None
+                dead = False
+                for plan in seq:
+                    if step(plan) is None or resp.state == arcengine.GameState.GAME_OVER:
+                        dead = True
+                        break
+                    if unlocked():
+                        return "level_unlocked", seq
+                if dead:
+                    continue
+                for plan in cands(phase):
+                    reason = out_of_budget()
+                    if reason:
+                        return reason, None
+                    if step(("RESET",)) is None:
+                        return "reset_failed", None
+                    dead = False
+                    for prev in seq:
+                        if step(prev) is None or resp.state == arcengine.GameState.GAME_OVER:
+                            dead = True
+                            break
+                    if dead:
+                        continue
+                    if step(plan) is None:
+                        continue
+                    if unlocked():
+                        return "level_unlocked", seq + [plan]
+                    if resp.state == arcengine.GameState.GAME_OVER:
+                        continue
+                    k = sig()
+                    if k not in seen:
+                        seen.add(k)
+                        queue.append(seq + [plan])
+        return "frontier_exhausted", None
+
+    def bank_replay(level_seqs: list[list[tuple]]) -> bool:
+        """Post-WIN fresh play, replay the minimal per-level sequences."""
+        r = step(("RESET",))
+        if r is None or int(r.levels_completed) != 0 or r.state == arcengine.GameState.WIN:
+            print(f"[explorer] {game_id}: bank ABORT — post-WIN RESET did not "
+                  "open a fresh play", flush=True)
+            return False
+        total = 0
+        for seq in level_seqs:
+            for plan in seq:
+                if step(plan) is None:
+                    print(f"[explorer] {game_id}: bank ABORT — engine refused a "
+                          "replay step", flush=True)
+                    return False
+                total += 1
+                if resp.state == arcengine.GameState.GAME_OVER:
+                    print(f"[explorer] {game_id}: bank ABORT — replay died", flush=True)
+                    return False
+        won = resp.state == arcengine.GameState.WIN
+        print(f"[explorer] {game_id}: bank replay {'WON' if won else 'ended short'} "
+              f"in {total} actions", flush=True)
+        return won
 
     try:
         if step(("RESET",)) is None:
             stop_reason = "reset_failed"
-            return
-        if unlocked():
-            narrate([("RESET",)])
-            stop_reason = "level_unlocked"
             return
 
         # WARMUP: learn volatility (incl. the slow-tick band rule) — no freeze.
@@ -657,95 +721,50 @@ def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
             for wn in warm:
                 if step((wn,)) is None:
                     break
-                if unlocked():
-                    narrate([(wn,)])
-                    stop_reason = "level_unlocked"
-                    return
                 if resp.state == arcengine.GameState.GAME_OVER:
                     step(("RESET",))
         print(f"[explorer] {game_id}: warmup done, mask "
               f"{len(mask.mask_cells())} cells (live-learning)", flush=True)
 
-        for phase in (0, 1):
-            phase_exec0 = executed
-            phase_t0 = _time.monotonic()
-            seen: set[tuple] = set()
-            queue: deque = deque([[]])
-            if step(("RESET",)) is None:
-                stop_reason = "reset_failed"
-                return
-            seen.add(sig())
-            while queue:
-                reason = out_of_budget()
-                if reason:
-                    stop_reason = reason
-                    break
-                if phase == 0 and (executed - phase_exec0 >= p0_budget
-                                   or _time.monotonic() - phase_t0 >= p0_time_s):
-                    queue.clear()
-                    break
-                seq = queue.popleft()
-                if len(seq) >= max_depth:
-                    continue
-                if step(("RESET",)) is None:
-                    stop_reason = "reset_failed"
-                    return
-                dead = False
-                for plan in seq:
-                    if step(plan) is None or resp.state == arcengine.GameState.GAME_OVER:
-                        dead = True
-                        break
-                    if unlocked():
-                        narrate(seq)
-                        stop_reason = "level_unlocked"
-                        return
-                if dead:
-                    continue
-                plans = cands(phase)
-                for plan in plans:
-                    reason = out_of_budget()
-                    if reason:
-                        stop_reason = reason
-                        queue.clear()
-                        break
-                    if step(("RESET",)) is None:
-                        stop_reason = "reset_failed"
-                        queue.clear()
-                        break
-                    dead = False
-                    for prev in seq:
-                        if step(prev) is None or resp.state == arcengine.GameState.GAME_OVER:
-                            dead = True
-                            break
-                    if dead:
-                        continue
-                    if step(plan) is None:
-                        continue
-                    if unlocked():
-                        narrate(seq + [plan])
-                        stop_reason = "level_unlocked"
-                        return
-                    if resp.state == arcengine.GameState.GAME_OVER:
-                        continue
-                    k = sig()
-                    if k not in seen:
-                        seen.add(k)
-                        states_seen = len(seen)
-                        queue.append(seq + [plan])
-                else:
-                    continue
+        level_seqs: list[list[tuple]] = []
+        while True:
+            base_levels = int(resp.levels_completed)
+            reason, seq = bfs_one_level(base_levels)
+            if reason != "level_unlocked" or seq is None:
+                stop_reason = reason
+                if reason == "frontier_exhausted" and not level_seqs:
+                    xs["grind_exhausted"].add(level)
                 break
-            else:
-                if phase == 0:
-                    print(f"[explorer] {game_id}: phase 0 exhausted "
-                          f"({len(seen)} states) — adding click candidates", flush=True)
-                    continue
-                xs["grind_exhausted"].add(level)
-                stop_reason = "frontier_exhausted"
-            break
+            level_seqs.append(seq)
+            unlocked_level = base_levels + 1
+            xs["diag"]["levels_unlocked_by_grinder"] += 1
+            xs["grind_unlocked_levels"].add(unlocked_level)
+            xs["completed_levels"].add(unlocked_level)
+            print(f"[explorer] {game_id}: level {unlocked_level} UNLOCKED "
+                  f"({len(seq)} actions minimal, {executed} spent)", flush=True)
+            if resp.state == arcengine.GameState.WIN:
+                banked = bank_replay(level_seqs)
+                xs["diag"]["games_won_by_grinder"] = xs["diag"].get("games_won_by_grinder", 0) + 1
+                narrate(
+                    f"[EXPLORER] This game was fully SOLVED by automated search"
+                    f"{' and re-played optimally on a fresh attempt (score banked)' if banked else ''}. "
+                    "No further actions are needed on this game; if prompted, do "
+                    "not reset or replay — the result is already recorded.")
+                stop_reason = "game_won" + ("_banked" if banked else "")
+                return
+            narrate(
+                f"[EXPLORER UNLOCK] Level {unlocked_level} was just unlocked by "
+                "an automated exhaustive search, NOT by your plan. The minimal "
+                f"winning sequence from the level start was: "
+                f"{', '.join(plan_text(pl) for pl in seq)}. The LAST action "
+                "crossed the boundary. Infer this game's mechanic from that "
+                "sequence and apply it deliberately on the current level.")
+            if out_of_budget():
+                stop_reason = out_of_budget() or "budget"
+                break
     finally:
-        # leave the game at the level start for the LLM's clean attempt
-        if stop_reason not in ("level_unlocked", "cancelled", "reset_failed"):
+        # leave at the current level's start for the LLM (not after a win/bank)
+        if stop_reason not in ("cancelled", "reset_failed") and not stop_reason.startswith("game_won"):
             step(("RESET",))
         xs["grinding"] = False
         try:
@@ -753,8 +772,7 @@ def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
         except Exception:  # noqa: BLE001
             pass
         print(f"[explorer] {game_id}: grind ended ({stop_reason}) after {executed} "
-              f"actions, {states_seen} states — levels "
-              f"{int(game.current_state.levels_completed)}", flush=True)
+              f"actions, {len(xs['grind_unlocked_levels'])} grinder unlocks total", flush=True)
 
 
 def install() -> str:
