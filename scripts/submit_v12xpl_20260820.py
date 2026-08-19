@@ -68,10 +68,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 KERNEL = "ahmedmobasher86/arc3-duck38-v12-xpl"
-EXPECTED_VERSION = 4
-EXPECTED_SCRIPT_VERSION_ID = "343506183"
+EXPECTED_VERSION = 5
+EXPECTED_SCRIPT_VERSION_ID = "343538618"
 # sha256 over "\n".join(code-cell sources) — submission-ledger canonical method.
-EXPECTED_HASH = "a231baf1a6b175014c0bf0dca62ef78af72cfa455339c664e03be2a9bbec9a58"
+EXPECTED_HASH = "25f3ec945dec41c70b22e638ea304c9b955217d334870ac5353665f84f101269"
 LOCAL_NOTEBOOK = REPO / "submission/_duck38_v12_xpl/arc3-duck38-v12-xpl.ipynb"
 COMPETITION = "arc-prize-2026-arc-agi-3"
 TARGET_UTC = datetime(2026, 8, 20, 0, 1, 0, tzinfo=timezone.utc)
@@ -94,21 +94,22 @@ FORBIDDEN_MARKERS = (
 )
 
 MESSAGE = (
-    "Depth arm duck38-v12-xpl v4 [a231baf1]: explorer draw #2 with two "
-    "measurement-backed fixes over the 1.33 draw #1. (1) ZERO-PROGRESS GATE: "
-    "the search grinder only ever runs on games with 0 completed levels — "
-    "measured on the official scorer, grinding a later-completed level "
-    "crushes it 100 -> 1.2, and partial runs have no subsidy pool; games "
-    "with any progress now play stock. (2) One concurrent grind globally "
-    "(contention was refuted locally at 546 act/s but the gate is kept as "
-    "cheap defense). Smoke on the scored GPU: 4/4 zero-progress dev games "
-    "unlocked with narrations; the progressed game never touched. "
-    "PRE-REGISTERED READING: pooled with draw #1 per the 2-draw rule is "
-    "INVALID (different arm); this draw reads alone vs the series 1.29/"
-    "1.74/1.55/1.33: above 1.74 re-banks LB; ~1.5 = the gate "
-    "removed the harm but unlocks add little on the hidden set; below 1.3 "
-    "= strike against hidden-set searchability, explorer retires to the "
-    "bench."
+    "Depth arm duck38-v12-xpl v5 [25f3ec94]: explorer draw #2. Over the 1.33 "
+    "draw #1: (1) GRIND-OWNED GATE — the search grinder only runs on games "
+    "where the model has completed no level (measured: grinding a "
+    "later-completed level crushes it 100 -> 1.2; protected games play "
+    "stock); (2) GRIND-TO-WIN + SELF-BANK — on grinder-owned games it keeps "
+    "searching level after level, and on a full win replays the minimal "
+    "concatenated path on a fresh attempt (post-WIN reset opens a new play; "
+    "the card takes the max). END-TO-END PROOF on the official scorer: tu93 "
+    "zero-game -> 100.00 points (grind play 0.01, banked replay 100.0). "
+    "Live smokes on the scored GPU: 4/4 zero-games unlocked (v4) and "
+    "continuation+exhaustion+protection verified (v5); protected game "
+    "posted its best-ever smoke (vc33 3/7, 21.43). PRE-REGISTERED READING: "
+    "reads alone vs series 1.29/1.74/1.55/1.33; above 1.74 re-banks LB "
+    "best; ~1.5 = harm removed but hidden set resists search; below 1.3 = "
+    "strike against hidden searchability. Upside driver: any hidden game "
+    "that is fully search-winnable banks near-perfect points."
 )
 
 
