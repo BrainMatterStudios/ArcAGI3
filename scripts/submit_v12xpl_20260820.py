@@ -68,10 +68,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 KERNEL = "ahmedmobasher86/arc3-duck38-v12-xpl"
-EXPECTED_VERSION = 2
-EXPECTED_SCRIPT_VERSION_ID = "343277077"
+EXPECTED_VERSION = 4
+EXPECTED_SCRIPT_VERSION_ID = "343506183"
 # sha256 over "\n".join(code-cell sources) — submission-ledger canonical method.
-EXPECTED_HASH = "08dc74822406b9ba3c0fc191ad9b8df858f1a3633059a40a6c03ecb0d8efc7b0"
+EXPECTED_HASH = "a231baf1a6b175014c0bf0dca62ef78af72cfa455339c664e03be2a9bbec9a58"
 LOCAL_NOTEBOOK = REPO / "submission/_duck38_v12_xpl/arc3-duck38-v12-xpl.ipynb"
 COMPETITION = "arc-prize-2026-arc-agi-3"
 TARGET_UTC = datetime(2026, 8, 20, 0, 1, 0, tzinfo=timezone.utc)
@@ -94,25 +94,21 @@ FORBIDDEN_MARKERS = (
 )
 
 MESSAGE = (
-    "Depth arm duck38-v12-xpl [v2-08dc7482]: the duck38-v12 field-recipe arm "
-    "(1.55) + exactly ONE change: a frontier-explorer floor. When a level "
-    "has soaked 120 scored actions or 10 LLM turns with no completion, a "
-    "reset-replay breadth-first search over HUD-masked frame states takes "
-    "over at engine speed (direct wrapper steps; capped 20min/level, 2 "
-    "engagements/level, kill guards); on an unlock the next prompt carries "
-    "the exact winning sequence so the model can extract the mechanic. "
-    "Mechanism fully inlined and disclosed in the notebook. VALIDATED: "
-    "offline gate 4/5 lifetime-zero dev games unlocked generically; live "
-    "smoke on the scored GPU unlocked 4/4 (dc22/m0r0/sk48/ka59) with "
-    "win-path narrations injected and no vc33 regression. PRE-REGISTERED "
-    "READING: grind actions count on the gateway scorecard, so unlocked "
-    "levels themselves score ~0 live — the value is completion-share, "
-    "depth-weight, and the LLM playing narration-informed clean levels "
-    "above the floor. Composite reads vs the pooled 3.8 series (1.29/1.74/"
-    "1.55 + the 08-19 draw); >1.74 re-banks LB best; per the "
-    "depth study the plausible effect is +0.2-0.5 if hidden zero-games are "
-    "as searchable as dev ones — a draw below 1.3 is a strike against that "
-    "transfer, not proof of harm (floor is fail-open, stock otherwise)."
+    "Depth arm duck38-v12-xpl v4 [a231baf1]: explorer draw #2 with two "
+    "measurement-backed fixes over the 1.33 draw #1. (1) ZERO-PROGRESS GATE: "
+    "the search grinder only ever runs on games with 0 completed levels — "
+    "measured on the official scorer, grinding a later-completed level "
+    "crushes it 100 -> 1.2, and partial runs have no subsidy pool; games "
+    "with any progress now play stock. (2) One concurrent grind globally "
+    "(contention was refuted locally at 546 act/s but the gate is kept as "
+    "cheap defense). Smoke on the scored GPU: 4/4 zero-progress dev games "
+    "unlocked with narrations; the progressed game never touched. "
+    "PRE-REGISTERED READING: pooled with draw #1 per the 2-draw rule is "
+    "INVALID (different arm); this draw reads alone vs the series 1.29/"
+    "1.74/1.55/1.33: above 1.74 re-banks LB; ~1.5 = the gate "
+    "removed the harm but unlocks add little on the hidden set; below 1.3 "
+    "= strike against hidden-set searchability, explorer retires to the "
+    "bench."
 )
 
 
