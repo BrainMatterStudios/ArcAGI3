@@ -44,6 +44,14 @@ from typing import Any
 
 _TLS = _threading.local()
 
+# v3: at most N grinds run concurrently across ALL game sessions — the scored
+# run plays ~110 games at concurrency 28 against ONE shared gateway server,
+# and a single grind saturates it (~130 act/s). Unlimited concurrent grinds
+# starve every game's normal play (the suspected mechanism behind the 1.33
+# live draw). Non-blocking: a session that cannot acquire simply skips this
+# opportunity and retries on a later trigger poll.
+_GRIND_GATE = _threading.BoundedSemaphore(1)
+
 
 # --------------------------------------------------------------------------
 # env knobs
@@ -482,12 +490,17 @@ def _maybe_grind(session: Any) -> None:
     soft_remaining = session.solver.soft_time_remaining_seconds()
     if soft_remaining is not None and soft_remaining < 120.0:
         return
-    if xs["grinds_per_level"].get(level, 0) >= _env_int("EXPLORER_GRIND_MAX_PER_LEVEL", 2):
+    if xs["grinds_per_level"].get(level, 0) >= _env_int("EXPLORER_GRIND_MAX_PER_LEVEL", 1):
         return
-    xs["grinds_per_level"][level] = xs["grinds_per_level"].get(level, 0) + 1
-    xs["diag"]["grinder_engagements"] += 1
-    _grind(session, xs, level)
-    _reset_age_mark(session, xs, level)
+    if not _GRIND_GATE.acquire(blocking=False):
+        return  # another game is grinding — retry on a later poll
+    try:
+        xs["grinds_per_level"][level] = xs["grinds_per_level"].get(level, 0) + 1
+        xs["diag"]["grinder_engagements"] += 1
+        _grind(session, xs, level)
+        _reset_age_mark(session, xs, level)
+    finally:
+        _GRIND_GATE.release()
 
 
 def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
@@ -519,8 +532,8 @@ def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
 
     budget = max(1, _env_int("EXPLORER_GRIND_BUDGET", 200000))
     p0_budget = max(1, _env_int("EXPLORER_PHASE0_BUDGET", 60000))
-    time_cap_s = max(30, _env_int("EXPLORER_GRIND_TIME_S", 1200))
-    p0_time_s = max(10, _env_int("EXPLORER_PHASE0_TIME_S", 300))
+    time_cap_s = max(30, _env_int("EXPLORER_GRIND_TIME_S", 900))
+    p0_time_s = max(10, _env_int("EXPLORER_PHASE0_TIME_S", 240))
     max_depth = max(1, _env_int("EXPLORER_MAX_DEPTH", 30))
     mask: VolatilityMask = xs["mask"]
 
