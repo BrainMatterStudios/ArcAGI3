@@ -473,15 +473,30 @@ def _maybe_grind(session: Any) -> None:
     if solver._is_run_complete(game) or solver._is_engine_game_over(game):
         return
 
-    # v5 GRIND-OWNED GATE (supersedes v4's zero-progress gate): grind actions
-    # only destroy value on levels the LLM completes (measured: 100 -> 1.2 on
-    # the official scorer, no subsidy pool on partial runs). A game may grind
-    # iff NO level was ever completed by the LLM — either untouched (cached
-    # levels_completed == 0 pre-grind) or every completion is grinder-owned.
+    # v5 GRIND-OWNED GATE + v6 BOUNDED TAKEOVER: grind actions only destroy
+    # value on levels the LLM completes (measured: 100 -> 1.2 official). A
+    # game may grind iff no LLM-completed level exists — EXCEPT (v6) a single
+    # takeover is allowed on a stuck game where the LLM completed exactly ONE
+    # level at high action cost (>= EXPLORER_TAKEOVER_MIN_ACTIONS): that
+    # level's (b/a)^2 is already tiny, so the protected value is pennies while
+    # a full grind win + banked minimal replay supersedes the whole play
+    # (the tu93 lockout, observed in the v5 smoke: LLM's slow L1 worth 0.69
+    # blocked a provable 100.00).
     llm_completed = xs["completed_levels"] - xs["grind_unlocked_levels"]
     if llm_completed:
-        return
-    if int(game.current_state.levels_completed) > 0 and not xs["grind_unlocked_levels"]:
+        takeover_ok = (
+            not xs.get("takeover_done")
+            and len(llm_completed) == 1
+            and xs["level_actions"].get(next(iter(llm_completed)), 0)
+            >= _env_int("EXPLORER_TAKEOVER_MIN_ACTIONS", 60)
+        )
+        if not takeover_ok:
+            return
+        xs["takeover_done"] = True
+        print(f"[explorer] bounded takeover: LLM level {next(iter(llm_completed))} "
+              f"cost {xs['level_actions'].get(next(iter(llm_completed)), 0)} actions "
+              "— grind-to-win authorized", flush=True)
+    elif int(game.current_state.levels_completed) > 0 and not xs["grind_unlocked_levels"]:
         return
     level = solver._level_number(game)
     if level in xs["completed_levels"] or level in xs["grind_exhausted"]:
