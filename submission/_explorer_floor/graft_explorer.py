@@ -472,6 +472,14 @@ def _maybe_grind(session: Any) -> None:
     if solver._is_run_complete(game) or solver._is_engine_game_over(game):
         return
 
+    # v4 ZERO-PROGRESS GATE (measurement-backed, 2026-08-19): grind actions
+    # permanently inflate a level's action counter, and on partial runs there
+    # is no 115-cap subsidy pool — a level the LLM later completes after a
+    # grind scores ~0 (measured: 100 -> 1.2 on the official scorer). Games
+    # with ANY completed level therefore NEVER grind; zero-progress games
+    # have nothing to ruin (their alternative is 0) and unlock is pure gain.
+    if int(game.current_state.levels_completed) > 0:
+        return
     level = solver._level_number(game)
     if level in xs["completed_levels"] or level in xs["grind_exhausted"]:
         return
