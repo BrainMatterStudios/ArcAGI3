@@ -544,9 +544,12 @@ def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
         print(f"[explorer] {game_id}: no engine wrapper — grind unavailable", flush=True)
         return
 
-    budget = max(1, _env_int("EXPLORER_GRIND_BUDGET", 200000))
+    budget = max(1, _env_int("EXPLORER_GRIND_BUDGET", 500000))
     p0_budget = max(1, _env_int("EXPLORER_PHASE0_BUDGET", 60000))
     time_cap_s = max(30, _env_int("EXPLORER_GRIND_TIME_S", 900))
+    # once a grind-owned game starts unlocking, the alternative use of its box
+    # is zero — extend the cap (tu93's measured full win took ~3300s)
+    owned_time_cap_s = max(time_cap_s, _env_int("EXPLORER_OWNED_TIME_S", 5400))
     p0_time_s = max(10, _env_int("EXPLORER_PHASE0_TIME_S", 240))
     max_depth = max(1, _env_int("EXPLORER_MAX_DEPTH", 30))
     mask: VolatilityMask = xs["mask"]
@@ -565,7 +568,8 @@ def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
             return "cancelled"
         if executed >= budget:
             return "budget"
-        if _time.monotonic() - grind_t0 >= time_cap_s:
+        cap = owned_time_cap_s if xs["grind_unlocked_levels"] else time_cap_s
+        if _time.monotonic() - grind_t0 >= cap:
             return "time_cap"
         if session.runtime_limit_reached():
             return "runtime_cap"
