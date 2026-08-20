@@ -745,7 +745,7 @@ def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
         print(f"[explorer] {game_id}: warmup done, mask "
               f"{len(mask.mask_cells())} cells (live-learning)", flush=True)
 
-        level_seqs: list[list[tuple]] = []
+        level_seqs: dict[int, list[tuple]] = {}
         while True:
             base_levels = int(resp.levels_completed)
             reason, seq = bfs_one_level(base_levels)
@@ -754,7 +754,7 @@ def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
                 if reason == "frontier_exhausted" and not level_seqs:
                     xs["grind_exhausted"].add(level)
                 break
-            level_seqs.append(seq)
+            level_seqs[base_levels + 1] = seq
             unlocked_level = base_levels + 1
             xs["diag"]["levels_unlocked_by_grinder"] += 1
             xs["grind_unlocked_levels"].add(unlocked_level)
@@ -762,7 +762,7 @@ def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
             print(f"[explorer] {game_id}: level {unlocked_level} UNLOCKED "
                   f"({len(seq)} actions minimal, {executed} spent)", flush=True)
             if resp.state == arcengine.GameState.WIN:
-                banked = bank_replay(level_seqs)
+                banked = bank_replay(level_seqs, int(resp.win_levels or 0) or (base_levels + 1))
                 xs["diag"]["games_won_by_grinder"] = xs["diag"].get("games_won_by_grinder", 0) + 1
                 narrate(
                     f"[EXPLORER] This game was fully SOLVED by automated search"
