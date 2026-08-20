@@ -52,6 +52,16 @@ _TLS = _threading.local()
 # opportunity and retries on a later trigger poll.
 _GRIND_GATE = _threading.BoundedSemaphore(1)
 
+# v7 RUN-ENVELOPE GUARDS (postmortem of sub 55634118, killed at the 9h wall):
+# the ~110-game/28-concurrent envelope only closes because of early finishes;
+# grinding consumes exactly that slack. Cumulative grind wall-time across the
+# WHOLE RUN is hard-capped, and all grinding stops late in the run. The v2 arm
+# completed the envelope with unbounded 20-min grinds, so a 45-min cumulative
+# cap is strictly inside empirically-proven-safe territory.
+_RUN_T0 = None
+_GRIND_WALL_SPENT = [0.0]
+_RUN_LOCK = _threading.Lock()
+
 
 # --------------------------------------------------------------------------
 # env knobs
@@ -518,14 +528,27 @@ def _maybe_grind(session: Any) -> None:
         return
     if xs["grinds_per_level"].get(level, 0) >= _env_int("EXPLORER_GRIND_MAX_PER_LEVEL", 1):
         return
+    global _RUN_T0
+    import time as _t
+    with _RUN_LOCK:
+        if _RUN_T0 is None:
+            _RUN_T0 = _t.monotonic()
+        run_elapsed = _t.monotonic() - _RUN_T0
+        if run_elapsed >= _env_int("EXPLORER_RUN_CUTOFF_S", 18000):
+            return  # late in the run: protect the final waves' envelope
+        if _GRIND_WALL_SPENT[0] >= _env_int("EXPLORER_RUN_GRIND_BUDGET_S", 2700):
+            return  # cumulative grind budget spent for this run
     if not _GRIND_GATE.acquire(blocking=False):
         return  # another game is grinding — retry on a later poll
     try:
+        grind_t0 = _t.monotonic()
         xs["grinds_per_level"][level] = xs["grinds_per_level"].get(level, 0) + 1
         xs["diag"]["grinder_engagements"] += 1
         _grind(session, xs, level)
         _reset_age_mark(session, xs, level)
     finally:
+        with _RUN_LOCK:
+            _GRIND_WALL_SPENT[0] += _t.monotonic() - grind_t0
         _GRIND_GATE.release()
 
 
@@ -561,10 +584,10 @@ def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
 
     budget = max(1, _env_int("EXPLORER_GRIND_BUDGET", 500000))
     p0_budget = max(1, _env_int("EXPLORER_PHASE0_BUDGET", 60000))
-    time_cap_s = max(30, _env_int("EXPLORER_GRIND_TIME_S", 900))
+    time_cap_s = max(30, _env_int("EXPLORER_GRIND_TIME_S", 600))
     # once a grind-owned game starts unlocking, the alternative use of its box
     # is zero — extend the cap (tu93's measured full win took ~3300s)
-    owned_time_cap_s = max(time_cap_s, _env_int("EXPLORER_OWNED_TIME_S", 5400))
+    owned_time_cap_s = max(time_cap_s, _env_int("EXPLORER_OWNED_TIME_S", 1500))
     p0_time_s = max(10, _env_int("EXPLORER_PHASE0_TIME_S", 240))
     max_depth = max(1, _env_int("EXPLORER_MAX_DEPTH", 30))
     mask: VolatilityMask = xs["mask"]
