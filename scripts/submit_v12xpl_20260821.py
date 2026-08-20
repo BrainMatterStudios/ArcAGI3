@@ -68,10 +68,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 KERNEL = "ahmedmobasher86/arc3-duck38-v12-xpl"
-EXPECTED_VERSION = 4
-EXPECTED_SCRIPT_VERSION_ID = "343506183"
+EXPECTED_VERSION = 6
+EXPECTED_SCRIPT_VERSION_ID = "343671054"
 # sha256 over "\n".join(code-cell sources) — submission-ledger canonical method.
-EXPECTED_HASH = "a231baf1a6b175014c0bf0dca62ef78af72cfa455339c664e03be2a9bbec9a58"
+EXPECTED_HASH = "2095ba9347939ade37570d0ee0d59bcf6689e6e63219d2328f043b9e2c530120"
 LOCAL_NOTEBOOK = REPO / "submission/_duck38_v12_xpl/arc3-duck38-v12-xpl.ipynb"
 COMPETITION = "arc-prize-2026-arc-agi-3"
 TARGET_UTC = datetime(2026, 8, 21, 0, 1, 0, tzinfo=timezone.utc)
@@ -94,21 +94,22 @@ FORBIDDEN_MARKERS = (
 )
 
 MESSAGE = (
-    "Depth arm duck38-v12-xpl v4 [a231baf1]: explorer draw #2 with two "
-    "measurement-backed fixes over the 1.33 draw #1. (1) ZERO-PROGRESS GATE: "
-    "the search grinder only ever runs on games with 0 completed levels — "
-    "measured on the official scorer, grinding a later-completed level "
-    "crushes it 100 -> 1.2, and partial runs have no subsidy pool; games "
-    "with any progress now play stock. (2) One concurrent grind globally "
-    "(contention was refuted locally at 546 act/s but the gate is kept as "
-    "cheap defense). Smoke on the scored GPU: 4/4 zero-progress dev games "
-    "unlocked with narrations; the progressed game never touched. "
-    "PRE-REGISTERED READING: pooled with draw #1 per the 2-draw rule is "
-    "INVALID (different arm); this draw reads alone vs the series 1.29/"
-    "1.74/1.55/1.33/<08-20 draw>: above 1.74 re-banks LB; ~1.5 = the gate "
-    "removed the harm but unlocks add little on the hidden set; below 1.3 "
-    "= strike against hidden-set searchability, explorer retires to the "
-    "bench."
+    "Depth arm duck38-v12-xpl v7 [2095ba93]: explorer draw #3, rebuilt after "
+    "the 08-20 runtime-wall failure. Mechanism (proven offline at official "
+    "100.00 on a lockout scenario; caps live-verified in smoke): search "
+    "grinder on games where the model completed nothing (plus a single "
+    "bounded takeover of a stuck game with one expensively-won level); on a "
+    "full search win, the minimal path replays on a fresh play (post-WIN "
+    "reset; card takes max). RUN-ENVELOPE GUARDS from the postmortem: "
+    "cumulative grind hard-capped at 45 min/run, all grinding stops at 5h, "
+    "600s/1500s per-engagement caps — every knob strictly tighter than the "
+    "v2 config that completed this envelope three times; safety case in "
+    "docs/ENVELOPE-2026-08-20-v7.md with assumptions flagged. "
+    "PRE-REGISTERED READING: reads alone vs series 1.29/1.74/1.55/1.33; "
+    "above 1.74 re-banks LB best; ~1.5 = envelope safe but hidden set "
+    "resists search in the capped regime; a second runtime failure = "
+    "explorer retires until the envelope model is rebuilt. Upside: any "
+    "hidden game fully searchable within ~10 min banks near-perfect points."
 )
 
 
