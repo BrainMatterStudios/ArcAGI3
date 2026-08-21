@@ -31,9 +31,12 @@ clock mid-level, 0 finished — wall reclaimed IS depth.
   slices/turn should collapse.
 
 ### 2. Sampling + reasoning-effort cluster (three findings, one root)
-- Harness pins temp 0.3 / top_p 0.9 forever at eval: `_pass_sampling`
-  (tool_agent.py:153–169) bucket pass_index%3==0; runs=1 ⇒ always pass 0.
-  `LOCAL_ANALYZER_TEMPERATURE` is dead code while ANALYZER_PASS_DIVERSITY=1.
+- **CORRECTION (same day, settings-diff — see wave-2 doc §CORRECTIONS #1):**
+  the temp-0.3 `_pass_sampling` code lives ONLY in `submission/_adopt/taaf-src`
+  (reference copy, not shipped). June stock — and all shipping arms —
+  default temp 0.6 / top_p 0.95 / top_k 20. The sampling lever demotes to a
+  modest 0.6-vs-1.0 offline A/B; the xhigh finding below is unaffected.
+- ~~Harness pins temp 0.3 / top_p 0.9 forever at eval~~ (refuted above).
 - Official chat template defaults `reasoning_effort` to **xhigh** (verified by
   rendering our snapshot's template); harness sends only enable_thinking, so
   every scored call carries "Reasoning effort is set to xhigh" with
