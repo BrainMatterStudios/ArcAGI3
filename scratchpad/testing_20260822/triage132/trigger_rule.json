@@ -1,0 +1,20 @@
+{
+  "derived": "2026-08-22 competition-geometry (7920s) re-derivation; see extract.py/analyze.py/sessions.json in this dir",
+  "fn_definition": "session killed at minute T with 0 completed levels that would have completed its first level in (T, 132] = false negative",
+  "verdict_flat_55": "FAIL. Qwen3.8 shipped wave (n=28): FN 2/14 = 14.3% (bracket-sensitivity up to 4/16 = 25%); pooled competition-geometry 14/52 = 26.9%. Gate was FN <= 5%.",
+  "recommended_rule": {
+    "dispatch": "frame-0 available_actions per playbook.json dispatch_rule: {6}-only => CLICK; {1,2,3,4}(+5, no 6) => AVATAR; else/unknown => treat as CLICK (never kill)",
+    "AVATAR": {"kill_zero_level_at_min": 60, "evidence": "0 FN in 13 pooled zero@60 sessions; latest observed AVATAR first-completion 54.5m (ls20, bracket 53.4-55.6)"},
+    "MIXED": {"kill_zero_level_at_min": 70, "evidence": "n=2 only (bp35); one completion at 56.9m (bracket 56.2-57.6); 70 leaves 12m margin"},
+    "CLICK": {"kill_zero_level_at_min": null, "evidence": "heavy late tail: lp85 88.0m (score 2.01, above wave mean); ft09 3.6-corpus completions at 104.7-122.6m; even @90 pooled CLICK FN 5/33 = 15.2%"}
+  },
+  "expected_per_110_game_run": {
+    "recommended": {"kills": 41.0, "reclaimed_worker_min": 2932, "reclaimed_hours": 48.9, "observed_FN": "0 in all 103 sessions"},
+    "flat_55": {"kills": 52.0, "reclaimed_worker_min": 4006, "reclaimed_hours": 66.8, "expected_FN_sessions": 6.6, "note": "loses lp85-class sessions (score 2.0)"}
+  },
+  "caveats": [
+    "AVATAR 0-FN is bounded by n: 0/13 zeros at 60 => 95% upper bound ~ 23% (rule of three)",
+    "3.6 08-11 waves (20260811-110120-shipped, -131439-base) have NO per-action artifacts (repo-root taaf_harness_artifacts overwritten by later runs); their 3.6 timing here comes only from the single-game ft09 ablation waves",
+    "human-p90 ordering (CLICK fastest to L1) is INVERTED for the agent in wall-time; do not derive minute triggers from human action-count p90s"
+  ]
+}
