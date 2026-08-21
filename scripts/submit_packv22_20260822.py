@@ -100,7 +100,7 @@ MESSAGE = (
     "attested against the official fingerprints in-kernel before any game) + "
     "the taaf_grafts info pack armed exactly as published: efficiency, "
     "retry_guard, shortcircuit, goalkeep, hudmask, clickmap, searchmap "
-    "(prompt-information-only fixes; replay-oriented grafts OFF). Fresh line-by-"
+    "(prompt-information-only fixes; grafts outside the published flag set stay OFF). Fresh line-by-"
     "line audit of the 4-file delta since our 08-17 review: fail-open "
     "throughout, no scored-mechanics changes. PRE-REGISTERED READING: this "
     "is the recipe-parity experiment. A draw >= 2.0 confirms the public "
