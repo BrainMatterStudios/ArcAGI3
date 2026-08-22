@@ -46,6 +46,7 @@ HERE = Path(__file__).parent
 SCAFFOLD = HERE.parent / "_parity_ab" / "scaffold-arc3-duck-v12-with-qwen-3-8-27b.ipynb"
 DUCK38_BUILD = HERE.parent / "_duck38_v12" / "build_duck38_v12.py"
 DEAD_REPRO = HERE / "dead_repro.json"
+V1_CARRY = HERE / "v1_results_carry.json"
 KERNEL_SLUG = "arc3-serving-lab2"
 
 # Markers that locate the scaffold cells we reuse verbatim (exact scored serve chain).
@@ -63,12 +64,21 @@ def _load_attest_cell() -> str:
 
 
 MD_HEADER = """\
-# arc3-serving-lab2 — vLLM 0.27.1 + DFlash2 lane probe (NO games)
+# arc3-serving-lab2 v2 — vLLM 0.27.1 + DFlash2 lane probe (NO games)
+
+**v2 delta vs v1:** v1's 0.27 boot died on FlashInfer's JIT arch check
+(`FlashInfer requires GPUs with sm75 or higher`) because the Kaggle image
+exports a pre-sm75 `TORCH_CUDA_ARCH_LIST`; the device is sm_120. v2 pins
+`TORCH_CUDA_ARCH_LIST=12.0+PTX` / `FLASHINFER_CUDA_ARCH_LIST=12.0` for every
+0.27 server, falls back to `VLLM_USE_FLASHINFER_SAMPLER=0` if the JIT still
+fails, and prints/persists FULL boot-log tails. The 0.19 leg (parser PASS 3/3,
+battery leg A 12/12 scored 0 dead, conc-28 699.1 tok/min/session) is carried
+from v1 verbatim — no bundle setup, no 0.19 server in v2.
 
 | Phase | What | Budget |
 |---|---|---|
-| boot | anim-bundle setup (EXACT scored 0.19 serve chain) + attestation + GPU assert | ~22 min |
-| 0 | 0.19 leg: parser round-trip, quality battery leg A, brief conc-28 reproduction of the 642.6 baseline | ~20 min |
+| boot | GPU assert + input audit + weight attestation (no 0.19 serve chain) | ~4 min |
+| 0 | carry v1's 0.19-leg results into the results JSON | ~0 min |
 | 1 | install vLLM 0.27.1 (saltb0x wheelhouse) + PR#52816 DFlash2 overlay; boot with scored parser flags (adaptive, deviations logged); parser round-trip FIRST; battery leg B | ~35 min |
 | 2 | 0.27 baseline throughput conc 8/28, duck-shaped load | ~26 min |
 | 3 | DFlash2 draft attest (sha256 vs official z-lab LFS oid) + boot (`method: dflash`, nst=7, prefix caching OFF) + parser + matrix conc 28/8/16 + acceptance; battery leg C time-gated | ~42 min |
@@ -406,6 +416,15 @@ def stop_server(reason):
 UNRECOGNIZED_RE = re.compile(r"unrecognized arguments?:\s*(.+)")
 BADARG_RE = re.compile(r"error: argument (--[A-Za-z0-9-]+)")
 
+# v1 root cause (arc3-serving-lab2 v1, vllm-v027-baseline-try1.log): the Kaggle
+# base image exports TORCH_CUDA_ARCH_LIST with pre-sm75 arches (old-GPU
+# compat); flashinfer 0.6.16 check_cuda_arch() then raises "FlashInfer
+# requires GPUs with sm75 or higher" during the 0.27 sampler profile-run —
+# even though the device is sm_120. Fix: pin the arch list to the real GPU.
+ARCH_ENV_FIX = {"TORCH_CUDA_ARCH_LIST": "12.0+PTX",
+                "FLASHINFER_CUDA_ARCH_LIST": "12.0"}
+FLASHINFER_ERR_MARKERS = ("FlashInfer requires", "sm75", "flashinfer.jit")
+
 
 def _strip_flag(flags, flag_name):
     """Remove flag_name (and its value, if the next item is not another flag)."""
@@ -428,10 +447,14 @@ def _launch(cmd, env, log_path):
                             text=True)
 
 
-def start_server(flags, tag, site_packages, timeout_s=1800, adapt_max=3):
+def start_server(flags, tag, site_packages, timeout_s=1800, adapt_max=4):
     """Boot vLLM from `site_packages` with `flags`; adaptively drop flags the
-    CLI rejects (deviations logged). Raises on non-flag boot failure."""
+    CLI rejects and fall back off the FlashInfer sampler on the sm75 JIT
+    error (deviations logged). Raises on unrecoverable boot failure — with
+    the FULL log tail printed to stdout so the kernel log always carries the
+    root cause (v1 lesson: repr() truncation ate the EngineCore traceback)."""
     flags = list(flags)
+    extra_env = dict(ARCH_ENV_FIX)
     attempts = 0
     while True:
         attempts += 1
@@ -442,15 +465,17 @@ def start_server(flags, tag, site_packages, timeout_s=1800, adapt_max=3):
         env.update({"USE_TF": "0", "TRANSFORMERS_NO_TF": "1",
                     "TRANSFORMERS_NO_TORCHVISION": "1", "VLLM_NO_USAGE_STATS": "1",
                     "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})
-        print(f"serving-lab2: starting vLLM ({tag}, try {attempts}):",
-              " ".join(cmd), flush=True)
+        env.update(extra_env)
+        print(f"serving-lab2: starting vLLM ({tag}, try {attempts}, "
+              f"extra_env={extra_env}):", " ".join(cmd), flush=True)
         proc = _launch(cmd, env, log_path)
         CURRENT_SERVER.update({"proc": proc, "log": str(log_path), "tag": tag,
                                "site_packages": str(site_packages)})
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             if proc.poll() is not None:
-                log_txt = "\n".join(tail_log_lines(log_path))
+                log_lines = tail_log_lines(log_path)
+                log_txt = "\n".join(log_lines)
                 bad = None
                 match = UNRECOGNIZED_RE.search(log_txt)
                 if match:
@@ -464,17 +489,33 @@ def start_server(flags, tag, site_packages, timeout_s=1800, adapt_max=3):
                                   "dropped and re-booted")
                     flags = _strip_flag(flags, bad)
                     break  # retry outer loop
+                if (any(m in log_txt for m in FLASHINFER_ERR_MARKERS)
+                        and extra_env.get("VLLM_USE_FLASHINFER_SAMPLER") != "0"
+                        and attempts <= adapt_max):
+                    log_deviation(f"{tag}: FlashInfer JIT failure in boot log — "
+                                  "retrying with VLLM_USE_FLASHINFER_SAMPLER=0")
+                    extra_env["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
+                    break  # retry outer loop
+                print(f"serving-lab2: {tag} BOOT FAILURE — full log tail "
+                      f"({log_path.name}):", flush=True)
+                print("\n".join(log_lines[-150:]), flush=True)
+                CURRENT_SERVER["last_boot_log_tail"] = log_lines[-150:]
                 raise RuntimeError(
-                    f"vLLM ({tag}) died during startup rc={proc.returncode}\n"
-                    + tail_log(log_path))
+                    f"vLLM ({tag}) died during startup rc={proc.returncode}; "
+                    f"full tail printed above; log persisted at {log_path}")
             if server_alive():
                 print(f"serving-lab2: vLLM ready ({tag}) with flags: "
-                      + " ".join(flags), flush=True)
+                      + " ".join(flags) + f" extra_env={extra_env}", flush=True)
+                CURRENT_SERVER["extra_env"] = dict(extra_env)
                 return flags
             time.sleep(5)
         else:
-            raise TimeoutError(f"vLLM ({tag}) not ready in {timeout_s}s\n"
-                               + tail_log(log_path))
+            log_lines = tail_log_lines(log_path)
+            print(f"serving-lab2: {tag} BOOT TIMEOUT — full log tail:", flush=True)
+            print("\n".join(log_lines[-150:]), flush=True)
+            CURRENT_SERVER["last_boot_log_tail"] = log_lines[-150:]
+            raise TimeoutError(f"vLLM ({tag}) not ready in {timeout_s}s; "
+                               f"log persisted at {log_path}")
 
 
 # ---- vLLM 0.27.1 install + DFlash2 overlay ---------------------------------
@@ -1070,23 +1111,27 @@ save_results()
 '''
 
 
-CELL_PHASE0 = r'''# ============= PHASE 0 — 0.19 LEG (scored stack, before the upgrade) ========
-# Battery leg A on the EXACT scored serve chain + a brief conc-28 window to
-# confirm the 642.6 tok/min/session baseline reproduces on this session.
-try:
-    parser_roundtrip("v019")
-    run_battery("battery_v019", wall_cap_min=12.0)
-    run_load_phase("v019_conc28_brief", 28, 60, 360)
-    _brief = per_session_of(RESULTS["phases"].get("v019_conc28_brief"))
-    if _brief is not None:
-        _drift = _brief / V019_REF[28]
-        RESULTS["verdicts"]["v019_conc28_reproduction"] = (
-            f"{_brief} vs 642.6 ref ({_drift:.2f}x — "
-            + ("REPRODUCES" if 0.85 <= _drift <= 1.15 else "DRIFTED") + ")")
-        print("serving-lab2:", RESULTS["verdicts"]["v019_conc28_reproduction"], flush=True)
-except Exception:
-    traceback.print_exc()
-    RESULTS["verdicts"].setdefault("phase0", "PHASE-0-ERROR (see traceback)")
+CELL_V1_CARRY_TEMPLATE = r'''# ====== PHASE 0 — 0.19 LEG CARRIED FROM v1 (run 2026-08-22, this GPU pool) ==
+# v1 (arc3-serving-lab2 version 1) completed the whole 0.19 leg on the exact
+# scored serve chain before its 0.27 boot died on the FlashInfer sm75 JIT
+# check. Those measurements are banked verbatim here so the final table and
+# the battery cross-stack comparison still work; v2 does NOT re-run the
+# ~20-min bundle setup or the 0.19 leg. Cross-session caveat noted in-place.
+_V1_CARRY = json.loads(@@V1_CARRY@@)
+for _pname in ("parser_roundtrip_v019", "battery_v019", "v019_conc28_brief"):
+    _entry = dict(_V1_CARRY["phases"][_pname])
+    _entry["carried_from"] = "arc3-serving-lab2 v1 (same GPU pool, 2026-08-22)"
+    RESULTS["phases"][_pname] = _entry
+RESULTS["verdicts"]["v019_conc28_reproduction"] = (
+    "699.1 vs 642.6 ref (1.09x — REPRODUCES; measured in v1, carried)")
+RESULTS["meta"]["v1_carry_note"] = (
+    "0.19-leg numbers measured by v1 of this kernel; battery leg A greedy "
+    "hashes are cross-session, so exact-match rates vs leg B are indicative "
+    "only (batching nondeterminism applies within a session anyway)")
+print("serving-lab2: carried v1 0.19-leg results:",
+      "parser", RESULTS["phases"]["parser_roundtrip_v019"].get("verdict"),
+      "| battery dead:", RESULTS["phases"]["battery_v019"].get("dead_completions"),
+      "| conc28 brief:", RESULTS["phases"]["v019_conc28_brief"].get("gen_tok_min_session_metric"))
 save_results()
 '''
 
@@ -1112,7 +1157,9 @@ try:
     print("serving-lab2: vLLM 0.27.1 UP with scored parser flags", flush=True)
 except Exception as exc:
     traceback.print_exc()
-    RESULTS["phases"]["v027_boot"] = {"ok": False, "error": repr(exc)[:800]}
+    RESULTS["phases"]["v027_boot"] = {
+        "ok": False, "error": repr(exc)[:2000],
+        "boot_log_tail": CURRENT_SERVER.get("last_boot_log_tail", [])[-150:]}
     RESULTS["verdicts"]["q1_v027"] = "V027-BOOT-FATAL — 0.27.1 failed to install/boot"
     print("serving-lab2: V027-BOOT-FATAL — verdict recorded, kernel continues", flush=True)
 save_results()
@@ -1199,7 +1246,9 @@ try:
               flush=True)
 except Exception as exc:
     traceback.print_exc()
-    RESULTS["phases"]["dflash2_boot"] = {"ok": False, "error": repr(exc)[:800]}
+    RESULTS["phases"]["dflash2_boot"] = {
+        "ok": False, "error": repr(exc)[:2000],
+        "boot_log_tail": CURRENT_SERVER.get("last_boot_log_tail", [])[-150:]}
     RESULTS["verdicts"]["q2_dflash2"] = "DFLASH2-FATAL (BOOT) — lane CLOSED this probe"
     print("serving-lab2: DFLASH2-FATAL (BOOT) — recorded, kernel continues", flush=True)
 save_results()
@@ -1349,8 +1398,16 @@ def main() -> None:
     imports_cell = find_cell(MARK_IMPORTS)
     config_cell = find_cell(MARK_CONFIG)
     audit_cell = find_cell(MARK_AUDIT)
-    setup_cell = find_cell(MARK_SETUP)
     attest_cell = _load_attest_cell()
+
+    # v2: no 0.19 server is booted (its leg is carried from v1), so strip the
+    # attest cell's greedy decode fingerprint (it queries the live server) and
+    # keep the pure weight-signature checks.
+    marker = "# Greedy decode fingerprint"
+    assert marker in attest_cell
+    attest_cell = attest_cell.split(marker)[0] + (
+        'print("attest: OK — official Qwen3.8-FP8 weight signature verified '
+        '(decode fingerprint skipped: no 0.19 server in v2)")\n')
 
     dead_repro = json.loads(DEAD_REPRO.read_text(encoding="utf-8"))
     for key in ("reproducer_a", "reproducer_b"):
@@ -1359,6 +1416,16 @@ def main() -> None:
         "@@DEAD_REPRO@@", repr(json.dumps(dead_repro, separators=(",", ":"))))
     assert "@@" not in lab_cell
 
+    v1_full = json.loads(V1_CARRY.read_text(encoding="utf-8"))
+    v1_carry = {"phases": {name: v1_full["phases"][name] for name in
+                           ("parser_roundtrip_v019", "battery_v019",
+                            "v019_conc28_brief")}}
+    assert v1_carry["phases"]["v019_conc28_brief"]["gen_tok_min_session_metric"] == 699.1
+    assert v1_carry["phases"]["battery_v019"]["prompts_scored"] == 12
+    carry_cell = CELL_V1_CARRY_TEMPLATE.replace(
+        "@@V1_CARRY@@", repr(json.dumps(v1_carry, separators=(",", ":"))))
+    assert "@@" not in carry_cell
+
     cells = [
         _md_cell(MD_HEADER),
         _code_cell(imports_cell),
@@ -1366,10 +1433,9 @@ def main() -> None:
         _code_cell(config_cell),
         _code_cell(audit_cell),
         _code_cell(CELL_AUDIT2),       # fail-fast: 0.27 wheelhouse + draft mounts
-        _code_cell(setup_cell),        # boots vLLM 0.19 with the exact scored flags
         _code_cell(attest_cell),       # doctrine v2: weights verified before measuring
         _code_cell(lab_cell),
-        _code_cell(CELL_PHASE0),
+        _code_cell(carry_cell),        # 0.19 leg banked from v1 — no bundle setup
         _code_cell(CELL_UPGRADE),
         _code_cell(CELL_PHASE1B),
         _code_cell(CELL_PHASE2),
@@ -1407,8 +1473,13 @@ def main() -> None:
     assert "67fc76d68dc5a9415511a4f394ef744d67510cd20e93b37cc2cc7d28e4bab65c" in joined
     assert "reproducer_a" in joined and "reproducer_b" in joined
     assert '"--kv-cache-dtype"' not in joined  # KV stays bf16
-    # Battery leg A must run before the 0.27 upgrade:
-    assert joined.index("battery_v019") < joined.index("_info = install_vllm_0271()")
+    # v2 invariants: FlashInfer sm75 fix + v1 carry present, no bundle setup:
+    assert "TORCH_CUDA_ARCH_LIST" in joined
+    assert "VLLM_USE_FLASHINFER_SAMPLER" in joined
+    assert "carried_from" in joined and "699.1" in joined
+    assert MARK_SETUP not in joined  # the 0.19 serve chain is NOT booted in v2
+    # v1 carry must land before the 0.27 upgrade cell:
+    assert joined.index("carried v1 0.19-leg results") < joined.index("_info = install_vllm_0271()")
     # Parser round-trip must precede the 0.27 load phases:
     assert joined.index('parser_roundtrip("v027")') < joined.index('"v027_conc8"')
 
