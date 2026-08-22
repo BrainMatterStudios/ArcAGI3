@@ -64,16 +64,22 @@ def _load_attest_cell() -> str:
 
 
 MD_HEADER = """\
-# arc3-serving-lab2 v2 — vLLM 0.27.1 + DFlash2 lane probe (NO games)
+# arc3-serving-lab2 v3 — vLLM 0.27.1 + DFlash2 lane probe (NO games)
 
-**v2 delta vs v1:** v1's 0.27 boot died on FlashInfer's JIT arch check
-(`FlashInfer requires GPUs with sm75 or higher`) because the Kaggle image
-exports a pre-sm75 `TORCH_CUDA_ARCH_LIST`; the device is sm_120. v2 pins
-`TORCH_CUDA_ARCH_LIST=12.0+PTX` / `FLASHINFER_CUDA_ARCH_LIST=12.0` for every
-0.27 server, falls back to `VLLM_USE_FLASHINFER_SAMPLER=0` if the JIT still
-fails, and prints/persists FULL boot-log tails. The 0.19 leg (parser PASS 3/3,
-battery leg A 12/12 scored 0 dead, conc-28 699.1 tok/min/session) is carried
-from v1 verbatim — no bundle setup, no 0.19 server in v2.
+**Boot-failure history:** v1 died on flashinfer `check_cuda_arch` (image
+exports pre-sm75 `TORCH_CUDA_ARCH_LIST`; device is sm_120). v2, with the arch
+pinned to `12.0`, died on `_normalize_cuda_arch` → `SM 12.x requires CUDA >=
+12.9` (flashinfer parses `nvcc --version` from the image's pre-12.9
+`/usr/local/cuda`). **v3 aimed fix (code-verified against flashinfer
+0.6.16.post3):** `FLASHINFER_CUDA_ARCH_LIST=12.0f` — an explicit suffix is
+stored as-is, skipping both checks; `CUDA_HOME` → the pip `nvidia/cuda_nvcc`
+dir, which verifiably ships NO `bin/nvcc` (only `ptxas` + `nvvm`), so any
+remaining version probe falls back to `torch.version.cuda` = 12.9 from the
+cu129 torch wheel; precompiled kernels come from the `flashinfer_cubin` wheel.
+Sampler-off fallback ladder widened to catch both prior error strings. The
+0.19 leg (parser PASS 3/3, battery leg A 12/12 scored 0 dead, conc-28 699.1
+tok/min/session) is carried from v1 verbatim — no bundle setup in v3.
+A THIRD distinct blocker closes the lane for real.
 
 | Phase | What | Budget |
 |---|---|---|
@@ -416,14 +422,41 @@ def stop_server(reason):
 UNRECOGNIZED_RE = re.compile(r"unrecognized arguments?:\s*(.+)")
 BADARG_RE = re.compile(r"error: argument (--[A-Za-z0-9-]+)")
 
-# v1 root cause (arc3-serving-lab2 v1, vllm-v027-baseline-try1.log): the Kaggle
-# base image exports TORCH_CUDA_ARCH_LIST with pre-sm75 arches (old-GPU
-# compat); flashinfer 0.6.16 check_cuda_arch() then raises "FlashInfer
-# requires GPUs with sm75 or higher" during the 0.27 sampler profile-run —
-# even though the device is sm_120. Fix: pin the arch list to the real GPU.
+# v1 root cause: Kaggle image exports a pre-sm75 TORCH_CUDA_ARCH_LIST →
+# flashinfer check_cuda_arch() raised "requires sm75+". v2 root cause: with
+# the arch pinned to "12.0", CompilationContext._normalize_cuda_arch(12,0)
+# calls is_cuda_version_at_least("12.9"), which parses `nvcc --version` from
+# /usr/local/cuda (image toolkit < 12.9) → "SM 12.x requires CUDA >= 12.9".
+# v3 fix (all code-verified against flashinfer 0.6.16.post3):
+#  - FLASHINFER_CUDA_ARCH_LIST="12.0f": an explicit suffix is stored AS-IS by
+#    CompilationContext.__init__ (no _normalize_cuda_arch, no version check),
+#    and check_cuda_arch() passes on major 12 >= 8 — both prior failure modes
+#    bypassed deterministically.
+#  - CUDA_HOME → the pip nvidia/cuda_nvcc dir. VERIFIED: that wheel ships NO
+#    bin/nvcc (only bin/ptxas + nvvm/libdevice), so flashinfer's
+#    get_cuda_version() hits FileNotFoundError and falls back to
+#    torch.version.cuda (12.9 from the cu129 torch wheel) for any remaining
+#    is_cuda_version_at_least() call — while ptxas/nvvm ARE found. JIT-less
+#    kernels come from the flashinfer_cubin wheel the house ships.
 ARCH_ENV_FIX = {"TORCH_CUDA_ARCH_LIST": "12.0+PTX",
-                "FLASHINFER_CUDA_ARCH_LIST": "12.0"}
-FLASHINFER_ERR_MARKERS = ("FlashInfer requires", "sm75", "flashinfer.jit")
+                "FLASHINFER_CUDA_ARCH_LIST": "12.0f"}
+
+
+def cuda_env_fix(site_packages):
+    cuda_home = Path(site_packages) / "nvidia" / "cuda_nvcc"
+    runtime_lib = Path(site_packages) / "nvidia" / "cuda_runtime" / "lib"
+    env = dict(ARCH_ENV_FIX)
+    env["CUDA_HOME"] = str(cuda_home)
+    env["CUDA_PATH"] = str(cuda_home)
+    env["PATH"] = f"{cuda_home}/bin{os.pathsep}" + os.environ.get("PATH", "")
+    env["LD_LIBRARY_PATH"] = (f"{runtime_lib}{os.pathsep}"
+                              + os.environ.get("LD_LIBRARY_PATH", ""))
+    return env
+
+
+FLASHINFER_ERR_MARKERS = ("FlashInfer requires", "sm75", "flashinfer.jit",
+                          "requires CUDA", "check_cuda_arch",
+                          "compilation_context")
 
 
 def _strip_flag(flags, flag_name):
@@ -454,7 +487,7 @@ def start_server(flags, tag, site_packages, timeout_s=1800, adapt_max=4):
     the FULL log tail printed to stdout so the kernel log always carries the
     root cause (v1 lesson: repr() truncation ate the EngineCore traceback)."""
     flags = list(flags)
-    extra_env = dict(ARCH_ENV_FIX)
+    extra_env = cuda_env_fix(site_packages)
     attempts = 0
     while True:
         attempts += 1
@@ -551,17 +584,44 @@ def install_vllm_0271():
         # Make sure new packages have __init__ chains importable.
     print(f"serving-lab2: overlay copied ({len(overlay_shas)} files)", flush=True)
 
+    probe_code = (
+        "import json, os\n"
+        "import vllm, torch\n"
+        "info = {'vllm': vllm.__version__, 'torch': torch.__version__,\n"
+        "        'torch_cuda': torch.version.cuda}\n"
+        "try:\n"
+        "    import flashinfer\n"
+        "    info['flashinfer'] = flashinfer.__version__\n"
+        "except Exception as e:\n"
+        "    info['flashinfer'] = 'IMPORT-FAIL: ' + repr(e)[:120]\n"
+        "try:\n"
+        "    import flashinfer_cubin\n"
+        "    info['flashinfer_cubin'] = getattr(flashinfer_cubin, '__version__', 'present')\n"
+        "except Exception as e:\n"
+        "    info['flashinfer_cubin'] = 'IMPORT-FAIL: ' + repr(e)[:120]\n"
+        "sp = os.environ['SL2_SP']\n"
+        "nvcc_dir = os.path.join(sp, 'nvidia', 'cuda_nvcc', 'bin')\n"
+        "info['cuda_nvcc_bin'] = sorted(os.listdir(nvcc_dir)) if os.path.isdir(nvcc_dir) else 'MISSING'\n"
+        "print(json.dumps(info))\n")
     ver = subprocess.run(
-        [sys.executable, "-c", "import vllm; print(vllm.__version__)"],
-        env={**os.environ, "PYTHONPATH": str(SITE_PACKAGES_0271)},
+        [sys.executable, "-c", probe_code],
+        env={**os.environ, "PYTHONPATH": str(SITE_PACKAGES_0271),
+             "SL2_SP": str(SITE_PACKAGES_0271)},
         capture_output=True, text=True, timeout=600)
-    version = (ver.stdout or "").strip()
-    print(f"serving-lab2: installed vllm version = {version!r}", flush=True)
-    if not version.startswith("0.27.1"):
-        raise RuntimeError(f"vLLM version check failed: {version!r} "
-                           f"(stderr tail: {(ver.stderr or '')[-400:]})")
-    return {"version": version, "overlay_files": overlay_shas,
-            "pip_log": str(pip_log)}
+    try:
+        stack = json.loads((ver.stdout or "").strip().splitlines()[-1])
+    except Exception:
+        raise RuntimeError(f"stack probe failed rc={ver.returncode}: "
+                           f"{(ver.stdout or '')[-300:]} / {(ver.stderr or '')[-400:]}")
+    print(f"serving-lab2: stack probe = {stack}", flush=True)
+    if not stack["vllm"].startswith("0.27.1"):
+        raise RuntimeError(f"vLLM version check failed: {stack['vllm']!r}")
+    if not str(stack.get("torch_cuda", "")).startswith("12.9"):
+        # The whole CUDA_HOME fallback strategy rests on torch reporting 12.9.
+        log_deviation(f"torch.version.cuda={stack.get('torch_cuda')!r} — not a "
+                      "cu129 build; flashinfer version fallback may misreport")
+    return {"version": stack["vllm"], "stack_probe": stack,
+            "overlay_files": overlay_shas, "pip_log": str(pip_log)}
 
 
 def attest_dflash2_draft():
@@ -1473,9 +1533,12 @@ def main() -> None:
     assert "67fc76d68dc5a9415511a4f394ef744d67510cd20e93b37cc2cc7d28e4bab65c" in joined
     assert "reproducer_a" in joined and "reproducer_b" in joined
     assert '"--kv-cache-dtype"' not in joined  # KV stays bf16
-    # v2 invariants: FlashInfer sm75 fix + v1 carry present, no bundle setup:
+    # v2/v3 invariants: arch + CUDA_HOME fixes + v1 carry present, no bundle setup:
     assert "TORCH_CUDA_ARCH_LIST" in joined
+    assert '"12.0f"' in joined            # suffix bypasses both version checks
+    assert '"CUDA_HOME"' in joined        # nvcc-less pip dir → torch fallback
     assert "VLLM_USE_FLASHINFER_SAMPLER" in joined
+    assert '"requires CUDA"' in joined and '"check_cuda_arch"' in joined
     assert "carried_from" in joined and "699.1" in joined
     assert MARK_SETUP not in joined  # the 0.19 serve chain is NOT booted in v2
     # v1 carry must land before the 0.27 upgrade cell:
