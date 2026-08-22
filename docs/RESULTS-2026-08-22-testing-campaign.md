@@ -49,3 +49,30 @@ All 40 unit tests re-run and verified green by the orchestrator session.
 5. truthful_telemetry (pre-registered, per-level actions read)
 6. archetype-triage graft build against trigger_rule.json
 Envelope law: none of 1-5 can extend duration; 6 strictly reclaims.
+
+## ADDENDUM 00:50Z — serving-lab v4 verdicts (kernel COMPLETE, 100.6 min, RTX Pro 6000)
+
+Push lesson (3 failed attempts, ~0 GPU-min each thanks to the fail-fast
+assert): metadata machine_shape AND --accelerator alone still bind P100 —
+**the competition source is the RTX Pro 6000 gate** (attach
+arc-prize-2026-arc-agi-3 to any kernel that needs the scored GPU).
+
+1. **THROUGHPUT HYPOTHESIS DEAD**: baseline scored flags deliver
+   **642.6 tok/min/session at conc 28** (vs 400 kill-bar, and ABOVE the Modal
+   H100's 445) — 0 errors, realistic 17-25k prompts with images. Live serving
+   is NOT the live-vs-offline discount. Remaining gap suspects: offline-draw
+   optimism + set composition + behavioral pathologies (the validated grafts).
+   Aggregate: conc8 217 tok/s / conc16 304 / conc28 300 (conc 28 remains the
+   right worker count).
+2. **MTP: MEASURED NULL — CLOSED.** nst=3: speedup 1.00x (conc8) / 1.07x
+   (conc28) despite healthy acceptance (59.7-63.3%; nst=2: 71.6-71.8%); no
+   crash (26k-37k-token soak SURVIVED, 36/36 ok, issue #40756 did not
+   reproduce); parser round-trip 2/3-3/3. Under continuous batching at our
+   prompt sizes the speculative gain cancels. Queue lever #2 (priced
+   +0.2..+0.6) is dead on the real GPU at conc>=8. No smoke, no slot spent.
+3. pack-v22 parity arm submitted on schedule: ref 55679452 at 00:11:07Z,
+   gated path clean, rerun pending, read ~09:30Z.
+
+Post-lab queue: the campaign's remaining levers are ALL harness-side —
+effort_medium -> yield_carryover -> mechanical pack -> expect-queue rider ->
+truthful_telemetry -> archetype-triage. Serving stack is certified as-is.
