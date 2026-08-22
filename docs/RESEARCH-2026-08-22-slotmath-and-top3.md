@@ -104,3 +104,33 @@ _HarnessGameSession.play (precedent duck_patches.py:6014), prompt seam =
 _build_user_prompt (same seam carryover uses); import-by-value trap applies
 (harness_mem.py:28-32). First 28 plays get zero benefit by construction;
 same-game clones sit ~25 indices apart in-sim => no play-to-play transfer.
+
+## Addendum 2 (evening): config-dispatch KILLED; token-budget reframe; routing lever OPEN
+
+- **Per-game temp/upscale dispatch: DEAD.** The motivating flips dissolve under
+  measured artifacts: ft09's screen 5/5-vs-wave-0 is a draw of a ~30-40%%
+  zero-rate game (n=56 ablation data), the "6th zero" was a dead infra session;
+  sc25 is TOKEN-graded not config-graded (all failures <63k tok/session, both
+  successes >=70k); cross-block validation of the oracle "+2.28 prize" goes
+  NEGATIVE out-of-sample (winner's curse). Nothing learnable to dispatch on.
+- **REFRAME (measured): sessions are throughput-bound, not clock-bound.**
+  60-min screens and the 132-min wave delivered the SAME ~60k tokens/session;
+  the wave ran ~460 tok/min/session under full load vs 870-1700 at lighter
+  load. The binding currency is TOKENS PER SESSION, and concurrency/allocation
+  moves it. This further promotes triage (killing dead sessions feeds live
+  ones) and prices the sc25-class threshold: ~+0.57 per game rescued by
+  pushing its session past ~70k tokens.
+- **dc22 x bundle signal (p=0.0076):** stock bundle 0/6 nonzero vs v12-graft
+  smokes 5/6 at identical config — rig confound outstanding. Falsifier: same-
+  rig 8v8 A/B. If real: v12 bundle genuinely unlocks dc22 (+~0.19 full-25).
+- **Inspection-routing study (same evening): OPEN, strongest new mean lever.**
+  67%-inspection does NOT replicate (44%+-10 of calls) but inspection holds
+  51.8%% of wall; position-cascade to a co-resident Qwen3.5-9B (already on
+  Kaggle x4) with action-escalation reclaims ~22%% wall (ceiling 30-35%% with
+  riders); VRAM fits (27B@0.75 + 9B@0.17); falsifier = replay 100-200 recorded
+  inspection prompts through 9B/4B, kill at >1.5x probe-error or <70%%
+  key-fact recovery. New dead-decode subclass (8%% of wall, zero-output
+  inspection calls) may already be captured by effort_medium - dedupe before
+  counting.
+- Next falsifiers queued (zero slots): dc22 8v8 bundle A/B; sc25 55k-vs-110k
+  token-threshold A/B; inspection-prompt replay through 9B/4B.
