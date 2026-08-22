@@ -1,8 +1,12 @@
-"""Bugfix-pack graft — eight mechanical fixes from the 08-21 bug-lever hunts.
+"""Bugfix-pack graft — nine mechanical fixes from the 08-21/08-22 bug-lever hunts.
 
 Sources: docs/RESEARCH-2026-08-21-bug-lever-hunt.md (Tier-1 #3 tool-API
 friction, Tier-2 #5 analyzer timeout, Tier-2 #7 stale-image history, Tier-2 #8
-runtime-state O(n^2) + stderr constant) and the wave-2 corrections doc.
+runtime-state O(n^2) + stderr constant), the wave-2 corrections doc, and for
+patch 9 docs/RESEARCH-2026-08-22-slotmath-and-top3.md §E
+(preserve-history-on-request-error rider) + the measured eraser rate in
+docs/RESULTS-2026-08-22-testing-campaign.md (read-timeout reverts 11.9/1000
+requests).
 
 Target tree: the June stock harness (jeroencottaar/taaf-kaggle-source-share ==
 thtennant/taaf-kaggle-source-share-fork, the dataset pack-v22 mounts; the
@@ -82,6 +86,25 @@ BUGFIX_PACK=0 disables all):
    multimodal prompt addendum (prompts.py:69-74) stating the image is an
    Nx upscale (N read from vision_context.current_grid_image_upscale(), 4 in
    the shipping arms) and coords are 0-63 grid units.
+9. request_error_preserve — the measured history-eraser (11.9 reverts/1000
+   requests). tool_agent.py:1979-1996 catches requests.RequestException for
+   the WHOLE analyzer turn and sets preserve_history=False (:1981); the
+   finally block at :2015-2019 then rebinds
+   `self._history_messages = previous_history_messages` (:2019, snapshot
+   taken at :1754) — discarding the entire turn, including tool exchanges
+   whose results were already computed and paid for. Fix: capture the live
+   turn `messages` list at each _chat_completion call (:1822 — later appends
+   at :1903/:1926/:1934/:1958 mutate that same list object, so the capture
+   reflects everything up to the failure); when analyze returns the
+   RequestException result (the only retryable_failure=True return, :1996),
+   rebuild history from the captured turn truncated to the last COMPLETED
+   tool exchange: a trailing assistant message whose tool_calls are not all
+   answered by following `tool` messages is dropped (strict chat validation
+   rejects dangling tool_calls), then trailing user messages are dropped
+   (the next analyze() rebuilds its own fresh user prompt), and the result
+   is re-assigned via the stock _persistent_history_messages (:1653-1670)
+   exactly as the preserve path does (:2017). A failure with no turn
+   progress leaves the stock revert untouched.
 
 House conventions (per submission/_retry_guard/graft_retry.py): monkey-patch
 at import, presence gates on every seam symbol, each patch fail-open behind
@@ -124,6 +147,7 @@ FLAGS: dict[str, bool] = {
     "estimator_images": True,
     "history_image_strip": True,
     "click_range_reject": True,
+    "request_error_preserve": True,
 }
 
 _FALSY = {"0", "false", "False", "no", "off"}
@@ -718,6 +742,140 @@ def patch_click_range_reject() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Patch 9 — request_error_preserve
+# ---------------------------------------------------------------------------
+
+def _truncate_to_completed_exchanges(messages: list[Any]) -> list[Any]:
+    """Truncate a captured turn conversation to its last COMPLETED tool
+    exchange.
+
+    Two trims, both defensive toward strict chat validation:
+    1. If the LAST assistant message carries tool_calls that are not all
+       answered by following `tool` messages, drop it and everything after it
+       (a dangling tool_call — or a partial batch — would be rejected by
+       strict chat templates on the next request).
+    2. Drop trailing user messages (the next analyze() rebuilds its own fresh
+       user prompt; keeping a trailing one would duplicate it).
+    Returns a new list; the input is never mutated.
+    """
+    msgs = list(messages)
+    for index in range(len(msgs) - 1, -1, -1):
+        message = msgs[index]
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("role", "")).strip() != "assistant":
+            continue
+        tool_calls = message.get("tool_calls") or []
+        if tool_calls:
+            call_ids = {
+                str(call.get("id", ""))
+                for call in tool_calls
+                if isinstance(call, dict)
+            }
+            answered = {
+                str(m.get("tool_call_id", ""))
+                for m in msgs[index + 1 :]
+                if isinstance(m, dict) and str(m.get("role", "")).strip() == "tool"
+            }
+            if not call_ids <= answered:
+                msgs = msgs[:index]
+        break  # only the last assistant message can be dangling
+    while msgs and isinstance(msgs[-1], dict) and str(msgs[-1].get("role", "")).strip() == "user":
+        msgs.pop()
+    return msgs
+
+
+def patch_request_error_preserve() -> str:
+    if not _enabled("request_error_preserve"):
+        return "request_error_preserve: SKIP (flag off)"
+    try:
+        from inference.agent import tool_agent as agent_mod
+    except Exception as exc:  # noqa: BLE001
+        return f"request_error_preserve: SKIP (module missing: {exc!r})"
+    agent_cls = getattr(agent_mod, "ToolAgent", None)
+    if agent_cls is None:
+        return "request_error_preserve: SKIP (missing ToolAgent)"
+    original_chat = getattr(agent_cls, "_chat_completion", None)
+    if original_chat is None:
+        return "request_error_preserve: SKIP (missing ToolAgent._chat_completion)"
+    original_analyze = getattr(agent_cls, "analyze", None)
+    if original_analyze is None:
+        return "request_error_preserve: SKIP (missing ToolAgent.analyze)"
+    if getattr(agent_cls, "_persistent_history_messages", None) is None:
+        return "request_error_preserve: SKIP (missing ToolAgent._persistent_history_messages)"
+    turn_result_cls = getattr(agent_mod, "AnalyzerTurnResult", None)
+    if turn_result_cls is None or not hasattr(turn_result_cls, "retryable_failure"):
+        return "request_error_preserve: SKIP (AnalyzerTurnResult.retryable_failure missing)"
+    if getattr(original_analyze, "_bugfix_reqpreserve", False):
+        return "request_error_preserve: SKIP (already applied)"
+
+    def chat_completion_capture(self, messages, *args, **kwargs):  # type: ignore[no-untyped-def]
+        # Capture a reference to the live turn conversation: the analyze loop
+        # passes the SAME list object it keeps appending assistant/tool/user
+        # messages to (tool_agent.py:1822 + :1903/:1926/:1934/:1958), so at
+        # failure time this reference holds everything up to the failure.
+        try:
+            if _enabled("request_error_preserve") and isinstance(messages, list):
+                self._bugfix_turn_capture = (messages, kwargs.get("tools"))
+        except Exception:  # noqa: BLE001 — capture must never break a request
+            pass
+        return original_chat(self, messages, *args, **kwargs)
+
+    def analyze_preserving_request_errors(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        try:
+            self._bugfix_turn_capture = None  # never reuse a stale capture
+        except Exception:  # noqa: BLE001
+            pass
+        # Never guard the inner call: a crash propagates exactly as stock.
+        result = original_analyze(self, *args, **kwargs)
+        try:
+            if not _enabled("request_error_preserve"):
+                return result
+            # retryable_failure=True is set ONLY by the RequestException
+            # handler (tool_agent.py:1996) — the path whose finally block
+            # reverted self._history_messages (:2019).
+            if result is None or not getattr(result, "retryable_failure", False):
+                return result
+            if getattr(result, "step_executed", False):
+                return result
+            capture = getattr(self, "_bugfix_turn_capture", None)
+            if not capture:
+                return result  # failed before any request: nothing to preserve
+            turn_messages, turn_tools = capture
+            if not isinstance(turn_messages, list) or len(turn_messages) < 2:
+                return result
+            preserved_source = _truncate_to_completed_exchanges(turn_messages)
+            if len(preserved_source) < 2:
+                return result  # nothing beyond the system message survived
+            preserved = self._persistent_history_messages(
+                preserved_source, tools=turn_tools
+            )
+            if (
+                isinstance(preserved, list)
+                and preserved
+                and preserved != getattr(self, "_history_messages", None)
+            ):
+                self._history_messages = preserved
+        except Exception:  # noqa: BLE001 — any error leaves the stock revert
+            pass
+        return result
+
+    # Generic marker so patch 5's already-applied check still short-circuits
+    # on a re-install; specific marker gates THIS patch's idempotency.
+    chat_completion_capture._bugfix_patched = True  # type: ignore[attr-defined]
+    chat_completion_capture._bugfix_reqpreserve = True  # type: ignore[attr-defined]
+    analyze_preserving_request_errors._bugfix_patched = True  # type: ignore[attr-defined]
+    analyze_preserving_request_errors._bugfix_reqpreserve = True  # type: ignore[attr-defined]
+    agent_cls._chat_completion = chat_completion_capture
+    agent_cls.analyze = analyze_preserving_request_errors
+    return (
+        "request_error_preserve: OK — a RequestException now keeps the turn's "
+        "completed tool exchanges (dangling tool_call + trailing user prompts "
+        "dropped) instead of the wholesale history revert"
+    )
+
+
+# ---------------------------------------------------------------------------
 # install
 # ---------------------------------------------------------------------------
 
@@ -730,6 +888,7 @@ _PATCHES = (
     ("estimator_images", patch_estimator_images),
     ("history_image_strip", patch_history_image_strip),
     ("click_range_reject", patch_click_range_reject),
+    ("request_error_preserve", patch_request_error_preserve),
 )
 
 

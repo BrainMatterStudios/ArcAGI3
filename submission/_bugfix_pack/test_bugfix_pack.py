@@ -141,6 +141,7 @@ def scenario_install_all() -> None:
         "estimator_images",
         "history_image_strip",
         "click_range_reject",
+        "request_error_preserve",
     ):
         assert f"{name}: OK" in status, f"{name} not OK in install status"
     assert "animation_doc: SKIP (seam absent" in status, "animation_doc should skip on June stock"
@@ -230,7 +231,7 @@ def scenario_flags_off() -> None:
 
     status = g.install()
     print(status)
-    assert status.count("SKIP (flag off)") == 8, status
+    assert status.count("SKIP (flag off)") == 9, status
 
     # stock behavior fully intact
     assert sandbox_mod._sanitize_host_error_text("boom") == "Sandbox process exited unexpectedly."
@@ -340,6 +341,7 @@ def scenario_failopen() -> None:
         "history_image_strip: SKIP (missing ToolAgent._persistent_history_messages)",
         "click_range_reject: SKIP (missing _normalize_actions/to_engine_action)",
         "animation_doc: SKIP (seam absent",
+        "request_error_preserve: SKIP (missing ToolAgent._chat_completion)",
     )
     for line in expected_skips:
         assert line in status, f"missing: {line}\n{status}"
@@ -469,6 +471,143 @@ def scenario_analyzer_timeout() -> None:
     print("scenario_analyzer_timeout: PASS")
 
 
+def _pb_tool_call(call_id: str, code: str) -> dict:
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": "python", "arguments": json.dumps({"code": code})},
+    }
+
+
+def scenario_request_error_preserve() -> None:
+    """Patch 9 end-to-end on the real analyze loop: a RequestException
+    mid-turn keeps the completed tool exchanges (and drops a dangling
+    assistant tool_call) instead of the stock wholesale revert."""
+    g = _bootstrap()
+    import requests  # noqa: PLC0415
+    from inference.agent import tool_agent as agent_mod  # noqa: PLC0415
+    from inference.agent.runtime_state import write_runtime_state  # noqa: PLC0415
+
+    # ---- unit checks on the truncation helper ---------------------------
+    sysm = {"role": "system", "content": "sys"}
+    user = {"role": "user", "content": "turn prompt"}
+    asst = {"role": "assistant", "content": None, "tool_calls": [_pb_tool_call("a", "x")]}
+    tool = {"role": "tool", "tool_call_id": "a", "content": "res-a"}
+    dangling = {"role": "assistant", "content": None, "tool_calls": [_pb_tool_call("b", "y")]}
+    # completed exchange kept, dangling assistant dropped
+    out = g._truncate_to_completed_exchanges([sysm, user, asst, tool, dangling])
+    assert out == [sysm, user, asst, tool], out
+    # partial batch: assistant(a,b) answered only for a -> whole batch dropped,
+    # and the then-trailing user prompt goes too (no preserved progress left,
+    # so the wrapper falls back to the stock revert)
+    batch = {"role": "assistant", "content": None,
+             "tool_calls": [_pb_tool_call("a", "x"), _pb_tool_call("b", "y")]}
+    out = g._truncate_to_completed_exchanges([sysm, user, batch, tool])
+    assert out == [sysm], out
+    # trailing user (no progress) dropped down to the system message
+    out = g._truncate_to_completed_exchanges([sysm, user])
+    assert out == [sysm], out
+    # assistant content-only tail is progress and is kept
+    content_only = {"role": "assistant", "content": "world model note"}
+    followup = {"role": "user", "content": "You have not acted yet."}
+    out = g._truncate_to_completed_exchanges([sysm, user, content_only, followup])
+    assert out == [sysm, user, content_only], out
+
+    # ---- integration: scripted class-level chat, real analyze/sandbox ---
+    script: list = []
+
+    def fake_chat(self, messages, *, tools=None, request_timeout_seconds=None):
+        step = script.pop(0)
+        if step["kind"] == "raise":
+            if step.get("dangling"):
+                # simulate a dangling assistant tool_call left in the live
+                # turn list at failure time (defensive-lineage case)
+                messages.append(
+                    {"role": "assistant", "content": None,
+                     "tool_calls": [_pb_tool_call("dangling-call", "print('never-ran')")]}
+                )
+            raise requests.ConnectionError("boom")
+        return agent_mod._ChatCompletionResult(
+            message=step["message"], finish_reason="tool_calls", usage=None
+        )
+
+    agent_mod.ToolAgent._chat_completion = fake_chat
+    status = g.patch_request_error_preserve()
+    assert status.startswith("request_error_preserve: OK"), status
+    assert "already applied" in g.patch_request_error_preserve()
+
+    def make_agent():
+        return agent_mod.ToolAgent(
+            model="test-model", base_url="http://127.0.0.1:9/v1", provider="vllm"
+        )
+
+    def make_state(tmp: str):
+        entries = _mk_history(1)
+        path = Path(tmp) / "tool_runtime_state.json"
+        write_runtime_state(path, current_frame=entries[-1].frame, history=entries)
+        return path
+
+    def run_turn(agent, path):
+        return agent.analyze(
+            path,
+            0,
+            valid_actions=["ACTION1"],
+            step_env=None,
+            analysis_step=1,
+            request_timeout_seconds=5.0,
+            should_stop=lambda: False,
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = make_state(tmp)
+
+        # A) mid-turn failure after one COMPLETED exchange (+ simulated
+        #    dangling assistant): completed exchange preserved, dangler gone
+        agent = make_agent()
+        script[:] = [
+            {"kind": "ok", "message": {
+                "reasoning": "r1",
+                "tool_calls": [_pb_tool_call("c1", "print('probe-result-alpha')")],
+            }},
+            {"kind": "raise", "dangling": True},
+        ]
+        result = run_turn(agent, path)
+        assert result is not None and result.retryable_failure, result
+        hist = agent._history_messages
+        rendered = json.dumps(hist)
+        assert "probe-result-alpha" in rendered, "completed tool result was not preserved"
+        assert '"c1"' in rendered, "assistant tool_call of the completed exchange missing"
+        assert "dangling-call" not in rendered, "dangling assistant tool_call survived"
+        assert str(hist[0].get("role")) == "user", hist[0]
+        roles = [str(m.get("role")) for m in hist]
+        assert "assistant" in roles and "tool" in roles, roles
+
+        # B) failure on the FIRST request (no progress): stock revert stands
+        agent = make_agent()
+        script[:] = [{"kind": "raise"}]
+        result = run_turn(agent, path)
+        assert result is not None and result.retryable_failure, result
+        assert agent._history_messages == [], agent._history_messages
+
+        # C) flag off at call time: pure pass-through, stock revert stands
+        os.environ["BUGFIX_REQUEST_ERROR_PRESERVE"] = "0"
+        try:
+            agent = make_agent()
+            script[:] = [
+                {"kind": "ok", "message": {
+                    "reasoning": "r1",
+                    "tool_calls": [_pb_tool_call("c1", "print('probe-off')")],
+                }},
+                {"kind": "raise"},
+            ]
+            result = run_turn(agent, path)
+            assert result is not None and result.retryable_failure, result
+            assert agent._history_messages == [], agent._history_messages
+        finally:
+            os.environ.pop("BUGFIX_REQUEST_ERROR_PRESERVE", None)
+    print("scenario_request_error_preserve: PASS")
+
+
 _SCENARIOS = {
     "install_all": scenario_install_all,
     "flags_off": scenario_flags_off,
@@ -477,6 +616,7 @@ _SCENARIOS = {
     "failopen": scenario_failopen,
     "animation_doc": scenario_animation_doc,
     "analyzer_timeout": scenario_analyzer_timeout,
+    "request_error_preserve": scenario_request_error_preserve,
 }
 
 
@@ -521,6 +661,7 @@ def test_flags_off_leaves_stock_intact():
             "estimator_images",
             "history_image_strip",
             "click_range_reject",
+            "request_error_preserve",
         )},
     )
 
@@ -543,6 +684,10 @@ def test_animation_doc_rewrite():
 
 def test_analyzer_timeout_gate():
     _launch("analyzer_timeout")
+
+
+def test_request_error_preserve():
+    _launch("request_error_preserve")
 
 
 if __name__ == "__main__":
