@@ -134,3 +134,22 @@ same-game clones sit ~25 indices apart in-sim => no play-to-play transfer.
   counting.
 - Next falsifiers queued (zero slots): dc22 8v8 bundle A/B; sc25 55k-vs-110k
   token-threshold A/B; inspection-prompt replay through 9B/4B.
+
+## Addendum 3 (night, falsifier verdicts)
+
+- **Inspection-routing cascade: DEAD** (pre-registered kill, n=136 replayed
+  inspection prompts, graded 106): Qwen3.5-9B exec-error 21.3% / 4B 18.4% vs
+  the 27B's recorded 9.6% (both >1.5x), novel-fact recovery ~0.22 (<0.70
+  bar) — the small models decode 3.73x faster (13.4s vs 50s) but cannot do
+  the inspection reasoning. Lever closed on merit. The dead-decode rider was
+  separately confirmed captured by effort_medium (0/212 on its smoke).
+- **dc22 x bundle: inconclusive, leaning dead** — same-rig 8v8: stock 2/8 =
+  v12 2/8 nonzero. The motivating 5/6-vs-0/6 split was rig/draw variance.
+  No build.
+- **xd composite submitted on schedule**: ref 55701891 at 00:11Z 08-23,
+  gated path clean; read ~09:30Z.
+- Net of the 48h hunt: surviving mean-lever paths = the compounding validated
+  ladder + token-budget reallocation family (triage + sc25-class threshold,
+  A/B still queued) + the search-core build (cstl route). Serving and routing
+  families are exhausted BY MEASUREMENT, each killed cheap by fail-fast
+  falsifiers.
