@@ -1,0 +1,1185 @@
+====================================================================================================
+CASE spiral__depthdiag__tn36-ef4dde99__L2__b31  kind=spiral arch=CLICK actions_this_level=62 noops=0
+--- carried world model ---
+- Action model: marker clicks toggle dark/light; ball click makes the ball jump into the track and slide right (fixed path cols 42→47→52) while the yellow cup shifts horizontally; cup offset from ball ≈ +7 with 0 dark markers, ≈ +3 with 4 dark (each dark marker shifts cup ~1 left). Boxes snap the square to preset A or B. - Goal model (uncertain): likely align the cup with the ball's landing position (right number of dark markers) and/or set the square to the correct preset. Not yet confirmed. - Key risk discovered: a GAME_OVER was hit at step 88 — most likely a step/action budget limit (I used ~88 actions probing). Next run must be far more economical: minimal probing, then commit to the hypothesized solution (set markers to align cup with ball's final slide position, verify with one ball jump, adjust square if needed).
+- Open questions: exact marker count/positions needed for a "catch"; whether the square position matters for the win; what exactly triggered GAME_OVER (step limit vs. a specific marker combo). I will not call `action()` this turn since the run is over; I'll re-evaluate from the reset state next turn.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 2, 62 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #68: ACTION6 (24,33) changed_px=1 level=2 level_delta=0
+  #69: ACTION6 (11,58) changed_px=1 level=2 level_delta=0
+  #70: ACTION6 (9,33) changed_px=1 level=2 level_delta=0
+  #71: ACTION6 (14,33) changed_px=1 level=2 level_delta=0
+  #72: ACTION6 (19,33) changed_px=1 level=2 level_delta=0
+  #73: ACTION6 (24,33) changed_px=1 level=2 level_delta=0
+  #74: ACTION6 (9,33) changed_px=1 level=2 level_delta=0
+  #75: ACTION6 (14,33) changed_px=1 level=2 level_delta=0
+  #76: ACTION6 (19,33) changed_px=1 level=2 level_delta=0
+  #77: ACTION6 (24,33) changed_px=1 level=2 level_delta=0
+  #78: ACTION6 (46,58) changed_px=1 level=2 level_delta=0
+  #79: ACTION6 (9,33) changed_px=1 level=2 level_delta=0
+  #80: ACTION6 (14,33) changed_px=1 level=2 level_delta=0
+  #81: ACTION6 (19,33) changed_px=1 level=2 level_delta=0
+  #82: ACTION6 (24,33) changed_px=1 level=2 level_delta=0
+  #83: ACTION6 (39,33) changed_px=4 level=2 level_delta=0
+  #84: ACTION6 (44,33) changed_px=4 level=2 level_delta=0
+  #85: ACTION6 (49,33) changed_px=4 level=2 level_delta=0
+  #86: ACTION6 (54,33) changed_px=4 level=2 level_delta=0
+  #87: RESET - changed_px=113 level=2 level_delta=0
+No-op events on this level (actions whose board did not change at all): 0
+
+====================================================================================================
+CASE on_completed_level__depthdiag__wa30-ee6fef47__L2__b28  kind=on_completed_level arch=AVATAR actions_this_level=56 noops=0
+--- carried world model ---
+- Goal model: fill the rectangle's slots with boxes/cores. I need to bring in the 2 remaining boxes. Let me bump (10,11) from the left and observe whether it docks autonomously or needs carrying.
+- Open questions: Where do the cores get docked this time (the big blue rectangle? the orange block?), and how many boxes are there?
+- Plan: SPACE to grab the core, route around O and the rectangle via row 6 (UP×4, LEFT×8, DOWN×3) to (9,2), then SPACE to drop into empty slot (9,3).
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 2, 56 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #69: ACTION4 - changed_px=77 level=2 level_delta=0
+  #70: ACTION4 - changed_px=33 level=2 level_delta=0
+  #71: ACTION5 - changed_px=45 level=2 level_delta=0
+  #72: ACTION1 - changed_px=97 level=2 level_delta=0
+  #73: ACTION1 - changed_px=96 level=2 level_delta=0
+  #74: ACTION1 - changed_px=97 level=2 level_delta=0
+  #75: ACTION1 - changed_px=97 level=2 level_delta=0
+  #76: ACTION3 - changed_px=77 level=2 level_delta=0
+  #77: ACTION3 - changed_px=77 level=2 level_delta=0
+  #78: ACTION3 - changed_px=77 level=2 level_delta=0
+  #79: ACTION3 - changed_px=57 level=2 level_delta=0
+  #80: ACTION3 - changed_px=109 level=2 level_delta=0
+  #81: ACTION3 - changed_px=109 level=2 level_delta=0
+  #82: ACTION3 - changed_px=45 level=2 level_delta=0
+  #83: ACTION3 - changed_px=45 level=2 level_delta=0
+  #84: ACTION3 - changed_px=109 level=2 level_delta=0
+  #85: ACTION2 - changed_px=128 level=2 level_delta=0
+  #86: ACTION2 - changed_px=129 level=2 level_delta=0
+  #87: ACTION2 - changed_px=129 level=2 level_delta=0
+  #88: ACTION5 - changed_px=77 level=2 level_delta=0
+No-op events on this level (actions whose board did not change at all): 0
+
+====================================================================================================
+CASE spiral__depthdiag__wa30-ee6fef47__L3__b49  kind=spiral arch=AVATAR actions_this_level=42 noops=1
+--- carried world model ---
+- World model: carry cores from the left c-boxes across the wall (via the c-box doors) into the blue rectangle. Let me test crossing the wall: move UP to row 8 (level with the (8,8) door) then RIGHT to see if the c-box is passable.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 3, 42 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #115: ACTION1 - changed_px=65 level=3 level_delta=0
+  #116: ACTION3 - changed_px=76 level=3 level_delta=0
+  #117: ACTION3 - changed_px=33 level=3 level_delta=0
+  #118: ACTION5 - changed_px=45 level=3 level_delta=0
+  #119: ACTION2 - changed_px=76 level=3 level_delta=0
+  #120: ACTION2 - changed_px=113 level=3 level_delta=0
+  #121: ACTION2 - changed_px=113 level=3 level_delta=0
+  #122: ACTION4 - changed_px=92 level=3 level_delta=0
+  #123: ACTION4 - changed_px=49 level=3 level_delta=0
+  #124: ACTION5 - changed_px=60 level=3 level_delta=0
+  #125: ACTION1 - changed_px=57 level=3 level_delta=0
+  #126: ACTION3 - changed_px=33 level=3 level_delta=0
+  #127: ACTION3 - changed_px=32 level=3 level_delta=0
+  #128: ACTION2 - changed_px=33 level=3 level_delta=0
+  #129: ACTION5 - changed_px=1 level=3 level_delta=0
+  #130: ACTION2 - changed_px=32 level=3 level_delta=0
+  #131: ACTION2 - changed_px=33 level=3 level_delta=0
+  #132: ACTION2 - changed_px=33 level=3 level_delta=0
+  #133: ACTION3 - changed_px=44 level=3 level_delta=0
+  #134: ACTION5 - changed_px=13 level=3 level_delta=0
+No-op events on this level (actions whose board did not change at all): 1
+  #111: ACTION4 -
+
+====================================================================================================
+CASE spiral__digest1__ft09-0d8bbf25__L3__b31  kind=spiral arch=CLICK actions_this_level=43 noops=1
+--- carried world model ---
+- Plan: Toggle all 17 W cells from R→O, and revert (1,3) back from O→R. 18 clicks, checking for clear after each click.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 3, 43 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #37: ACTION6 (23,39) changed_px=37 level=3 level_delta=0
+  #38: ACTION6 (39,23) changed_px=37 level=3 level_delta=0
+  #39: ACTION6 (47,23) changed_px=36 level=3 level_delta=0
+  #40: ACTION6 (39,39) changed_px=37 level=3 level_delta=0
+  #41: ACTION6 (31,39) changed_px=37 level=3 level_delta=0
+  #42: ACTION6 (23,47) changed_px=36 level=3 level_delta=0
+  #43: ACTION6 (23,55) changed_px=37 level=3 level_delta=0
+  #44: ACTION6 (31,55) changed_px=37 level=3 level_delta=0
+  #45: ACTION6 (39,55) changed_px=36 level=3 level_delta=0
+  #46: ACTION6 (39,15) changed_px=37 level=3 level_delta=0
+  #47: ACTION6 (23,23) changed_px=37 level=3 level_delta=0
+  #48: ACTION6 (39,23) changed_px=36 level=3 level_delta=0
+  #49: ACTION6 (47,23) changed_px=37 level=3 level_delta=0
+  #50: ACTION6 (31,31) changed_px=37 level=3 level_delta=0
+  #51: ACTION6 (15,39) changed_px=36 level=3 level_delta=0
+  #52: ACTION6 (23,39) changed_px=37 level=3 level_delta=0
+  #53: ACTION6 (39,39) changed_px=37 level=3 level_delta=0
+  #54: ACTION6 (23,31) changed_px=0 level=3 level_delta=0
+  #55: ACTION6 (39,15) changed_px=36 level=3 level_delta=0
+  #56: ACTION6 (39,47) changed_px=37 level=3 level_delta=0
+No-op events on this level (actions whose board did not change at all): 1
+  #54: ACTION6 (23,31)
+
+====================================================================================================
+CASE spiral__digest1__sb26-7fbdac44__L2__b29  kind=spiral arch=CLICK actions_this_level=25 noops=0
+--- carried world model ---
+- Plan: press SPACE to confirm.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 2, 25 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #17: ACTION6 (40,22) changed_px=53 level=2 level_delta=0
+  #18: ACTION6 (45,58) changed_px=20 level=2 level_delta=0
+  #19: ACTION6 (22,36) changed_px=53 level=2 level_delta=0
+  #20: ACTION6 (24,58) changed_px=20 level=2 level_delta=0
+  #21: ACTION6 (28,36) changed_px=53 level=2 level_delta=0
+  #22: ACTION6 (52,58) changed_px=20 level=2 level_delta=0
+  #23: ACTION6 (34,36) changed_px=53 level=2 level_delta=0
+  #24: ACTION6 (38,58) changed_px=20 level=2 level_delta=0
+  #25: ACTION6 (40,36) changed_px=53 level=2 level_delta=0
+  #26: ACTION5 - changed_px=1 level=2 level_delta=0
+  #27: ACTION6 (28,36) changed_px=20 level=2 level_delta=0
+  #28: ACTION6 (34,36) changed_px=53 level=2 level_delta=0
+  #29: ACTION5 - changed_px=1 level=2 level_delta=0
+  #30: ACTION6 (40,22) changed_px=20 level=2 level_delta=0
+  #31: ACTION6 (34,36) changed_px=53 level=2 level_delta=0
+  #32: ACTION6 (40,22) changed_px=20 level=2 level_delta=0
+  #33: ACTION6 (22,36) changed_px=53 level=2 level_delta=0
+  #34: ACTION6 (40,22) changed_px=20 level=2 level_delta=0
+  #35: ACTION6 (40,36) changed_px=53 level=2 level_delta=0
+  #36: ACTION5 - changed_px=1 level=2 level_delta=0
+No-op events on this level (actions whose board did not change at all): 0
+
+====================================================================================================
+CASE stuck__packv22__m0r0-492f87ba__L1__b22  kind=stuck arch=MIXED actions_this_level=27 noops=1
+--- carried world model ---
+- World model: The black shape is a "person"-like track: top bar (rows 9-13, cols 19-48), head/shoulders, thin arm columns (rows 29-38: left 14-18, right 49-53), legs (rows 39-58) with 5×5 outer pockets at rows 49-53 (left cols 9-13, right cols 49-53). The cyan squares slide within the black track in 5-cell steps. LEFT moved the left square left and the right square right (mirror motion toward the outer pockets). The border corners (0,63) and (63,0) turned white — possibly a progress indicator.
+- Recent findings: LEFT moved **both** cyan squares 5 cells to the left (each 5×5 square). So the arrows move the cyan squares (probably in 5-cell steps, or until they collide).
+- Open questions: What does RIGHT/UP do? What is the goal? Let me check the corner cells across the history frames and probe RIGHT.
+- Plan: probe LEFT once more to check the step size / collision behavior.
+Goal evidence (measured by the harness from actual outcomes, not inferred):
+- Board-changing rate per action so far: UP 13/13, LEFT 5/5, RIGHT 5/5, DOWN 2/2, MOUSE 1/1, SPACE 0/1.
+- Action-space coverage (measured): 27 actions have been aimed at only 5 distinct target(s) — 5.4x each.
+- Those actions produced 26 distinct board configurations; 1 of them (4%) returned the board to a configuration already visited. (Hidden state may differ, so this is not proof an action was wasted — but it is where the budget has gone.)
+- No level has been completed in 27 actions. Nothing done so far has been scored as progress; if the current approach has not changed that, it is the approach that is wrong.
+- Highest level reached so far: 1.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 27 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #7: ACTION1 - changed_px=50 level=1 level_delta=0
+  #8: ACTION1 - changed_px=52 level=1 level_delta=0
+  #9: ACTION1 - changed_px=50 level=1 level_delta=0
+  #10: ACTION3 - changed_px=52 level=1 level_delta=0
+  #11: ACTION1 - changed_px=50 level=1 level_delta=0
+  #12: ACTION1 - changed_px=52 level=1 level_delta=0
+  #13: ACTION1 - changed_px=50 level=1 level_delta=0
+  #14: ACTION1 - changed_px=50 level=1 level_delta=0
+  #15: ACTION1 - changed_px=52 level=1 level_delta=0
+  #16: ACTION4 - changed_px=100 level=1 level_delta=0
+  #17: ACTION1 - changed_px=102 level=1 level_delta=0
+  #18: ACTION4 - changed_px=100 level=1 level_delta=0
+  #19: ACTION4 - changed_px=102 level=1 level_delta=0
+  #20: ACTION5 - changed_px=0 level=1 level_delta=0
+  #21: ACTION3 - changed_px=100 level=1 level_delta=0
+  #22: ACTION2 - changed_px=102 level=1 level_delta=0
+  #23: ACTION4 - changed_px=50 level=1 level_delta=0
+  #24: ACTION6 (26,16) changed_px=2 level=1 level_delta=0
+  #25: ACTION3 - changed_px=100 level=1 level_delta=0
+  #26: ACTION2 - changed_px=102 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 1
+  #20: ACTION5 -
+
+====================================================================================================
+CASE stuck__packv22__sk48-d8078629__L1__b20  kind=stuck arch=MIXED actions_this_level=47 noops=1
+--- carried world model ---
+- World model: goal = bring all three colors to the left wall (col 18). Green is at col 36 now. Let me push it to the right wall, extend tip past it, then retract to pull it left — watching for collection.
+Goal evidence (measured by the harness from actual outcomes, not inferred):
+- Board-changing rate per action so far: LEFT 21/21, RIGHT 20/20, UP 4/4, DOWN 1/1, MOUSE 0/1.
+- Action-space coverage (measured): 47 actions have been aimed at only 4 distinct target(s) — 11.8x each.
+- Those actions produced 45 distinct board configurations; 2 of them (4%) returned the board to a configuration already visited. (Hidden state may differ, so this is not proof an action was wasted — but it is where the budget has gone.)
+- No level has been completed in 47 actions. Nothing done so far has been scored as progress; if the current approach has not changed that, it is the approach that is wrong.
+- Highest level reached so far: 1.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 47 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #27: ACTION4 - changed_px=12 level=1 level_delta=0
+  #28: ACTION4 - changed_px=13 level=1 level_delta=0
+  #29: ACTION4 - changed_px=12 level=1 level_delta=0
+  #30: ACTION4 - changed_px=4 level=1 level_delta=0
+  #31: ACTION3 - changed_px=37 level=1 level_delta=0
+  #32: ACTION3 - changed_px=36 level=1 level_delta=0
+  #33: ACTION3 - changed_px=36 level=1 level_delta=0
+  #34: ACTION3 - changed_px=37 level=1 level_delta=0
+  #35: ACTION3 - changed_px=4 level=1 level_delta=0
+  #36: ACTION1 - changed_px=72 level=1 level_delta=0
+  #37: ACTION4 - changed_px=13 level=1 level_delta=0
+  #38: ACTION4 - changed_px=12 level=1 level_delta=0
+  #39: ACTION4 - changed_px=12 level=1 level_delta=0
+  #40: ACTION4 - changed_px=13 level=1 level_delta=0
+  #41: ACTION4 - changed_px=8 level=1 level_delta=0
+  #42: ACTION3 - changed_px=36 level=1 level_delta=0
+  #43: ACTION3 - changed_px=37 level=1 level_delta=0
+  #44: ACTION3 - changed_px=36 level=1 level_delta=0
+  #45: ACTION3 - changed_px=36 level=1 level_delta=0
+  #46: ACTION3 - changed_px=9 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 1
+  #5: ACTION6 (43,32)
+
+====================================================================================================
+CASE stuck__packv22__sk48-d8078629__L1__b36  kind=stuck arch=MIXED actions_this_level=119 noops=29
+--- carried world model ---
+- World model: goal = bring all three colors to the left wall (col 18). Green is at col 36 now. Let me push it to the right wall, extend tip past it, then retract to pull it left — watching for collection.
+Goal evidence (measured by the harness from actual outcomes, not inferred):
+- Board-changing rate per action so far: LEFT 39/54, RIGHT 36/46, UP 10/12, DOWN 5/5, MOUSE 0/2.
+- Action-space coverage (measured): 119 actions have been aimed at only 4 distinct target(s) — 29.8x each.
+- Those actions produced 89 distinct board configurations; 30 of them (25%) returned the board to a configuration already visited. (Hidden state may differ, so this is not proof an action was wasted — but it is where the budget has gone.)
+- No level has been completed in 119 actions. Nothing done so far has been scored as progress; if the current approach has not changed that, it is the approach that is wrong.
+- Highest level reached so far: 1.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 119 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #99: ACTION3 - changed_px=1 level=1 level_delta=0
+  #100: ACTION3 - changed_px=0 level=1 level_delta=0
+  #101: ACTION3 - changed_px=0 level=1 level_delta=0
+  #102: ACTION3 - changed_px=0 level=1 level_delta=0
+  #103: ACTION3 - changed_px=1 level=1 level_delta=0
+  #104: ACTION3 - changed_px=0 level=1 level_delta=0
+  #105: ACTION3 - changed_px=0 level=1 level_delta=0
+  #106: ACTION3 - changed_px=1 level=1 level_delta=0
+  #107: ACTION3 - changed_px=0 level=1 level_delta=0
+  #108: ACTION3 - changed_px=0 level=1 level_delta=0
+  #109: ACTION3 - changed_px=1 level=1 level_delta=0
+  #110: ACTION3 - changed_px=0 level=1 level_delta=0
+  #111: ACTION3 - changed_px=0 level=1 level_delta=0
+  #112: ACTION3 - changed_px=1 level=1 level_delta=0
+  #113: ACTION3 - changed_px=0 level=1 level_delta=0
+  #114: ACTION3 - changed_px=0 level=1 level_delta=0
+  #115: ACTION3 - changed_px=1 level=1 level_delta=0
+  #116: ACTION3 - changed_px=0 level=1 level_delta=0
+  #117: ACTION3 - changed_px=0 level=1 level_delta=0
+  #118: ACTION3 - changed_px=1 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 29
+  #104: ACTION3 -
+  #105: ACTION3 -
+  #107: ACTION3 -
+  #108: ACTION3 -
+  #110: ACTION3 -
+  #111: ACTION3 -
+  #113: ACTION3 -
+  #114: ACTION3 -
+  #116: ACTION3 -
+  #117: ACTION3 -
+
+====================================================================================================
+CASE spiral__packv22__sk48-d8078629-dup__L1__b22  kind=spiral arch=MIXED actions_this_level=42 noops=5
+--- carried world model ---
+- Plan: go to red row (2 UP), extend bridge to col ≥42 (3 RIGHT: 28→34→40→46) to collect red; then green (2 DOWN), then blue (1 UP). Bridge extension persists across moves. Executing: 2 UP + 3 RIGHT to reach and touch red.
+Goal evidence (measured by the harness from actual outcomes, not inferred):
+- Board-changing rate per action so far: LEFT 16/18, RIGHT 15/17, UP 4/4, DOWN 2/2, MOUSE 0/1.
+- Action-space coverage (measured): 42 actions have been aimed at only 4 distinct target(s) — 10.5x each.
+- Those actions produced 37 distinct board configurations; 5 of them (12%) returned the board to a configuration already visited. (Hidden state may differ, so this is not proof an action was wasted — but it is where the budget has gone.)
+- No level has been completed in 42 actions. Nothing done so far has been scored as progress; if the current approach has not changed that, it is the approach that is wrong.
+- Highest level reached so far: 1.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 42 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #22: ACTION4 - changed_px=1 level=1 level_delta=0
+  #23: ACTION3 - changed_px=36 level=1 level_delta=0
+  #24: ACTION3 - changed_px=36 level=1 level_delta=0
+  #25: ACTION3 - changed_px=37 level=1 level_delta=0
+  #26: ACTION3 - changed_px=36 level=1 level_delta=0
+  #27: ACTION3 - changed_px=4 level=1 level_delta=0
+  #28: ACTION3 - changed_px=1 level=1 level_delta=0
+  #29: ACTION1 - changed_px=72 level=1 level_delta=0
+  #30: ACTION4 - changed_px=12 level=1 level_delta=0
+  #31: ACTION4 - changed_px=13 level=1 level_delta=0
+  #32: ACTION4 - changed_px=12 level=1 level_delta=0
+  #33: ACTION4 - changed_px=12 level=1 level_delta=0
+  #34: ACTION4 - changed_px=5 level=1 level_delta=0
+  #35: ACTION4 - changed_px=0 level=1 level_delta=0
+  #36: ACTION3 - changed_px=36 level=1 level_delta=0
+  #37: ACTION3 - changed_px=37 level=1 level_delta=0
+  #38: ACTION3 - changed_px=36 level=1 level_delta=0
+  #39: ACTION3 - changed_px=36 level=1 level_delta=0
+  #40: ACTION3 - changed_px=5 level=1 level_delta=0
+  #41: ACTION3 - changed_px=0 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 5
+  #7: ACTION6 (43,20)
+  #8: ACTION4 -
+  #14: ACTION3 -
+  #35: ACTION4 -
+  #41: ACTION3 -
+
+====================================================================================================
+CASE stuck__packv22__tn36-ef4dde99__L1__b20  kind=stuck arch=CLICK actions_this_level=49 noops=0
+--- carried world model ---
+- World model: bars encode one checkerboard row, stems encode another (e.g., bars=top row, stems=bottom row).
+- Plan: try uniform-even (toggle all 5 stems → w,w,B,w,B). 5 clicks.
+Goal evidence (measured by the harness from actual outcomes, not inferred):
+- Play-area-changing rate per action so far: MOUSE 44/49.
+- row 1 of the grid is a status/timer band: it advances on every action whatever you do, and is EXCLUDED from the rates above. A change there is not progress.
+- Clicks by WHAT WAS UNDER THE CURSOR (colour of the clicked cell, and the size of the contiguous same-colour block it belongs to), and how often each changed the play area: colour1 block2-4 22/22, colour5 block2-4 22/22, colour5 block5-16 0/2, colour9 block65+ 0/2, colour11 block5-16 0/1.
+- Action-space coverage (measured): 49 actions have been aimed at only 19 distinct target(s) — 2.6x each.
+- Those actions produced 48 distinct play area configurations; 1 of them (2%) returned the play area to a configuration already visited. (Hidden state may differ, so this is not proof an action was wasted — but it is where the budget has gone.)
+- No level has been completed in 49 actions. Nothing done so far has been scored as progress; if the current approach has not changed that, it is the approach that is wrong.
+- Highest level reached so far: 1.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 49 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #29: ACTION6 (26,42) changed_px=4 level=1 level_delta=0
+  #30: ACTION6 (36,42) changed_px=4 level=1 level_delta=0
+  #31: ACTION6 (31,45) changed_px=4 level=1 level_delta=0
+  #32: ACTION6 (41,45) changed_px=4 level=1 level_delta=0
+  #33: ACTION6 (21,45) changed_px=4 level=1 level_delta=0
+  #34: ACTION6 (26,45) changed_px=4 level=1 level_delta=0
+  #35: ACTION6 (31,45) changed_px=4 level=1 level_delta=0
+  #36: ACTION6 (36,45) changed_px=4 level=1 level_delta=0
+  #37: ACTION6 (41,45) changed_px=4 level=1 level_delta=0
+  #38: ACTION6 (36,55) changed_px=1 level=1 level_delta=0
+  #39: ACTION6 (21,42) changed_px=4 level=1 level_delta=0
+  #40: ACTION6 (26,42) changed_px=4 level=1 level_delta=0
+  #41: ACTION6 (31,42) changed_px=4 level=1 level_delta=0
+  #42: ACTION6 (36,42) changed_px=4 level=1 level_delta=0
+  #43: ACTION6 (41,42) changed_px=4 level=1 level_delta=0
+  #44: ACTION6 (21,44) changed_px=4 level=1 level_delta=0
+  #45: ACTION6 (26,44) changed_px=4 level=1 level_delta=0
+  #46: ACTION6 (31,44) changed_px=4 level=1 level_delta=0
+  #47: ACTION6 (36,44) changed_px=4 level=1 level_delta=0
+  #48: ACTION6 (41,44) changed_px=4 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 0
+
+====================================================================================================
+CASE stuck__packv22__tn36-ef4dde99__L1__b39  kind=stuck arch=CLICK actions_this_level=95 noops=0
+--- carried world model ---
+- World model: bars encode one checkerboard row, stems encode another (e.g., bars=top row, stems=bottom row).
+- Action model: ** Only the T-mark bar/stem cells are interactive (click = toggle B↔w, 100% reliable). Ball, ∩, U, and checkerboard cells never change the play area on click (0/N). The ball never moves under any T-state or click. - **Goal (unresolved):** Setting the 10 toggles to a target configuration. Exhausted without success: uniform-odd, uniform-even, both mixed row-parity patterns, all-B, all-w, all-B-bars/all-w-stems (partial), plus ball/∩/U/checkerboard clicks. No configuration produced `level_completed` or any object movement. - **Failure cause:** Ran out of the ~61-step time limit while still guessing T-mark patterns; the approach (brute-forcing 10-bit patterns) was wrong — the goal likely depends on a mechanic I never identified (e.g., a specific toggle *sequence*, a state that triggers ball motion, or a non-obvious encoding from the ∩/U positions). - **Lesson for next run:** Do not brute-force toggle patterns. Earlier, probe whether any T-state causes the ball/∩/U to *move* (not just the toggles to flip), and test whether the goal is a click *sequence* rather than a final state. Keep the timer in mind: budget ~30 actions for the real solution. Per the rules, I'm stopping here on `game_over` and will re-ground on the next turn.
+- Plan: ** Test "only T3 on" (bar+B, stem+B; all others w) — directly implied by ∩/U both pointing at center column. From current (bars all B, stems all w): flip bars T1,T2,T4,T5 and flip stem T3 = 5 clicks.
+Goal evidence (measured by the harness from actual outcomes, not inferred):
+- Play-area-changing rate per action so far: MOUSE 88/94.
+- row 1 of the grid is a status/timer band: it advances on every action whatever you do, and is EXCLUDED from the rates above. A change there is not progress.
+- Clicks by WHAT WAS UNDER THE CURSOR (colour of the clicked cell, and the size of the contiguous same-colour block it belongs to), and how often each changed the play area: colour1 block2-4 45/45, colour5 block2-4 43/43, colour9 block65+ 0/3, colour5 block5-16 0/2, colour11 block5-16 0/1.
+- Action-space coverage (measured): 95 actions have been aimed at only 25 distinct target(s) — 3.8x each.
+- Those actions produced 89 distinct play area configurations; 6 of them (6%) returned the play area to a configuration already visited. (Hidden state may differ, so this is not proof an action was wasted — but it is where the budget has gone.)
+- 7 of those targets have only ever shown TWO local patterns each, over at least three visits apiece: they behave as independent binary switches — acting on one flips it, acting again flips it back.
+- If so, this level is a COMBINATION, not a sequence: what scores is which switches you leave set, not how many actions you spend or in what order. There are 2^7 combinations, so setting them one at a time to see what happens cannot work. Decide what the finished board should look like, then flip only the switches that differ from it.
+- Current switch states (labels arbitrary but stable turn to turn): (44,21)=0 (44,26)=1 (44,31)=0 (44,36)=1 (44,41)=1 (42,40)=0 (42,20)=0.
+- No level has been completed in 94 actions. Nothing done so far has been scored as progress; if the current approach has not changed that, it is the approach that is wrong.
+- Attempt ended (game over) 1x, most recently at action 61.
+- Actions just before the latest game over: MOUSE(row=55, col=36), MOUSE(row=44, col=21), MOUSE(row=44, col=26), MOUSE(row=44, col=31).
+- Highest level reached so far: 1.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 95 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #75: ACTION6 (36,44) changed_px=4 level=1 level_delta=0
+  #76: ACTION6 (30,42) changed_px=4 level=1 level_delta=0
+  #77: ACTION6 (31,44) changed_px=4 level=1 level_delta=0
+  #78: ACTION6 (20,42) changed_px=4 level=1 level_delta=0
+  #79: ACTION6 (21,44) changed_px=4 level=1 level_delta=0
+  #80: ACTION6 (40,42) changed_px=4 level=1 level_delta=0
+  #81: ACTION6 (41,44) changed_px=4 level=1 level_delta=0
+  #82: ACTION6 (25,42) changed_px=4 level=1 level_delta=0
+  #83: ACTION6 (26,44) changed_px=4 level=1 level_delta=0
+  #84: ACTION6 (35,42) changed_px=4 level=1 level_delta=0
+  #85: ACTION6 (36,44) changed_px=4 level=1 level_delta=0
+  #86: ACTION6 (20,42) changed_px=4 level=1 level_delta=0
+  #87: ACTION6 (40,42) changed_px=4 level=1 level_delta=0
+  #88: ACTION6 (26,44) changed_px=4 level=1 level_delta=0
+  #89: ACTION6 (31,44) changed_px=4 level=1 level_delta=0
+  #90: ACTION6 (36,44) changed_px=4 level=1 level_delta=0
+  #91: ACTION6 (20,42) changed_px=4 level=1 level_delta=0
+  #92: ACTION6 (40,42) changed_px=4 level=1 level_delta=0
+  #93: ACTION6 (21,44) changed_px=4 level=1 level_delta=0
+  #94: ACTION6 (41,44) changed_px=4 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 0
+
+====================================================================================================
+CASE spiral__xd__dc22-fdcac232__L2__b36  kind=spiral arch=MIXED actions_this_level=17 noops=2
+--- carried world model ---
+- World model: clicking right-side tables toggles corresponding left pieces; goal = arrange left pieces to match target order, then knob to a goal cell (maybe the mini table). Probing: click both tables and diff.
+- Plan: move the knob down column 8 to row 52, then right to the mini table (15 actions), and observe blocking/completion.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 2, 17 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #26: ACTION3 - changed_px=8 level=1 level_delta=0
+  #27: ACTION3 - changed_px=9 level=1 level_delta=0
+  #28: ACTION4 - changed_px=1127 level=2 level_delta=1
+  #29: ACTION6 (52,22) changed_px=128 level=2 level_delta=0
+  #30: ACTION6 (52,40) changed_px=7 level=2 level_delta=0
+  #31: ACTION2 - changed_px=0 level=2 level_delta=0
+  #32: ACTION4 - changed_px=9 level=2 level_delta=0
+  #33: ACTION4 - changed_px=0 level=2 level_delta=0
+  #34: ACTION1 - changed_px=8 level=2 level_delta=0
+  #35: ACTION3 - changed_px=9 level=2 level_delta=0
+  #36: ACTION2 - changed_px=8 level=2 level_delta=0
+  #37: ACTION1 - changed_px=8 level=2 level_delta=0
+  #38: ACTION4 - changed_px=9 level=2 level_delta=0
+  #39: ACTION3 - changed_px=8 level=2 level_delta=0
+  #40: ACTION6 (52,22) changed_px=129 level=2 level_delta=0
+  #41: ACTION2 - changed_px=8 level=2 level_delta=0
+  #42: ACTION4 - changed_px=8 level=2 level_delta=0
+  #43: ACTION6 (52,22) changed_px=129 level=2 level_delta=0
+  #44: ACTION1 - changed_px=8 level=2 level_delta=0
+  #45: ACTION6 (52,22) changed_px=129 level=2 level_delta=0
+No-op events on this level (actions whose board did not change at all): 2
+  #31: ACTION2 -
+  #33: ACTION4 -
+
+====================================================================================================
+CASE spiral__xd__dc22-fdcac232__L2__b58  kind=spiral arch=MIXED actions_this_level=51 noops=4
+--- carried world model ---
+- World model: clicking right-side tables toggles corresponding left pieces; goal = arrange left pieces to match target order, then knob to a goal cell (maybe the mini table). Probing: click both tables and diff.
+- Plan: move the knob down column 8 to row 52, then right to the mini table (15 actions), and observe blocking/completion.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 2, 51 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #60: ACTION2 - changed_px=1 level=2 level_delta=0
+  #61: ACTION3 - changed_px=8 level=2 level_delta=0
+  #62: ACTION3 - changed_px=8 level=2 level_delta=0
+  #63: ACTION3 - changed_px=9 level=2 level_delta=0
+  #64: ACTION3 - changed_px=8 level=2 level_delta=0
+  #65: ACTION3 - changed_px=8 level=2 level_delta=0
+  #66: ACTION3 - changed_px=9 level=2 level_delta=0
+  #67: ACTION4 - changed_px=8 level=2 level_delta=0
+  #68: ACTION3 - changed_px=8 level=2 level_delta=0
+  #69: ACTION1 - changed_px=9 level=2 level_delta=0
+  #70: ACTION2 - changed_px=8 level=2 level_delta=0
+  #71: ACTION6 (51,20) changed_px=129 level=2 level_delta=0
+  #72: ACTION6 (48,40) changed_px=0 level=2 level_delta=0
+  #73: ACTION3 - changed_px=8 level=2 level_delta=0
+  #74: ACTION4 - changed_px=9 level=2 level_delta=0
+  #75: ACTION1 - changed_px=8 level=2 level_delta=0
+  #76: ACTION2 - changed_px=8 level=2 level_delta=0
+  #77: ACTION3 - changed_px=9 level=2 level_delta=0
+  #78: ACTION6 (52,40) changed_px=24 level=2 level_delta=0
+  #79: ACTION4 - changed_px=9 level=2 level_delta=0
+No-op events on this level (actions whose board did not change at all): 4
+  #31: ACTION2 -
+  #33: ACTION4 -
+  #53: ACTION2 -
+  #72: ACTION6 (48,40)
+
+====================================================================================================
+CASE spiral__xpl2__sk48-d8078629__L2__b40  kind=spiral arch=MIXED actions_this_level=33 noops=0
+--- carried world model ---
+- Plan: ** extend RIGHT to grab the first block (N), then LEFT to pull it left. Let me extend and watch where the beam tip lands and which block gets grabbed.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 2, 33 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #47: ACTION4 - changed_px=36 level=2 level_delta=0
+  #48: ACTION4 - changed_px=37 level=2 level_delta=0
+  #49: ACTION4 - changed_px=4 level=2 level_delta=0
+  #50: ACTION4 - changed_px=4 level=2 level_delta=0
+  #51: ACTION3 - changed_px=53 level=2 level_delta=0
+  #52: ACTION3 - changed_px=52 level=2 level_delta=0
+  #53: ACTION3 - changed_px=52 level=2 level_delta=0
+  #54: ACTION3 - changed_px=5 level=2 level_delta=0
+  #55: ACTION3 - changed_px=4 level=2 level_delta=0
+  #56: ACTION4 - changed_px=167 level=2 level_delta=0
+  #57: ACTION4 - changed_px=12 level=2 level_delta=0
+  #58: ACTION4 - changed_px=12 level=2 level_delta=0
+  #59: ACTION4 - changed_px=13 level=2 level_delta=0
+  #60: ACTION4 - changed_px=12 level=2 level_delta=0
+  #61: ACTION4 - changed_px=12 level=2 level_delta=0
+  #62: ACTION4 - changed_px=1 level=2 level_delta=0
+  #63: ACTION1 - changed_px=240 level=2 level_delta=0
+  #64: ACTION1 - changed_px=240 level=2 level_delta=0
+  #65: ACTION1 - changed_px=337 level=2 level_delta=0
+  #66: ACTION1 - changed_px=336 level=2 level_delta=0
+No-op events on this level (actions whose board did not change at all): 0
+
+====================================================================================================
+CASE spiral__xpl2__vc33-5430563c__L3__b32  kind=spiral arch=CLICK actions_this_level=50 noops=2
+--- carried world model ---
+- World model: clicking a blue button moves a tower/pole/block (like the wall in the previous level). The goal is probably to align the paired colored markers. Probe: click the blue at (56,12) and take the diff.
+- Plan: (56,34)×3 to lower B by 6 (D rises 52→46), then (56,50)×3 to raise R to 48 while restoring B to 40, then (56,24)×3 to return D to 52 in case D's target is pole-top. Execute first batch and verify.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 3, 50 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #49: ACTION6 (34,56) changed_px=43 level=3 level_delta=0
+  #50: ACTION6 (46,56) changed_px=51 level=3 level_delta=0
+  #51: ACTION6 (46,56) changed_px=51 level=3 level_delta=0
+  #52: ACTION6 (46,56) changed_px=51 level=3 level_delta=0
+  #53: ACTION6 (46,56) changed_px=51 level=3 level_delta=0
+  #54: ACTION6 (46,56) changed_px=51 level=3 level_delta=0
+  #55: ACTION6 (46,56) changed_px=51 level=3 level_delta=0
+  #56: ACTION6 (34,56) changed_px=0 level=3 level_delta=0
+  #57: ACTION6 (24,56) changed_px=29 level=3 level_delta=0
+  #58: ACTION6 (24,56) changed_px=37 level=3 level_delta=0
+  #59: ACTION6 (34,56) changed_px=44 level=3 level_delta=0
+  #60: ACTION6 (34,56) changed_px=44 level=3 level_delta=0
+  #61: ACTION6 (50,56) changed_px=51 level=3 level_delta=0
+  #62: ACTION6 (50,56) changed_px=51 level=3 level_delta=0
+  #63: ACTION6 (38,56) changed_px=43 level=3 level_delta=0
+  #64: ACTION6 (38,56) changed_px=44 level=3 level_delta=0
+  #65: ACTION6 (38,56) changed_px=36 level=3 level_delta=0
+  #66: ACTION6 (38,56) changed_px=1 level=3 level_delta=0
+  #67: ACTION6 (38,56) changed_px=1 level=3 level_delta=0
+  #68: ACTION6 (50,56) changed_px=51 level=3 level_delta=0
+No-op events on this level (actions whose board did not change at all): 2
+  #29: ACTION6 (12,56)
+  #56: ACTION6 (34,56)
+
+====================================================================================================
+CASE stuck__xpl4__m0r0-492f87ba__L2__b42  kind=stuck arch=MIXED actions_this_level=25 noops=2
+--- carried world model ---
+- Plan: compute valid 4×4-black positions + BFS; target the notch first, then bottom region.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 2, 25 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #49: ACTION2 - changed_px=0 level=2 level_delta=0
+  #50: ACTION3 - changed_px=64 level=2 level_delta=0
+  #51: ACTION3 - changed_px=66 level=2 level_delta=0
+  #52: ACTION3 - changed_px=64 level=2 level_delta=0
+  #53: ACTION3 - changed_px=66 level=2 level_delta=0
+  #54: ACTION2 - changed_px=64 level=2 level_delta=0
+  #55: ACTION2 - changed_px=66 level=2 level_delta=0
+  #56: ACTION2 - changed_px=64 level=2 level_delta=0
+  #57: ACTION2 - changed_px=64 level=2 level_delta=0
+  #58: ACTION2 - changed_px=66 level=2 level_delta=0
+  #59: ACTION4 - changed_px=64 level=2 level_delta=0
+  #60: ACTION4 - changed_px=66 level=2 level_delta=0
+  #61: ACTION2 - changed_px=64 level=2 level_delta=0
+  #62: ACTION2 - changed_px=66 level=2 level_delta=0
+  #63: ACTION1 - changed_px=64 level=2 level_delta=0
+  #64: ACTION1 - changed_px=64 level=2 level_delta=0
+  #65: ACTION1 - changed_px=2 level=2 level_delta=0
+  #66: ACTION1 - changed_px=0 level=2 level_delta=0
+  #67: ACTION3 - changed_px=66 level=2 level_delta=0
+  #68: ACTION3 - changed_px=64 level=2 level_delta=0
+No-op events on this level (actions whose board did not change at all): 2
+  #49: ACTION2 -
+  #66: ACTION1 -
+
+====================================================================================================
+CASE spiral__xpl5__dc22-fdcac232__L2__b33  kind=spiral arch=MIXED actions_this_level=113 noops=4
+--- carried world model ---
+- Goal model: likely a specific (token position, blue, pink) combination confirmed by clicking the matching icon (L1 was cleared by a blue-icon click). - What happened: my exhaustive state-space sweep (64 states) executed ~57 real actions and the environment returned `state: GAME_OVER` (score 1, reward 0, board mutated: gray pads shrank, token removed, red bar split). The run is finished — no further actions are possible. Result: `game_over=True, run_complete=False` — the run ended without clearing level 2. Stopping immediately per the rules; nothing more to execute this turn.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 2, 113 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #117: ACTION6 (52,22) changed_px=128 level=2 level_delta=0
+  #118: ACTION6 (52,40) changed_px=25 level=2 level_delta=0
+  #119: ACTION2 - changed_px=8 level=2 level_delta=0
+  #120: ACTION6 (52,22) changed_px=129 level=2 level_delta=0
+  #121: ACTION1 - changed_px=8 level=2 level_delta=0
+  #122: ACTION1 - changed_px=9 level=2 level_delta=0
+  #123: ACTION3 - changed_px=8 level=2 level_delta=0
+  #124: ACTION6 (52,22) changed_px=129 level=2 level_delta=0
+  #125: ACTION6 (52,40) changed_px=24 level=2 level_delta=0
+  #126: ACTION6 (52,22) changed_px=129 level=2 level_delta=0
+  #127: ACTION6 (52,40) changed_px=25 level=2 level_delta=0
+  #128: ACTION4 - changed_px=8 level=2 level_delta=0
+  #129: ACTION6 (52,40) changed_px=25 level=2 level_delta=0
+  #130: ACTION4 - changed_px=8 level=2 level_delta=0
+  #131: ACTION4 - changed_px=8 level=2 level_delta=0
+  #132: ACTION6 (52,22) changed_px=129 level=2 level_delta=0
+  #133: ACTION6 (52,40) changed_px=7 level=2 level_delta=0
+  #134: ACTION6 (52,40) changed_px=32 level=2 level_delta=0
+  #135: RESET - changed_px=222 level=2 level_delta=0
+  #136: ACTION1 - changed_px=9 level=2 level_delta=0
+No-op events on this level (actions whose board did not change at all): 4
+  #26: ACTION4 -
+  #36: ACTION6 (22,12)
+  #49: ACTION4 -
+  #55: ACTION6 (17,53)
+
+====================================================================================================
+CASE spiral__xpl5__dc22-fdcac232__L2__b55  kind=spiral arch=MIXED actions_this_level=144 noops=5
+--- carried world model ---
+- Goal model: likely a specific (token position, blue, pink) combination confirmed by clicking the matching icon (L1 was cleared by a blue-icon click). - What happened: my exhaustive state-space sweep (64 states) executed ~57 real actions and the environment returned `state: GAME_OVER` (score 1, reward 0, board mutated: gray pads shrank, token removed, red bar split). The run is finished — no further actions are possible. Result: `game_over=True, run_complete=False` — the run ended without clearing level 2. Stopping immediately per the rules; nothing more to execute this turn.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 2, 144 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #148: ACTION4 - changed_px=8 level=2 level_delta=0
+  #149: ACTION4 - changed_px=8 level=2 level_delta=0
+  #150: ACTION2 - changed_px=9 level=2 level_delta=0
+  #151: ACTION6 (52,40) changed_px=24 level=2 level_delta=0
+  #152: ACTION6 (52,40) changed_px=25 level=2 level_delta=0
+  #153: ACTION1 - changed_px=8 level=2 level_delta=0
+  #154: ACTION4 - changed_px=9 level=2 level_delta=0
+  #155: ACTION4 - changed_px=8 level=2 level_delta=0
+  #156: ACTION6 (52,22) changed_px=129 level=2 level_delta=0
+  #157: ACTION6 (52,40) changed_px=24 level=2 level_delta=0
+  #158: ACTION6 (52,22) changed_px=129 level=2 level_delta=0
+  #159: ACTION6 (52,40) changed_px=25 level=2 level_delta=0
+  #160: ACTION6 (52,40) changed_px=24 level=2 level_delta=0
+  #161: ACTION4 - changed_px=9 level=2 level_delta=0
+  #162: ACTION4 - changed_px=8 level=2 level_delta=0
+  #163: ACTION6 (52,40) changed_px=25 level=2 level_delta=0
+  #164: ACTION6 (52,40) changed_px=24 level=2 level_delta=0
+  #165: ACTION6 (52,22) changed_px=7 level=2 level_delta=0
+  #166: ACTION6 (52,40) changed_px=25 level=2 level_delta=0
+  #167: ACTION6 (52,40) changed_px=24 level=2 level_delta=0
+No-op events on this level (actions whose board did not change at all): 5
+  #26: ACTION4 -
+  #36: ACTION6 (22,12)
+  #49: ACTION4 -
+  #55: ACTION6 (17,53)
+  #137: ACTION1 -
+
+====================================================================================================
+CASE control__xpl7__vc33-5430563c__L3__b25  kind=control arch=CLICK actions_this_level=18 noops=0
+--- carried world model ---
+- Plan: ** Move all 10 right-side blocks into W(6-13): C,C then B,B,B,B then A,A,A,A,A (11 clicks). This makes W(6-13)=16, top r42, N cap r41 = aligned.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 3, 18 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #17: ACTION6 (1,45) changed_px=173 level=2 level_delta=0
+  #18: ACTION6 (1,45) changed_px=2873 level=3 level_delta=1
+  #19: ACTION6 (12,56) changed_px=36 level=3 level_delta=0
+  #20: ACTION6 (34,56) changed_px=44 level=3 level_delta=0
+  #21: ACTION6 (50,56) changed_px=1 level=3 level_delta=0
+  #22: ACTION6 (24,56) changed_px=28 level=3 level_delta=0
+  #23: ACTION6 (34,56) changed_px=44 level=3 level_delta=0
+  #24: ACTION6 (34,56) changed_px=1 level=3 level_delta=0
+  #25: ACTION6 (24,56) changed_px=37 level=3 level_delta=0
+  #26: ACTION6 (24,56) changed_px=37 level=3 level_delta=0
+  #27: ACTION6 (24,56) changed_px=1 level=3 level_delta=0
+  #28: ACTION6 (24,56) changed_px=1 level=3 level_delta=0
+  #29: ACTION6 (12,56) changed_px=43 level=3 level_delta=0
+  #30: ACTION6 (12,56) changed_px=44 level=3 level_delta=0
+  #31: ACTION6 (12,56) changed_px=36 level=3 level_delta=0
+  #32: ACTION6 (12,56) changed_px=1 level=3 level_delta=0
+  #33: ACTION6 (12,56) changed_px=1 level=3 level_delta=0
+  #34: ACTION6 (34,56) changed_px=36 level=3 level_delta=0
+  #35: ACTION6 (24,56) changed_px=29 level=3 level_delta=0
+  #36: ACTION6 (16,56) changed_px=43 level=3 level_delta=0
+No-op events on this level (actions whose board did not change at all): 0
+
+====================================================================================================
+CASE control__depthdiag__wa30-ee6fef47__L2__b25  kind=control arch=AVATAR actions_this_level=27 noops=0
+--- carried world model ---
+- Open questions: Where do the cores get docked this time (the big blue rectangle? the orange block?), and how many boxes are there?
+- Plan: Approach the nearest box (7,9): RIGHT×6, DOWN×4 → (6,9), DOWN (bump, c→G), SPACE (attach). Verify.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 2, 27 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #40: ACTION2 - changed_px=97 level=2 level_delta=0
+  #41: ACTION2 - changed_px=97 level=2 level_delta=0
+  #42: ACTION2 - changed_px=97 level=2 level_delta=0
+  #43: ACTION2 - changed_px=45 level=2 level_delta=0
+  #44: ACTION5 - changed_px=33 level=2 level_delta=0
+  #45: ACTION1 - changed_px=65 level=2 level_delta=0
+  #46: ACTION1 - changed_px=65 level=2 level_delta=0
+  #47: ACTION4 - changed_px=51 level=2 level_delta=0
+  #48: ACTION5 - changed_px=45 level=2 level_delta=0
+  #49: ACTION3 - changed_px=77 level=2 level_delta=0
+  #50: ACTION3 - changed_px=76 level=2 level_delta=0
+  #51: ACTION3 - changed_px=57 level=2 level_delta=0
+  #52: ACTION3 - changed_px=93 level=2 level_delta=0
+  #53: ACTION3 - changed_px=93 level=2 level_delta=0
+  #54: ACTION3 - changed_px=93 level=2 level_delta=0
+  #55: ACTION3 - changed_px=93 level=2 level_delta=0
+  #56: ACTION2 - changed_px=113 level=2 level_delta=0
+  #57: ACTION2 - changed_px=113 level=2 level_delta=0
+  #58: ACTION2 - changed_px=113 level=2 level_delta=0
+  #59: ACTION5 - changed_px=77 level=2 level_delta=0
+No-op events on this level (actions whose board did not change at all): 0
+
+====================================================================================================
+CASE control__xd__ft09-0d8bbf25__L2__b9  kind=control arch=CLICK actions_this_level=14 noops=0
+--- carried world model ---
+- World model: the icon's 3×3 mini-map maps to the icon's 3×3 neighborhood within the grid. Icon 1 (grid (1,1)) white cells → {(0,0),(1,0),(1,2),(2,0),(2,2)}; Icon 2 (grid (3,1)) white cells → {(2,0),(2,2),(4,0),(4,1)}. Union = 7 cells. The goal is probably that exactly these 7 cells are orange (or the complementary 6 cells). - First test: can an orange block be reverted back to blue by clicking?
+- Plan: Click (32,30) and check for level completion.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 2, 14 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #4: ACTION6 (38,38) changed_px=38 level=1 level_delta=0
+  #5: ACTION6 (46,33) changed_px=0 level=1 level_delta=0
+  #6: ACTION6 (6,4) changed_px=0 level=1 level_delta=0
+  #7: ACTION6 (38,46) changed_px=38 level=1 level_delta=0
+  #8: ACTION6 (54,46) changed_px=38 level=1 level_delta=0
+  #9: ACTION6 (38,54) changed_px=3558 level=2 level_delta=1
+  #10: ACTION6 (22,24) changed_px=38 level=2 level_delta=0
+  #11: ACTION6 (22,16) changed_px=38 level=2 level_delta=0
+  #12: ACTION6 (30,16) changed_px=38 level=2 level_delta=0
+  #13: ACTION6 (38,16) changed_px=38 level=2 level_delta=0
+  #14: ACTION6 (38,24) changed_px=38 level=2 level_delta=0
+  #15: ACTION6 (22,32) changed_px=38 level=2 level_delta=0
+  #16: ACTION6 (38,32) changed_px=38 level=2 level_delta=0
+  #17: ACTION6 (22,40) changed_px=38 level=2 level_delta=0
+  #18: ACTION6 (38,40) changed_px=38 level=2 level_delta=0
+  #19: ACTION6 (22,48) changed_px=38 level=2 level_delta=0
+  #20: ACTION6 (30,48) changed_px=38 level=2 level_delta=0
+  #21: ACTION6 (38,48) changed_px=38 level=2 level_delta=0
+  #22: ACTION6 (30,32) changed_px=38 level=2 level_delta=0
+  #23: ACTION6 (30,16) changed_px=38 level=2 level_delta=0
+No-op events on this level (actions whose board did not change at all): 0
+
+====================================================================================================
+CASE control__xpl2__vc33-5430563c__L2__b8  kind=control arch=CLICK actions_this_level=7 noops=0
+--- carried world model ---
+- Recent findings: Clicking (37,1) — the button above the lower bar — moved the key 4 to the **left** (green is now at columns 4-5). The direction is the opposite of the Level 1 analogy. Therefore, the button below the lower bar (rows 44-47) should move the key to the right.
+- Plan: Probe (45,1) once. If the key moves right, batch-execute the remaining clicks (the key's green needs to travel from column 4 to column 28 = 24 = 6 clicks total).
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 2, 7 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #0: ACTION6 (38,29) changed_px=1 level=1 level_delta=0
+  #1: ACTION6 (50,46) changed_px=2 level=1 level_delta=0
+  #2: ACTION6 (61,25) changed_px=265 level=1 level_delta=0
+  #3: ACTION6 (61,33) changed_px=265 level=1 level_delta=0
+  #4: ACTION6 (61,33) changed_px=265 level=1 level_delta=0
+  #5: ACTION6 (61,33) changed_px=266 level=1 level_delta=0
+  #6: ACTION6 (61,33) changed_px=2748 level=2 level_delta=1
+  #7: ACTION6 (1,37) changed_px=173 level=2 level_delta=0
+  #8: ACTION6 (1,45) changed_px=174 level=2 level_delta=0
+  #9: ACTION6 (1,45) changed_px=173 level=2 level_delta=0
+  #10: ACTION6 (1,45) changed_px=173 level=2 level_delta=0
+  #11: ACTION6 (1,45) changed_px=141 level=2 level_delta=0
+  #12: ACTION6 (1,45) changed_px=2 level=2 level_delta=0
+  #13: ACTION6 (1,45) changed_px=1 level=2 level_delta=0
+No-op events on this level (actions whose board did not change at all): 0
+
+====================================================================================================
+CASE control__xpl4__vc33-5430563c__L2__b11  kind=control arch=CLICK actions_this_level=6 noops=0
+--- carried world model ---
+- World model: The blue between the bars (25,1) or (37,1) moves the middle boundary to the right, opening up room for the bottom blue to push the piece further. - Probe: Click (37,1).
+- Plan: click the bottom blue 4 times and check for level completion.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 2, 6 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #0: ACTION6 (38,29) changed_px=1 level=1 level_delta=0
+  #1: ACTION6 (50,46) changed_px=2 level=1 level_delta=0
+  #2: ACTION6 (40,40) changed_px=1 level=1 level_delta=0
+  #3: ACTION6 (61,25) changed_px=265 level=1 level_delta=0
+  #4: ACTION6 (61,33) changed_px=265 level=1 level_delta=0
+  #5: ACTION6 (61,25) changed_px=266 level=1 level_delta=0
+  #6: ACTION6 (61,25) changed_px=265 level=1 level_delta=0
+  #7: ACTION6 (61,33) changed_px=265 level=1 level_delta=0
+  #8: ACTION6 (61,33) changed_px=266 level=1 level_delta=0
+  #9: ACTION6 (61,33) changed_px=265 level=1 level_delta=0
+  #10: ACTION6 (61,33) changed_px=265 level=1 level_delta=0
+  #11: ACTION6 (61,33) changed_px=2754 level=2 level_delta=1
+  #12: ACTION6 (1,45) changed_px=173 level=2 level_delta=0
+  #13: ACTION6 (1,45) changed_px=174 level=2 level_delta=0
+  #14: ACTION6 (1,45) changed_px=141 level=2 level_delta=0
+  #15: ACTION6 (1,45) changed_px=1 level=2 level_delta=0
+  #16: ACTION6 (1,45) changed_px=1 level=2 level_delta=0
+  #17: ACTION6 (1,37) changed_px=142 level=2 level_delta=0
+No-op events on this level (actions whose board did not change at all): 0
+
+====================================================================================================
+CASE control__y180__sb26-7fbdac44__L2__b14  kind=control arch=CLICK actions_this_level=22 noops=1
+--- carried world model ---
+- World model: - All 7 pieces placed: red tray O, p, [hook], R; green tray b, N, Y, M; bottom row empty. - SPACE ran the check (111-frame animation) but the level is not cleared, no reward, and no pieces were rejected — everything remains in the tray. - Need to check the animation to see where the check cursor stopped / what flashed.
+- Plan: place R in red slot 4; place b, N, Y, M in the green tray; SPACE.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 2, 22 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #14: ACTION6 (17,58) changed_px=20 level=2 level_delta=0
+  #15: ACTION6 (28,22) changed_px=53 level=2 level_delta=0
+  #16: ACTION6 (10,58) changed_px=20 level=2 level_delta=0
+  #17: ACTION6 (34,22) changed_px=0 level=2 level_delta=0
+  #18: ACTION6 (45,58) changed_px=40 level=2 level_delta=0
+  #19: ACTION6 (40,22) changed_px=53 level=2 level_delta=0
+  #20: ACTION5 - changed_px=1 level=2 level_delta=0
+  #21: ACTION6 (40,22) changed_px=20 level=2 level_delta=0
+  #22: ACTION6 (45,58) changed_px=53 level=2 level_delta=0
+  #23: ACTION6 (10,58) changed_px=20 level=2 level_delta=0
+  #24: ACTION6 (40,22) changed_px=53 level=2 level_delta=0
+  #25: ACTION6 (45,58) changed_px=20 level=2 level_delta=0
+  #26: ACTION6 (22,36) changed_px=53 level=2 level_delta=0
+  #27: ACTION6 (24,58) changed_px=20 level=2 level_delta=0
+  #28: ACTION6 (28,36) changed_px=53 level=2 level_delta=0
+  #29: ACTION6 (52,58) changed_px=20 level=2 level_delta=0
+  #30: ACTION6 (34,36) changed_px=53 level=2 level_delta=0
+  #31: ACTION6 (38,58) changed_px=20 level=2 level_delta=0
+  #32: ACTION6 (40,36) changed_px=53 level=2 level_delta=0
+  #33: ACTION5 - changed_px=1 level=2 level_delta=0
+No-op events on this level (actions whose board did not change at all): 1
+  #17: ACTION6 (34,22)
+
+====================================================================================================
+CASE control__depthdiag__wa30-ee6fef47__L1__b9  kind=control arch=AVATAR actions_this_level=16 noops=1
+--- carried world model ---
+- Goal model: Attach the core and carry it to the blue bar (delivery). Then probably repeat with the other 2 cores.
+- Open questions: What exactly is the white block (tether? collected item state?)? What does the level require (collect all three cores?)?
+- Plan: LEFT×4 → SPACE (attach the left core), verify.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 16 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #0: ACTION3 - changed_px=32 level=1 level_delta=0
+  #1: ACTION1 - changed_px=33 level=1 level_delta=0
+  #2: ACTION4 - changed_px=32 level=1 level_delta=0
+  #3: ACTION1 - changed_px=44 level=1 level_delta=0
+  #4: ACTION1 - changed_px=1 level=1 level_delta=0
+  #5: ACTION5 - changed_px=12 level=1 level_delta=0
+  #6: ACTION1 - changed_px=44 level=1 level_delta=0
+  #7: ACTION1 - changed_px=45 level=1 level_delta=0
+  #8: ACTION2 - changed_px=44 level=1 level_delta=0
+  #9: ACTION1 - changed_px=44 level=1 level_delta=0
+  #10: ACTION5 - changed_px=13 level=1 level_delta=0
+  #11: ACTION3 - changed_px=44 level=1 level_delta=0
+  #12: ACTION3 - changed_px=32 level=1 level_delta=0
+  #13: ACTION3 - changed_px=32 level=1 level_delta=0
+  #14: ACTION3 - changed_px=33 level=1 level_delta=0
+  #15: ACTION5 - changed_px=0 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 1
+  #15: ACTION5 -
+
+====================================================================================================
+CASE control__digest1__ft09-0d8bbf25__L1__b5  kind=control arch=CLICK actions_this_level=4 noops=3
+--- carried world model ---
+- World model: click red tiles to toggle them blue, making all grids match the framed all-blue template. Probe: click one red tile (top-left, row 2 col 12 tile) and see what changes.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 4 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #0: ACTION6 (14,4) changed_px=0 level=1 level_delta=0
+  #1: ACTION6 (6,4) changed_px=0 level=1 level_delta=0
+  #2: ACTION6 (14,12) changed_px=0 level=1 level_delta=0
+  #3: ACTION6 (38,38) changed_px=38 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 3
+  #0: ACTION6 (14,4)
+  #1: ACTION6 (6,4)
+  #2: ACTION6 (14,12)
+
+====================================================================================================
+CASE control__digest1__sb26-7fbdac44__L1__b4  kind=control arch=CLICK actions_this_level=4 noops=1
+--- carried world model ---
+- Plan: with green selected, click the first gray dot (row 29, column 22) and observe.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 4 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #0: ACTION6 (19,58) changed_px=20 level=1 level_delta=0
+  #1: ACTION6 (27,3) changed_px=0 level=1 level_delta=0
+  #2: ACTION6 (22,29) changed_px=53 level=1 level_delta=0
+  #3: ACTION6 (22,29) changed_px=20 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 1
+  #1: ACTION6 (27,3)
+
+====================================================================================================
+CASE control__digest1__tn36-ef4dde99__L1__b9  kind=control arch=CLICK actions_this_level=15 noops=0
+--- carried world model ---
+- Plan: probe by clicking the blue ball first (least destructive guess), observe diff.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 15 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #0: ACTION6 (36,55) changed_px=1 level=1 level_delta=0
+  #1: ACTION6 (31,14) changed_px=1 level=1 level_delta=0
+  #2: ACTION6 (36,55) changed_px=1 level=1 level_delta=0
+  #3: ACTION6 (33,55) changed_px=1 level=1 level_delta=0
+  #4: ACTION6 (39,55) changed_px=1 level=1 level_delta=0
+  #5: ACTION6 (31,35) changed_px=1 level=1 level_delta=0
+  #6: ACTION6 (25,20) changed_px=1 level=1 level_delta=0
+  #7: ACTION6 (21,44) changed_px=4 level=1 level_delta=0
+  #8: ACTION6 (36,44) changed_px=4 level=1 level_delta=0
+  #9: ACTION6 (30,1) changed_px=1 level=1 level_delta=0
+  #10: ACTION6 (20,55) changed_px=1 level=1 level_delta=0
+  #11: ACTION6 (21,45) changed_px=4 level=1 level_delta=0
+  #12: ACTION6 (26,45) changed_px=4 level=1 level_delta=0
+  #13: ACTION6 (41,45) changed_px=4 level=1 level_delta=0
+  #14: ACTION6 (36,55) changed_px=1 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 0
+
+====================================================================================================
+CASE control__xd__dc22-fdcac232__L1__b9  kind=control arch=MIXED actions_this_level=19 noops=5
+--- carried world model ---
+- World model: - The board is split by a white dashed vertical line (column ~31/32): the left half is charcoal, the right half is black. - Left side (pieces): blue 4x4 square (rows 20-23, columns 18-21); gray 6x6 ring with a yellow 2x2 core (rows 18-23, columns 22-27); a row of gray 4x4 + red 4x6 + dark red 4x4 (rows 30-33, columns 8-21); a small blue X (rows 34-37, columns 12-15); gray 6x6 ring with a green 2x2 core (rows 38-43, columns 8-13). - Right side (targets): a red "table" shape on a white pedestal (rows 16-22, columns 41-55), and an identical blue table on a white pedestal (rows 33-39, columns 41-55). - Goal hypothesis: use the left-side pieces to assemble/reproduce the target on the right side; the dashed line might be a boundary/portal. - Unclear: how the pieces move (arrow keys vs. mouse drag), what the selection mechanism is.
+- Plan: investigate by clicking the blue 4x4 piece.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 19 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #0: ACTION6 (19,21) changed_px=1 level=1 level_delta=0
+  #1: ACTION6 (19,21) changed_px=0 level=1 level_delta=0
+  #2: ACTION4 - changed_px=9 level=1 level_delta=0
+  #3: ACTION4 - changed_px=0 level=1 level_delta=0
+  #4: ACTION1 - changed_px=9 level=1 level_delta=0
+  #5: ACTION2 - changed_px=8 level=1 level_delta=0
+  #6: ACTION1 - changed_px=9 level=1 level_delta=0
+  #7: ACTION1 - changed_px=0 level=1 level_delta=0
+  #8: ACTION3 - changed_px=9 level=1 level_delta=0
+  #9: ACTION3 - changed_px=8 level=1 level_delta=0
+  #10: ACTION2 - changed_px=9 level=1 level_delta=0
+  #11: ACTION2 - changed_px=8 level=1 level_delta=0
+  #12: ACTION6 (19,21) changed_px=1 level=1 level_delta=0
+  #13: ACTION2 - changed_px=0 level=1 level_delta=0
+  #14: ACTION6 (24,20) changed_px=1 level=1 level_delta=0
+  #15: ACTION6 (48,19) changed_px=129 level=1 level_delta=0
+  #16: ACTION6 (31,32) changed_px=0 level=1 level_delta=0
+  #17: ACTION6 (9,35) changed_px=1 level=1 level_delta=0
+  #18: ACTION6 (48,36) changed_px=17 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 5
+  #1: ACTION6 (19,21)
+  #3: ACTION4 -
+  #7: ACTION1 -
+  #13: ACTION2 -
+  #16: ACTION6 (31,32)
+
+====================================================================================================
+CASE control__xd__ft09-0d8bbf25__L1__b3  kind=control arch=CLICK actions_this_level=3 noops=3
+--- carried world model ---
+- World model: The board has 4 panels, each a 3×3 grid of 6×6 blocks (blue/red), with a small 6×6 icon in the center (white/gray/red pattern). The bottom-right panel is completely blue, surrounded by a charcoal/gray frame (probably a reference or the "selected" panel). The top-left has 6 blue + 3 red, the top-right has 4 blue + 5 red, the bottom-left has 4 blue + 4 red. The only available action is MOUSE.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 3 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #0: ACTION6 (14,4) changed_px=0 level=1 level_delta=0
+  #1: ACTION6 (14,12) changed_px=0 level=1 level_delta=0
+  #2: ACTION6 (34,34) changed_px=0 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 3
+  #0: ACTION6 (14,4)
+  #1: ACTION6 (14,12)
+  #2: ACTION6 (34,34)
+
+====================================================================================================
+CASE control__xd__sb26-7fbdac44__L1__b15  kind=control arch=CLICK actions_this_level=10 noops=2
+--- carried world model ---
+- World model: - Top: 4 framed sockets in the order blue, green, yellow, purple, each with an empty black center (rows 0-7). - Middle: a red box with white corners, containing 4 gray 2x2 dots (rows 25-34) — probably a queue/slot area. - Bottom: 4 solid 3x3 squares in the order green, purple, blue, yellow (rows 57-60). - Goal hypothesis: place each bottom square into the matching top socket. - Actions: SPACE, MOUSE, ACTION7 — roles unknown.
+- Open questions: What exactly does SPACE do? Does the square fly up to the socket in the same column? Why did it shift 2 to the left?
+- Plan: select the blue square (58,35) and press SPACE → slot 1 should be accepted.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 10 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #0: ACTION6 (19,58) changed_px=20 level=1 level_delta=0
+  #1: ACTION6 (27,3) changed_px=0 level=1 level_delta=0
+  #2: ACTION5 - changed_px=21 level=1 level_delta=0
+  #3: ACTION6 (19,58) changed_px=20 level=1 level_delta=0
+  #4: ACTION6 (27,58) changed_px=40 level=1 level_delta=0
+  #5: ACTION5 - changed_px=21 level=1 level_delta=0
+  #6: ACTION6 (35,58) changed_px=20 level=1 level_delta=0
+  #7: ACTION5 - changed_px=21 level=1 level_delta=0
+  #8: ACTION6 (35,58) changed_px=20 level=1 level_delta=0
+  #9: ACTION6 (20,4) changed_px=0 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 2
+  #1: ACTION6 (27,3)
+  #9: ACTION6 (20,4)
+
+====================================================================================================
+CASE control__xpl2__ka59-38d34dbb__L1__b9  kind=control arch=MIXED actions_this_level=19 noops=1
+--- carried world model ---
+- World model: - Gray background; dark bar on the bottom row (HUD). - Left light gray platform (rows 21–29, cols 9–23): charcoal hollow square (11), green square with white center (6), green square with black center (7), white 3×3 square (8). - Purple vertical bar (rows 21–41, cols 33–38) = wall/door. - Right platform (rows 21–41, cols 39–53): charcoal hollow square (4).
+- Plan: can the player pass through the purple wall? The player is at 24-26, and the wall is at 33-38.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 19 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #0: ACTION4 - changed_px=19 level=1 level_delta=0
+  #1: ACTION4 - changed_px=18 level=1 level_delta=0
+  #2: ACTION4 - changed_px=22 level=1 level_delta=0
+  #3: ACTION4 - changed_px=19 level=1 level_delta=0
+  #4: ACTION4 - changed_px=18 level=1 level_delta=0
+  #5: ACTION4 - changed_px=1 level=1 level_delta=0
+  #6: ACTION2 - changed_px=0 level=1 level_delta=0
+  #7: ACTION1 - changed_px=1 level=1 level_delta=0
+  #8: ACTION3 - changed_px=19 level=1 level_delta=0
+  #9: ACTION3 - changed_px=18 level=1 level_delta=0
+  #10: ACTION3 - changed_px=19 level=1 level_delta=0
+  #11: ACTION3 - changed_px=19 level=1 level_delta=0
+  #12: ACTION3 - changed_px=18 level=1 level_delta=0
+  #13: ACTION3 - changed_px=19 level=1 level_delta=0
+  #14: ACTION2 - changed_px=19 level=1 level_delta=0
+  #15: ACTION1 - changed_px=18 level=1 level_delta=0
+  #16: ACTION2 - changed_px=19 level=1 level_delta=0
+  #17: ACTION3 - changed_px=19 level=1 level_delta=0
+  #18: ACTION4 - changed_px=18 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 1
+  #6: ACTION2 -
+
+====================================================================================================
+CASE control__xpl2__m0r0-492f87ba__L1__b7  kind=control arch=MIXED actions_this_level=14 noops=2
+--- carried world model ---
+- World model: 64×64 board, black border rows 0/63; left half yellow, right half orange background. One large black "face/mask" object (rows 9–58, cols 9–53) with a big hole through which the background shows (left of hole yellow, right orange), and two 5×5 cyan squares ("eyes") at the bottom. No player avatar identified yet.
+- Goal model: unknown — likely move/align the black shape or the eyes; need to probe action effects. Probe: press LEFT once and diff.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 14 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #0: ACTION3 - changed_px=100 level=1 level_delta=0
+  #1: ACTION4 - changed_px=102 level=1 level_delta=0
+  #2: ACTION1 - changed_px=100 level=1 level_delta=0
+  #3: ACTION2 - changed_px=102 level=1 level_delta=0
+  #4: ACTION3 - changed_px=100 level=1 level_delta=0
+  #5: ACTION3 - changed_px=102 level=1 level_delta=0
+  #6: ACTION4 - changed_px=100 level=1 level_delta=0
+  #7: ACTION4 - changed_px=100 level=1 level_delta=0
+  #8: ACTION5 - changed_px=2 level=1 level_delta=0
+  #9: ACTION5 - changed_px=0 level=1 level_delta=0
+  #10: ACTION1 - changed_px=102 level=1 level_delta=0
+  #11: ACTION1 - changed_px=50 level=1 level_delta=0
+  #12: ACTION1 - changed_px=2 level=1 level_delta=0
+  #13: ACTION1 - changed_px=0 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 2
+  #9: ACTION5 -
+  #13: ACTION1 -
+
+====================================================================================================
+CASE control__xpl2__sk48-d8078629__L1__b12  kind=control arch=MIXED actions_this_level=31 noops=1
+--- carried world model ---
+- World model: extending beam into a target collects it (or grabs it to carry back).
+- Plan: UP (player center → 20, align beam with R rows 19–22), then RIGHT×5 (attach R at wall) + LEFT×4 (carry R to left wall). Then all 3 blocks at left wall; check if level completes.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 31 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #11: ACTION4 - changed_px=12 level=1 level_delta=0
+  #12: ACTION4 - changed_px=13 level=1 level_delta=0
+  #13: ACTION4 - changed_px=12 level=1 level_delta=0
+  #14: ACTION4 - changed_px=12 level=1 level_delta=0
+  #15: ACTION4 - changed_px=5 level=1 level_delta=0
+  #16: ACTION3 - changed_px=36 level=1 level_delta=0
+  #17: ACTION3 - changed_px=36 level=1 level_delta=0
+  #18: ACTION3 - changed_px=37 level=1 level_delta=0
+  #19: ACTION3 - changed_px=36 level=1 level_delta=0
+  #20: ACTION1 - changed_px=112 level=1 level_delta=0
+  #21: ACTION4 - changed_px=37 level=1 level_delta=0
+  #22: ACTION4 - changed_px=36 level=1 level_delta=0
+  #23: ACTION4 - changed_px=36 level=1 level_delta=0
+  #24: ACTION4 - changed_px=5 level=1 level_delta=0
+  #25: ACTION4 - changed_px=0 level=1 level_delta=0
+  #26: ACTION3 - changed_px=52 level=1 level_delta=0
+  #27: ACTION3 - changed_px=53 level=1 level_delta=0
+  #28: ACTION3 - changed_px=52 level=1 level_delta=0
+  #29: ACTION3 - changed_px=4 level=1 level_delta=0
+  #30: ACTION2 - changed_px=113 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 1
+  #25: ACTION4 -
+
+====================================================================================================
+CASE control__xpl4__dc22-fdcac232__L1__b8  kind=control arch=MIXED actions_this_level=16 noops=4
+--- carried world model ---
+- Plan: probe with a mouse click on a piece, then observe the selection/highlight.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 16 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #0: ACTION6 (19,21) changed_px=1 level=1 level_delta=0
+  #1: ACTION4 - changed_px=8 level=1 level_delta=0
+  #2: ACTION3 - changed_px=9 level=1 level_delta=0
+  #3: ACTION1 - changed_px=8 level=1 level_delta=0
+  #4: ACTION4 - changed_px=9 level=1 level_delta=0
+  #5: ACTION6 (24,20) changed_px=0 level=1 level_delta=0
+  #6: ACTION4 - changed_px=1 level=1 level_delta=0
+  #7: ACTION1 - changed_px=0 level=1 level_delta=0
+  #8: ACTION2 - changed_px=9 level=1 level_delta=0
+  #9: ACTION3 - changed_px=8 level=1 level_delta=0
+  #10: ACTION4 - changed_px=9 level=1 level_delta=0
+  #11: ACTION6 (19,21) changed_px=0 level=1 level_delta=0
+  #12: ACTION6 (24,26) changed_px=1 level=1 level_delta=0
+  #13: ACTION6 (14,31) changed_px=0 level=1 level_delta=0
+  #14: ACTION4 - changed_px=1 level=1 level_delta=0
+  #15: ACTION1 - changed_px=8 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 4
+  #5: ACTION6 (24,20)
+  #7: ACTION1 -
+  #11: ACTION6 (19,21)
+  #13: ACTION6 (14,31)
+
+====================================================================================================
+CASE control__xpl4__m0r0-492f87ba__L1__b14  kind=control arch=MIXED actions_this_level=41 noops=8
+--- carried world model ---
+- World model: eyes are constrained to the black face region; goal = move eyes to specific positions (sockets/corners), confirm with SPACE.
+- Plan: visit all 8 in one loop, checking auto-complete and SPACE at each.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 41 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #21: ACTION5 - changed_px=0 level=1 level_delta=0
+  #22: ACTION1 - changed_px=102 level=1 level_delta=0
+  #23: ACTION5 - changed_px=0 level=1 level_delta=0
+  #24: ACTION4 - changed_px=102 level=1 level_delta=0
+  #25: ACTION5 - changed_px=0 level=1 level_delta=0
+  #26: ACTION2 - changed_px=102 level=1 level_delta=0
+  #27: ACTION5 - changed_px=0 level=1 level_delta=0
+  #28: ACTION3 - changed_px=100 level=1 level_delta=0
+  #29: ACTION5 - changed_px=2 level=1 level_delta=0
+  #30: ACTION3 - changed_px=0 level=1 level_delta=0
+  #31: ACTION4 - changed_px=102 level=1 level_delta=0
+  #32: ACTION2 - changed_px=100 level=1 level_delta=0
+  #33: ACTION4 - changed_px=102 level=1 level_delta=0
+  #34: ACTION2 - changed_px=100 level=1 level_delta=0
+  #35: ACTION4 - changed_px=100 level=1 level_delta=0
+  #36: ACTION3 - changed_px=102 level=1 level_delta=0
+  #37: ACTION3 - changed_px=100 level=1 level_delta=0
+  #38: ACTION2 - changed_px=2 level=1 level_delta=0
+  #39: ACTION4 - changed_px=100 level=1 level_delta=0
+  #40: ACTION4 - changed_px=100 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 8
+  #6: ACTION3 -
+  #7: ACTION5 -
+  #14: ACTION5 -
+  #21: ACTION5 -
+  #23: ACTION5 -
+  #25: ACTION5 -
+  #27: ACTION5 -
+  #30: ACTION3 -
+
+====================================================================================================
+CASE control__xpl4__sk48-d8078629__L1__b13  kind=control arch=MIXED actions_this_level=11 noops=1
+--- carried world model ---
+- World model: Level 1. A charcoal-colored room (rows 12-41, columns 17-46) contains 4x4 colored squares: red (rows 19-22, columns 42-45), blue (rows 25-28), green (rows 31-34). The player is a 6x6 magenta square with a white center, located at rows 36-41, columns 11-16, on the left side of the room. There's a door/opening at rows 38-39, columns 17-22. On the left side there's a vertical ladder (columns 13-14, rows 14-35). The bottom HUD displays the order: player icon, red, green, blue → probably collect red, then green, then blue. ACTION7 is a special action of unknown purpose.
+- Plan: Move the player up 2 steps (top 30→18, bridge rows 20-21, aligning with red's rows 19-22), then extend the bridge 2 steps to the right (tip 34→46, overlapping red's columns 42-45). First, execute UP UP and verify the alignment.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 11 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #0: ACTION4 - changed_px=12 level=1 level_delta=0
+  #1: ACTION4 - changed_px=12 level=1 level_delta=0
+  #2: ACTION1 - changed_px=144 level=1 level_delta=0
+  #3: ACTION1 - changed_px=145 level=1 level_delta=0
+  #4: ACTION1 - changed_px=144 level=1 level_delta=0
+  #5: ACTION4 - changed_px=12 level=1 level_delta=0
+  #6: ACTION4 - changed_px=9 level=1 level_delta=0
+  #7: ACTION2 - changed_px=240 level=1 level_delta=0
+  #8: ACTION2 - changed_px=0 level=1 level_delta=0
+  #9: ACTION1 - changed_px=209 level=1 level_delta=0
+  #10: ACTION3 - changed_px=36 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 1
+  #8: ACTION2 -
+
+====================================================================================================
+CASE control__xpl5__tu93-0768757b__L1__b4  kind=control arch=AVATAR actions_this_level=20 noops=0
+--- carried world model ---
+- Plan: Batch-execute the entire 20-move sequence. If gray turns out to be solid, the player will stop at the first gray cell, and I'll re-evaluate from there.
+- Revise any item above immediately if `current_frame` or `history` contradicts it.
+--- digest ---
+Evidence digest (ground truth from the environment log; current level 1, 20 actions taken on this level so far).
+Last observed transitions, oldest first — (action, coords[x,y], changed_px, level, level_delta):
+  #0: ACTION2 - changed_px=1 level=1 level_delta=0
+  #1: ACTION2 - changed_px=2 level=1 level_delta=0
+  #2: ACTION2 - changed_px=1 level=1 level_delta=0
+  #3: ACTION2 - changed_px=1 level=1 level_delta=0
+  #4: ACTION2 - changed_px=1 level=1 level_delta=0
+  #5: ACTION4 - changed_px=20 level=1 level_delta=0
+  #6: ACTION2 - changed_px=19 level=1 level_delta=0
+  #7: ACTION2 - changed_px=19 level=1 level_delta=0
+  #8: ACTION2 - changed_px=2 level=1 level_delta=0
+  #9: ACTION2 - changed_px=1 level=1 level_delta=0
+  #10: ACTION4 - changed_px=19 level=1 level_delta=0
+  #11: ACTION4 - changed_px=1 level=1 level_delta=0
+  #12: ACTION4 - changed_px=2 level=1 level_delta=0
+  #13: ACTION4 - changed_px=1 level=1 level_delta=0
+  #14: ACTION4 - changed_px=1 level=1 level_delta=0
+  #15: ACTION4 - changed_px=1 level=1 level_delta=0
+  #16: ACTION4 - changed_px=2 level=1 level_delta=0
+  #17: ACTION4 - changed_px=1 level=1 level_delta=0
+  #18: ACTION2 - changed_px=1 level=1 level_delta=0
+  #19: ACTION4 - changed_px=2 level=1 level_delta=0
+No-op events on this level (actions whose board did not change at all): 0
