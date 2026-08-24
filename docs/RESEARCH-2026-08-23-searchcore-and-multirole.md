@@ -58,3 +58,16 @@ costs cents. Corpus durably pinned: scratchpad/multirole_corpus/ (99MB).
 xd flew 1.50 (middle band; digest ~0 live). 08-24 armed: v12+effort_medium
 ladder read #1 (attested svid 344335040 — builder's placeholder caught and
 fixed at verification), mock rc=0, runner pid 10988.
+
+## Addendum (08-24): bankruptcy judge KILLED by stage-3 falsifier
+
+Live 27B replay of the 38-case pack (3 samples, temp 1.0, effort medium,
+fresh context, grounded evidence digest): FLAG 1/16 = 6.3% (bar >=70, kill
+<50); RESCUE 0/11 = 0% (bar >=40, kill <25). Control false-flag 0/20 — the
+model rubber-stamps KEEP on nearly everything, including 15 hand-adjudicated
+deserving-rejection spirals. Even ideal framing (the literature's winning
+quadrant) does not give a 27B grounded model-rejection ability on this task.
+PERSONA TRACK VERDICT: judge mechanism DEAD (cents spent, zero slots); the
+zero-decode contradiction LEDGER survives as an optional stated-facts rider
+only. The spiral problem must be attacked by SEARCH (takeover) not by
+LLM self-governance.
