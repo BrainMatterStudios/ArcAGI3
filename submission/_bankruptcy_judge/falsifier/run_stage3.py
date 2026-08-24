@@ -20,8 +20,11 @@ Pre-registered metrics (majority verdict over the 3 samples per case):
 Usage:
   .venv/bin/python run_stage3.py --endpoint http://HOST:PORT/v1 --model MODEL \
       [--samples 3] [--temperature 1.0] [--effort medium] \
-      [--effort-field reasoning_effort|chat_template_kwargs|none] [--max-tokens 2048]
+      [--effort-field reasoning_effort|chat_template_kwargs|none] [--max-tokens 2048] \
+      [--parallel 1]
 API key: --api-key or OPENAI_API_KEY env (many local serves accept any string).
+--parallel N runs N cases concurrently (protocol-neutral: same prompts, same
+samples, same params; only wall-clock changes — added for the GPU serve probe).
 Outputs: stage3_raw.jsonl (every sample), stage3_metrics.json (+ printed table).
 """
 from __future__ import annotations
@@ -31,8 +34,10 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -81,6 +86,8 @@ def main():
                     choices=["reasoning_effort", "chat_template_kwargs", "none"])
     ap.add_argument("--max-tokens", type=int, default=2048)
     ap.add_argument("--limit", type=int, default=0, help="debug: only first N cases")
+    ap.add_argument("--parallel", type=int, default=1,
+                    help="cases run concurrently (protocol-neutral; wall-clock only)")
     args = ap.parse_args()
 
     prompts = [json.loads(l) for l in open(os.path.join(HERE, "judge_prompts.jsonl"))]
@@ -89,8 +96,10 @@ def main():
 
     raw_path = os.path.join(HERE, "stage3_raw.jsonl")
     raw_f = open(raw_path, "w")
-    results = {}
-    for n, p in enumerate(prompts):
+    raw_lock = threading.Lock()
+    done_count = [0]
+
+    def run_case(p):
         samples = []
         for s in range(args.samples):
             payload = {
@@ -111,13 +120,24 @@ def main():
                 resp, text = {"error": str(e)}, ""
             verdict, hyps = parse_ruling(text)
             samples.append({"verdict": verdict, "hypotheses": hyps, "text": text})
-            raw_f.write(json.dumps({"id": p["id"], "sample": s, "verdict": verdict,
-                                    "hypotheses": hyps, "text": text,
-                                    "seconds": round(time.time() - t0, 1)}) + "\n")
-            raw_f.flush()
-        results[p["id"]] = samples
-        rej = sum(1 for s in samples if s["verdict"] == "REJECT")
-        print(f"[{n+1}/{len(prompts)}] {p['id']}: {rej}/{len(samples)} REJECT", file=sys.stderr)
+            with raw_lock:
+                raw_f.write(json.dumps({"id": p["id"], "sample": s, "verdict": verdict,
+                                        "hypotheses": hyps, "text": text,
+                                        "seconds": round(time.time() - t0, 1)}) + "\n")
+                raw_f.flush()
+        rej = sum(1 for smp in samples if smp["verdict"] == "REJECT")
+        with raw_lock:
+            done_count[0] += 1
+            print(f"[{done_count[0]}/{len(prompts)}] {p['id']}: {rej}/{len(samples)} REJECT",
+                  file=sys.stderr)
+        return p["id"], samples
+
+    workers = max(1, args.parallel)
+    if workers == 1:
+        results = dict(run_case(p) for p in prompts)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = dict(pool.map(run_case, prompts))
     raw_f.close()
 
     # ---- metrics: the answer key is opened ONLY NOW, after all completions ----
