@@ -71,3 +71,22 @@ PERSONA TRACK VERDICT: judge mechanism DEAD (cents spent, zero slots); the
 zero-decode contradiction LEDGER survives as an optional stated-facts rider
 only. The spiral problem must be attacked by SEARCH (takeover) not by
 LLM self-governance.
+
+## Addendum 2 (08-24 evening): persona track FINAL — round-2 verdicts
+
+- V1 MENU DISCRIMINATION: KILLED at exactly chance (7/27 = 25.9% vs 25%
+  chance; bar 60%). The 27B cannot even RECOGNIZE the correct mechanic from
+  a 4-option menu given the transition record — not a generation deficit, a
+  grounding deficit.
+- V2 PREDICTION-DIVERGENCE: PASS 7/10 (bar 60%) — wrong world models DO
+  yield mechanically-testable divergent predictions. Bankruptcy is
+  DETECTABLE without any LLM judgment.
+- V3 RICH EVIDENCE: 2/6 flips (below the 3/6 revival bar); 14/18 samples
+  truncated at 8192 tok — rich frames are also token-prohibitive live.
+- FINAL DISPOSITION: every LLM-judgment form is dead for this brain
+  (generate 0%, recognize chance, rich-evidence marginal). What survives:
+  the MECHANICAL detector stack (contradiction ledger + prediction-vs-record
+  divergence), whose correct response is SEARCH TAKEOVER / forced
+  re-exploration — i.e., the persona track folds into the search lane as an
+  earlier, smarter takeover trigger. Reopen condition: a stronger brain
+  (GLM-5.3 ~08-28) re-runs the same 38-case pack for cents.
