@@ -197,6 +197,40 @@ def test_tier1_uncapped_and_snap_to_own_color():
     assert ring[y][x] == 4
 
 
+def test_pitch_estimator_rejects_peakless_profiles():
+    """REPAIR 2026-08-25: real lattice games (su15/r11l/vc33) have monotone
+    agreement-vs-p profiles — high absolute agreement at p=3 but no peak.
+    The estimator must return None there (the old smallest-p>=0.90 rule
+    returned a spurious p=3 that generated 400+ junk targets on vc33)."""
+    # dense uniform noise on a dominant background: agreement is high and
+    # near-flat across p (background self-matches) — no peak anywhere
+    rng = np.random.default_rng(3)
+    g = np.zeros((64, 64), dtype=np.int8)
+    sparse = rng.random((64, 64)) < 0.10
+    g[sparse] = rng.integers(1, 9, sparse.sum()).astype(np.int8)
+    for axis in (0, 1):
+        assert _estimate_pitch(g, axis=axis) is None, \
+            "peakless profile must not yield a pitch"
+
+
+def test_tier3_raster_fallback_when_estimation_fails():
+    """REPAIR 2026-08-25: when pitch estimation fails on either axis, tier3
+    must emit the native 4-px cell raster (the probe configuration that
+    unlocked su15 L1 depth 7 / r11l L1 depth 3), not nothing (the old
+    behavior: 0 tier3 targets on both games, both regressed to 0 levels)."""
+    rng = np.random.default_rng(3)
+    g = np.zeros((64, 64), dtype=np.int8)
+    sparse = rng.random((64, 64)) < 0.10
+    g[sparse] = rng.integers(1, 9, sparse.sum()).astype(np.int8)
+    assert _estimate_pitch(g, axis=0) is None       # precondition
+    out: list = []
+    ClickGenerator().tier3(g, out)
+    assert len(out) >= 200, f"raster fallback missing: {len(out)} targets"
+    assert (2, 2) in out
+    assert all(x % 4 == 2 and y % 4 == 2 for x, y in out), \
+        "fallback must be the stride-4 offset-2 cell-center raster"
+
+
 def test_tier3_lattice_estimator():
     g = np.full((64, 64), 5, dtype=np.int8)
     g[::4, :] = 1     # gridlines every 4 px
@@ -241,6 +275,66 @@ def test_dead_click_memory():
     assert dead.prune([(5, 5)], ever) == [(5, 5)]
 
 
+def test_component_targets_never_dead_pruned():
+    """REPAIR 2026-08-25 (sb26 regression): dead-click pruning must be
+    scoped to the bulk tiers (3/4). A T1 component target that no-opped in
+    k distinct states (and whose cell never changed) must STILL be offered
+    — on sb26, k=3 pruning of centroid clicks collapsed L1 to a 320-state
+    exhaustion vs 7011+ states with component targets unpruned."""
+    n = 64
+    rows = [[0] * n for _ in range(n)]
+    for dy in range(2):                      # one compact 2x2 component
+        for dx in range(2):
+            rows[8 + dy][8 + dx] = 3
+    grid = np.array(rows, dtype=np.int8)
+    dead = DeadClickMemory(k=3)
+    gen = ClickGenerator(dead)
+    (cx, cy), = gen.tier1(rows)
+    for skey in ("a", "b", "c"):
+        dead.record((cx, cy), skey, changed=False)
+    change = ChangeMemory()
+    change.observe(grid)                     # ever_changed: all False
+    assert dead.is_dead((cx, cy), change.ever_changed)
+    t1 = gen.targets(grid, 1, change)
+    assert (cx, cy) in t1, "T1 component target must survive dead memory"
+    # the SAME dead position arriving via a bulk tier IS pruned: a tier-3
+    # raster cell recorded dead must not appear among the tier-3 additions
+    t3 = gen.targets(grid, 3, change)
+    raster_cell = next(t for t in t3 if t != (cx, cy))
+    for skey in ("a", "b", "c"):
+        dead.record(raster_cell, skey, changed=False)
+    t3b = gen.targets(grid, 3, change)
+    assert raster_cell not in t3b, "bulk-tier target must be dead-prunable"
+    assert (cx, cy) in t3b
+
+
+def test_solve_level_escalates_on_state_cap():
+    """REPAIR 2026-08-25 (r11l regression): a state_cap at tier N must
+    escalate to tier N+1 (a wider click set can win shallower), not
+    terminate the level. r11l's tier-2 blew the 20k cap at 322 s and the
+    tier-3 raster that solves L1 at depth 3 never ran."""
+    frame = _big_comp_frame()                # T1 empty; big comp feeds T2
+    A1 = ("S", 1)
+    states = {"s0": (frame, 0), "win": ([[9] * 20 for _ in range(20)], 1)}
+    # a long S-action chain: more distinct states than max_states
+    for i in range(1, 9):
+        f = [row[:] for row in frame]
+        f[0][0] = i
+        states[f"s{i}"] = (f, 0)
+    transitions = {("s0", A1): "s1"}
+    for i in range(1, 8):
+        transitions[(f"s{i}", A1)] = f"s{i+1}"
+    win_click = ("C", 6, 10)                 # on T2's stride-4 interior
+    transitions[("s0", win_click)] = "win"
+    env = MockEnv(states, transitions, "s0", avail=[1, 6])
+    core = make_core(env, max_states=3)      # tier1 must hit the cap
+    res = core.solve_level(target=1, budget_s=10, max_tier=4)
+    assert res["solved"], res
+    assert res["tier"] == 2, \
+        f"state_cap at tier 1 must escalate to tier 2, got {res}"
+    assert res["handle"].path == [win_click]
+
+
 def test_change_memory_and_t4_pruning():
     mem = ChangeMemory()
     f0 = np.zeros((16, 16), dtype=np.int8)
@@ -257,6 +351,60 @@ def test_change_memory_and_t4_pruning():
     assert (8, 4) in out                       # changed cell, on T4 stride
     assert all(mem.ever_changed[y, x] for x, y in out), \
         "never-changed-any-frame cells must be pruned from T4"
+
+
+# --------------------------------------------------------------------------
+# mask warmup validation — reactive band cells must be unmasked
+# --------------------------------------------------------------------------
+
+class BandEnv:
+    """8x16 frame; interior static. Border row 7 carries BOTH:
+      (7, 0)      an action counter that ticks IDENTICALLY per step
+      (7, 5+aid)  a reactive indicator showing WHICH action ran last
+    The slow-tick rule masks all of row 7; validation must unmask only the
+    reactive cells (the su15 class: click feedback lives in a border row)."""
+
+    def __init__(self):
+        self.count = 0
+        self.last = 0
+
+    def _obs(self):
+        from arcengine import GameState
+
+        frame = [[0] * 16 for _ in range(8)]
+        frame[3][8] = 4                      # static interior content
+        frame[7][0] = self.count % 9
+        if self.last:
+            frame[7][5 + self.last] = 7
+        return MockObs(frame, GameState.NOT_FINISHED, 0, [1, 2])
+
+    def reset(self):
+        self.count = 0
+        self.last = 0
+        return self._obs()
+
+    def step(self, action, data=None, reasoning=None):
+        self.count += 1
+        self.last = int(action.value)
+        return self._obs()
+
+
+def test_mask_validation_unmasks_reactive_band_cells():
+    """REPAIR 2026-08-25 (su15 regression): the learned mask covered su15's
+    bottom row — the game's ONLY click feedback (215/224 effective clicks
+    change nothing else), collapsing L1 to a 33-state exhaustion. A masked
+    cell whose value differs across single-action twins from the same root
+    is reactive state and must be dropped from the mask; the identically
+    ticking counter cell must stay masked."""
+    core = SearchCore(BandEnv(), backend="snapshot")
+    core.warmup_and_freeze()
+    learned = set(core.mask.mask_cells())
+    assert (7, 0) in learned and (7, 6) in learned and (7, 7) in learned, \
+        f"slow-tick rule should have masked row 7: {sorted(learned)[:6]}"
+    active = set(core.active_mask_cells)
+    assert (7, 0) in active, "identically ticking counter must stay masked"
+    assert (7, 6) not in active and (7, 7) not in active, \
+        "action-dependent (reactive) cells must be unmasked"
 
 
 # --------------------------------------------------------------------------
@@ -627,6 +775,17 @@ def test_snapshot_determinism_real_engine():
         assert np.array_equal(settled(o1), settled(o2)), \
             "deepcopy twin diverged — snapshot backend assumption broken"
         assert o1.state == o2.state and o1.levels_completed == o2.levels_completed
+
+
+@pytest.mark.slow
+def test_portfolio_lane_rotation_cracks_tu93():
+    """Integration: the repaired rotation scheduler (race -> ranking ->
+    per-level slices with move-to-front) still cracks tu93 end-to-end."""
+    from search_core import run_game
+
+    res = run_game("tu93", 120, backend="snapshot", algo="portfolio")
+    assert res["cracked"], res
+    assert res["levels_won"] == 9
 
 
 @pytest.mark.slow

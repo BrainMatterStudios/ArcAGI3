@@ -66,6 +66,21 @@ Transposition keys use the FrontierGraph (level, h, w, crc32) format —
 `crc_key` is unit-tested byte-identical to FrontierGraph.node_key — while
 the snapshot hot loop dedups on the full masked bytes (zero collision risk;
 crc32 alone gives ~5% birthday collision odds at 20k states).
+
+REPAIRS 2026-08-25 (full2700 falsifier regressions vs the probes):
+  1. dead-click pruning scoped to bulk tiers 3/4 only — k=3 on component
+     targets collapsed sb26 L1 to a 320-state exhaustion (probe: depth 9/10).
+  2. tier3 = native 4-px raster fallback when pitch autocorrelation fails
+     (it measurably NEVER fires on real lattice games); estimator now
+     requires a genuine peak instead of smallest-p>=0.90.
+  3. warmup mask validation: single-action twin fan-out unmasks
+     action-dependent (reactive) cells — su15's only click feedback lives in
+     border row 63 and the slow-tick rule had masked it (33-state collapse).
+  4. solve_level escalates click tiers on state_cap, not just exhaustion
+     (r11l's tier-2 cap-blow starved the tier-3 lattice that solves it).
+  5. portfolio: per-level lane ROTATION with growing slices + move-to-front
+     replaces winner-commitment; lane timeout is no longer terminal (ls20:
+     goexplore burned 2557 s on L2 while nbfs — 3 probe levels — never ran).
 """
 
 from __future__ import annotations
@@ -207,21 +222,36 @@ class ChangeMemory:
 
 
 def _estimate_pitch(g: np.ndarray, axis: int, p_min: int = 3, p_max: int = 16,
-                    threshold: float = 0.90) -> tuple[int, int] | None:
-    """(pitch, phase) along `axis`, or None. Smallest period whose shifted
-    self-agreement clears the threshold; phase from boundary-line voting."""
+                    threshold: float = 0.90, peak_margin: float = 0.03
+                    ) -> tuple[int, int] | None:
+    """(pitch, phase) along `axis`, or None.
+
+    REPAIRED 2026-08-25 (full2700 falsifier regression): the original rule
+    (smallest p whose shifted self-agreement clears 0.90) can NEVER fire on
+    the real lattice games — measured agreement profiles on su15/r11l/vc33
+    roots are monotone-decreasing in p (background dominates; no peak at the
+    true 4-px pitch), so it returned None on one axis (su15 y) or a spurious
+    p=3 (vc33: 436 junk targets). Now the argmax-agreement p must clear the
+    threshold AND stand `peak_margin` above BOTH neighbors — a genuine peak.
+    Real lattice games fail this (correctly) and get the tier3 raster
+    fallback instead; synthetic gridline frames still resolve exactly."""
     n = g.shape[axis]
-    best = None
-    for p in range(p_min, min(p_max, n // 2) + 1):
-        if axis == 0:
-            score = float(np.mean(g[p:, :] == g[:-p, :]))
-        else:
-            score = float(np.mean(g[:, p:] == g[:, :-p]))
-        if score >= threshold:
-            best = p
-            break
-    if best is None:
+    ps = list(range(p_min, min(p_max, n // 2) + 1))
+    if not ps:
         return None
+
+    def score(p: int) -> float:
+        if axis == 0:
+            return float(np.mean(g[p:, :] == g[:-p, :]))
+        return float(np.mean(g[:, p:] == g[:, :-p]))
+
+    scores = {p: score(p) for p in ps}
+    best = min(ps, key=lambda p: (-scores[p], p))
+    if scores[best] < threshold:
+        return None
+    for nb in (best - 1, best + 1):
+        if nb in scores and scores[best] - scores[nb] < peak_margin:
+            return None                       # no real peak: reject
     diffs = np.any(np.diff(g, axis=axis) != 0, axis=1 - axis)
     boundaries = np.nonzero(diffs)[0] + 1
     if len(boundaries) == 0:
@@ -239,6 +269,7 @@ class ClickGenerator:
     T4_STRIDE = 2
     T4_CAP = 512
     LATTICE_CAP = 400
+    RASTER_PITCH = 4                 # native ARC-3 cell raster (64x64 @4px)
 
     def __init__(self, dead: DeadClickMemory | None = None):
         self.dead = dead or DeadClickMemory()
@@ -292,15 +323,26 @@ class ClickGenerator:
                         self._dedup([(xx, yy)], out)
 
     def tier3(self, grid: np.ndarray, out: list[tuple[int, int]]) -> None:
-        """Autocorrelation pitch-lattice cell centers (both axes periodic)."""
+        """Pitch-lattice cell centers.
+
+        REPAIRED 2026-08-25: when autocorrelation fails on either axis (the
+        measured case on EVERY real lattice game — su15/r11l profiles are
+        monotone in p), fall back to the native 4-px cell raster: exactly
+        the configuration the 2026-08-23 probe used to unlock su15 L1
+        (depth 7, branching 225) and r11l L1 (depth 3, branching 256).
+        Measured at the roots: 224/256 raster clicks change su15's frame,
+        256/256 change r11l's; the old tier3 contributed 0 live targets."""
+        h, w = grid.shape
         py = _estimate_pitch(grid, axis=0)
         px = _estimate_pitch(grid, axis=1)
-        if py is None or px is None:
-            return
-        (p_y, o_y), (p_x, o_x) = py, px
-        h, w = grid.shape
-        ys = [y for y in range(o_y + p_y // 2, h, p_y)]
-        xs = [x for x in range(o_x + p_x // 2, w, p_x)]
+        if py is not None and px is not None:
+            (p_y, o_y), (p_x, o_x) = py, px
+            ys = list(range(o_y + p_y // 2, h, p_y))
+            xs = list(range(o_x + p_x // 2, w, p_x))
+        else:
+            p = self.RASTER_PITCH
+            ys = list(range(p // 2, h, p))
+            xs = list(range(p // 2, w, p))
         cands = [(x, y) for y in ys for x in xs][: self.LATTICE_CAP]
         self._dedup(cands, out)
 
@@ -323,16 +365,28 @@ class ClickGenerator:
 
     def targets(self, grid: np.ndarray, tier: int,
                 change: ChangeMemory | None = None) -> list[tuple[int, int]]:
+        """REPAIRED 2026-08-25: DeadClickMemory pruning is scoped to the BULK
+        tiers (3/4 lattice-raster cells) only. Applied to T1/T2 component
+        targets it false-kills stateful UI clicks that no-op until a
+        prerequisite is met and whose own cell never changes (the
+        ever-changed veto cannot protect them) — measured on sb26: 15/19
+        centroid targets dead after one 60 s audition, collapsing L1 to a
+        320-state exhaustion vs 7011+ states with pruning off (the probe,
+        which never pruned, reached depth 9/10 of the full crack). The
+        probe parity rule: component targets are never pruned; pruning
+        exists to control the 256-512-target raster tiers, where every
+        effective cell is protected by effect counts or the veto."""
         rows = grid.tolist()
         out = self.tier1(rows)
         if tier >= 2:
             self.tier2(rows, out)
+        n_comp = len(out)
         if tier >= 3:
             self.tier3(grid, out)
         if tier >= 4 and change is not None:
             self.tier4(grid, change, out)
-        return self.dead.prune(
-            out, change.ever_changed if change is not None else None)
+        ever = change.ever_changed if change is not None else None
+        return out[:n_comp] + self.dead.prune(out[n_comp:], ever)
 
 
 # --------------------------------------------------------------------------
@@ -538,6 +592,9 @@ class SearchCore:
         self.backend = SnapshotBackend(env) if backend == "snapshot" \
             else ResetReplayBackend(env)
         self.mask = VolatilityMask()
+        # None = warmup validation not run yet (fall back to the raw mask);
+        # a list = the validated post-warmup cells (may be empty)
+        self.active_mask_cells: list[tuple[int, int]] | None = None
         self._mask_np: np.ndarray | None = None
         self.dead = DeadClickMemory(k=dead_click_k)
         self.clicks = ClickGenerator(self.dead)
@@ -603,15 +660,84 @@ class SearchCore:
             rnd += 1
         self.mask.freeze()
         cells = self.mask.mask_cells()
+        if cells and obs is not None:
+            cells = self._validate_mask_cells(cells)
+        self.active_mask_cells = list(cells or [])
         self._mask_np = None
         if cells:
             g = settled(obs) if obs is not None else np.zeros((64, 64), dtype=np.int8)
             self._mask_np = mask_to_bool(cells, g.shape)
         return transitions
 
+    def _validate_mask_cells(self, cells: list[tuple[int, int]]
+                             ) -> list[tuple[int, int]]:
+        """Drop ACTION-DEPENDENT cells from the learned mask.
+
+        REPAIRED 2026-08-25 (full2700 falsifier regression): the slow-tick
+        band rule masks any border row/col that changes while the interior
+        stays quiet — but on su15 the bottom row IS the game's primary click
+        feedback: 215/224 effective raster clicks change ONLY row 63, so the
+        learned mask turned nearly every click into a masked no-op and L1
+        collapsed to a 33-state exhaustion (the probe, which masked nothing
+        on su15, solved L1 at depth 7). Discriminator: a true status band
+        (timer / action counter) advances IDENTICALLY whichever action is
+        taken from the same state; a reactive band's content depends on the
+        action. One single-action fan-out from the root: any masked cell
+        whose value differs across the twins is reactive game state and is
+        unmasked. (r11l: the learned mask covered all four edge cols = 256
+        cells while the real HUD is col 0 — only true-status cells survive.)"""
+        from arcengine import GameState
+
+        root = self.backend.root()
+        if root.obs is None:
+            return cells
+        g0 = settled(root.obs)
+        h, w = g0.shape
+        avail = set(int(a) for a in (root.obs.available_actions or []))
+        toks: list[tuple] = [("S", a) for a in sorted(avail) if a not in (0, 6)]
+        if 6 in avail:
+            clicks = self.clicks.tier1(g0.tolist())[:4]
+            spread = [(w // 4, h // 4), (3 * w // 4, h // 4),
+                      (w // 4, 3 * h // 4), (3 * w // 4, 3 * h // 4),
+                      (w // 2, h // 2)]
+            # probe INSIDE the masked region too: a click whose effect lands
+            # in the masked band (r11l paints cells under its learned
+            # edge-col mask) can only prove those cells reactive if some
+            # twin actually clicks there — one raster-center probe per 4-px
+            # chunk of the mask, so every masked cell gets local evidence
+            probes: list[tuple[int, int]] = []
+            for y, x in cells:
+                xy = (min(w - 1, x - x % 4 + 2), min(h - 1, y - y % 4 + 2))
+                if xy not in probes:
+                    probes.append(xy)
+                if len(probes) >= 16:
+                    break
+            for xy in spread + probes:
+                if xy not in clicks:
+                    clicks.append(xy)
+            toks += [("C", x, y) for x, y in clicks]
+        toks = toks[:28]
+        grids: list[np.ndarray] = []
+        for _, child in self.backend.children(root, toks):
+            if child is None or child.obs is None \
+                    or child.obs.state == GameState.GAME_OVER:
+                continue
+            g = settled(child.obs)
+            if g.shape == (h, w):
+                grids.append(g)
+        if len(grids) < 2:
+            return cells
+        stack = np.stack(grids)
+        kept = [(y, x) for y, x in cells
+                if not (0 <= y < h and 0 <= x < w
+                        and np.unique(stack[:, y, x]).size > 1)]
+        return kept
+
     def mask_bool(self, shape: tuple[int, int]) -> np.ndarray | None:
         if self._mask_np is not None and self._mask_np.shape != shape:
-            return mask_to_bool(self.mask.mask_cells(), shape)
+            cells = self.active_mask_cells if self.active_mask_cells is not None \
+                else self.mask.mask_cells()
+            return mask_to_bool(cells, shape)
         return self._mask_np
 
     # ---- per-node action generation --------------------------------------
@@ -823,8 +949,14 @@ class SearchCore:
         return seeds, None
 
     def solve_level(self, target: int, budget_s: float, max_tier: int = 4) -> dict:
-        """nbfs with click-tier escalation on TRUE exhaustion only, then
-        composite ignition probes if the root turned out fully inert."""
+        """nbfs with click-tier escalation on frontier exhaustion OR state-cap,
+        then composite ignition probes if the root turned out fully inert.
+
+        REPAIRED 2026-08-25: state_cap now ESCALATES instead of terminating —
+        r11l's tier-2 interior lattice blew the 20k cap at 322 s and the old
+        break meant tier 3 (whose raster solves r11l L1 at depth 3 in ~100 s)
+        never ran. A wider click set can reach the unlock SHALLOWER, before
+        the cap binds; timeout remains terminal (no new information)."""
         t0 = time.time()
         tier = 1
         last = None
@@ -835,12 +967,11 @@ class SearchCore:
             res = self.nbfs_level(target, remain, tier)
             res["tier"] = tier
             last = res
-            if res["solved"] or res["reason"] in ("timeout", "state_cap",
-                                                  "reset_failed"):
+            if res["solved"] or res["reason"] in ("timeout", "reset_failed"):
                 break
             if not res.get("had_clicks"):
                 break     # no ACTION6 anywhere: wider click tiers change nothing
-            tier += 1     # frontier exhausted -> widen the click set
+            tier += 1     # exhausted or state-capped -> widen the click set
         if last is None:
             last = dict(solved=False, states=0, nodes=0, wall=0.0,
                         reason="no_budget", tier=tier)
@@ -1120,7 +1251,9 @@ def discover_games(environments_dir: str) -> dict[str, str]:
     return games
 
 
-FALLBACK_REASONS = {"exhausted", "state_cap", "cell_cap", "inert"}
+# deterministic lanes: identical re-runs of an exhausted search cannot help
+DETERMINISTIC_LANES = {"nbfs", "nbfs_macros"}
+SLICE_MIN_S = 300.0        # smallest per-lane time slice on a level
 
 
 def run_game(stem: str, budget_s: float, *, backend: str = "snapshot",
@@ -1131,10 +1264,21 @@ def run_game(stem: str, budget_s: float, *, backend: str = "snapshot",
     """Chained level-by-level solve of one game. ONLY_RESET_LEVELS must be
     'true' in the environment (run_falsifier sets it).
 
-    algo: nbfs | nbfs_macros | goexplore | portfolio. Portfolio races the
-    three lanes with successive halving on level 1 (frame-0 archetype sets
-    the opening order), then runs the winner, falling back down the ranking
-    when a lane fails for a non-timeout reason (exhausted / caps / inert)."""
+    algo: nbfs | nbfs_macros | goexplore | portfolio.
+
+    Portfolio scheduling — REPAIRED 2026-08-25: the racer used to COMMIT to
+    the level-1 winner, and a lane timeout was terminal for the level — on
+    ls20 the race's lucky goexplore L1 solve locked goexplore in, which then
+    burned the remaining 2557 s failing L2 while nbfs (3 ls20 levels in the
+    probe) never ran. Now every level is scheduled by LANE ROTATION with
+    growing time slices: each lane in the ranking gets min(slice, remain);
+    on failure (timeout included) the next lane gets its own slice; when all
+    lanes have failed the slice doubles and rotation repeats. A lane that
+    solves a level moves to the front of the ranking (move-to-front). A
+    DETERMINISTIC lane (nbfs/nbfs_macros) that truly exhausted a level is
+    closed for that level — identical re-runs cannot help — and when every
+    lane is closed the game is over. The race now only sets the OPENING
+    ranking (and banks a level solved mid-race)."""
     from arc_agi import Arcade, OperationMode
     from arcengine import GameState
 
@@ -1183,23 +1327,53 @@ def run_game(stem: str, budget_s: float, *, backend: str = "snapshot",
     else:
         ranking = [algo]
 
-    while not cracked and time.time() < deadline:
+    slice0 = max(SLICE_MIN_S, budget_s / 6.0)
+    while not cracked and time.time() < deadline - 2:
         target = won + 1
         solved_res = None
-        for name in ranking:
-            remain = deadline - time.time()
-            if remain <= 1:
-                break
-            res = solve_with(core, name, target, remain, max_tier, go)
-            entry = {k: v for k, v in res.items() if k != "handle"}
-            entry["level"] = target
-            entry["algo"] = name
-            if res.get("solved"):
-                solved_res = res
-                break
-            levels.append(entry)
-            if res.get("reason") not in FALLBACK_REASONS:
-                break   # timeout etc.: no budget left for a fallback lane
+        # lane -> ever_changed count at its last true exhaustion; the lane
+        # stays closed while the change memory has not grown since (an
+        # identical deterministic re-run cannot help; new ever-changed cells
+        # reopen it because T4 then offers new targets)
+        closed: dict[str, int] = {}
+
+        def _ever_count() -> int:
+            ec = core.change.ever_changed
+            return int(ec.sum()) if ec is not None else 0
+
+        slice_s = slice0
+        while solved_res is None and time.time() < deadline - 2:
+            open_lanes = [n for n in ranking
+                          if n not in closed or _ever_count() > closed[n]]
+            if not open_lanes:
+                break                  # every lane closed: level unreachable
+            for name in open_lanes:
+                remain = deadline - time.time()
+                if remain <= 2:
+                    break
+                # the front (last-successful) lane gets a DOUBLE slice: a
+                # deterministic lane redoes all prior work after a timeout,
+                # so near-miss thrash (vc33 L5 = 616 s fresh) is costlier
+                # than a generous first slice
+                lane_slice = slice_s * 2 if name == ranking[0] else slice_s
+                res = solve_with(core, name, target,
+                                 min(lane_slice, remain), max_tier, go)
+                entry = {k: v for k, v in res.items() if k != "handle"}
+                entry["level"] = target
+                entry["algo"] = name
+                entry["slice_s"] = round(min(lane_slice, remain), 1)
+                if res.get("solved"):
+                    solved_res = res
+                    ranking.remove(name)
+                    ranking.insert(0, name)   # move-to-front
+                    break
+                levels.append(entry)
+                if name in DETERMINISTIC_LANES \
+                        and res.get("reason") == "exhausted":
+                    closed[name] = _ever_count()
+                elif name in closed:
+                    del closed[name]   # lane ran again: clear stale closure
+            slice_s *= 2
         if solved_res is None:
             break
         if bank(solved_res):
@@ -1210,7 +1384,8 @@ def run_game(stem: str, budget_s: float, *, backend: str = "snapshot",
                 levels_won=won, cracked=cracked, budget_s=budget_s,
                 wall=round(time.time() - t_all, 1),
                 warmup_transitions=warm_transitions,
-                mask_cells=len(core.mask.mask_cells()),
+                mask_cells=len(core.active_mask_cells or []),
+                mask_cells_learned=len(core.mask.mask_cells()),
                 actions_spent=core.backend.actions_spent,
                 deferred_expanded=core.stats["deferred_expanded"],
                 macro_nodes=core.stats["macro_nodes"],
