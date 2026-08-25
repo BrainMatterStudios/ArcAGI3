@@ -205,23 +205,79 @@ def _center_color(g: np.ndarray, x: int, y: int) -> int:
 
 
 def _ft09_probe_tiles(backend, root, g0, cands, budget_deadline,
-                      max_probes=90):
-    """Click each candidate once (snapshot); effect column = candidate
-    positions whose center color changed. Returns (effects, changed_any)."""
+                      max_probes=90, by_regions=False):
+    """Click each candidate once (snapshot); effect column = the tile
+    positions whose content changed.
+
+    by_regions=False (uniform-lattice boards, proven on ft09 L1-L5):
+    columns are candidate positions whose CENTER color changed.
+
+    by_regions=True (all-patterned boards, ft09 L6): candidate windows
+    alias the same physical tile at several offsets, so columns are read
+    from the CHANGED-REGION components instead (each tile-sized changed
+    comp's bbox top-left is the physical anchor), and candidates whose
+    click point lands in an already-probed lattice cell are skipped."""
     effects: dict[tuple[int, int], list[tuple[int, int]]] = {}
-    for (x, y) in list(cands)[:max_probes]:
-        if time.time() > budget_deadline:
+    if not by_regions:
+        for (x, y) in list(cands)[:max_probes]:
+            if time.time() > budget_deadline:
+                break
+            child = step1(backend, root, C(x + 2, y + 2))
+            if child is None or child.obs is None:
+                continue
+            g1 = settled(child.obs)
+            if g1.shape != g0.shape:
+                continue
+            col = [(cx, cy) for (cx, cy) in cands
+                   if _center_color(g1, cx, cy) != _center_color(g0, cx, cy)]
+            if col:
+                effects[(x, y)] = col
+        return effects
+
+    off = None                       # lattice offset, learned from anchors
+    probed_cells: set[tuple[int, int]] = set()
+    probes = 0
+    for (x, y) in list(cands):
+        if probes >= max_probes or time.time() > budget_deadline:
             break
-        child = step1(backend, root, C(x + 2, y + 2))
+        px, py = x + 2, y + 2
+        if off is not None:
+            cell = ((px - off[0]) // LAT, (py - off[1]) // LAT)
+            if cell in probed_cells:
+                continue
+        child = step1(backend, root, C(px, py))
+        probes += 1
         if child is None or child.obs is None:
             continue
         g1 = settled(child.obs)
         if g1.shape != g0.shape:
             continue
-        col = [(cx, cy) for (cx, cy) in cands
-               if _center_color(g1, cx, cy) != _center_color(g0, cx, cy)]
-        if col:
-            effects[(x, y)] = col
+        d = (g1 != g0)
+        d[60:, :] = False            # HUD band is not board content
+        if not d.any():
+            if off is not None:
+                probed_cells.add(((px - off[0]) // LAT,
+                                  (py - off[1]) // LAT))
+            continue
+        anchors = []
+        for comp in _components(d.tolist()):
+            if comp["color"] != 1 or comp["size"] < 3:
+                continue
+            r0, c0, r1, c1 = comp["bbox"]
+            if r1 - r0 + 1 > TILE or c1 - c0 + 1 > TILE:
+                continue
+            anchors.append((c0, r0))
+        if not anchors:
+            continue
+        if off is None:
+            off = (anchors[0][0] % LAT, anchors[0][1] % LAT)
+        # keep only lattice-consistent anchors (hint flashes etc. drop out)
+        anchors = [(ax, ay) for (ax, ay) in anchors
+                   if (ax % LAT, ay % LAT) == off]
+        if not anchors:
+            continue
+        effects[(x, y)] = sorted(anchors)
+        probed_cells.add(((px - off[0]) // LAT, (py - off[1]) // LAT))
     return effects
 
 
@@ -346,13 +402,31 @@ def solve_ft09(core, target: int, budget_s: float) -> dict:
     pat = _patterned_blocks(g0)
     # patterned candidates only on the uniform-tile lattice (an NTi-style
     # tile shares the lattice; the hundreds of misaligned pattern hits on a
-    # decorated board are junk that would eat the probe budget)
+    # decorated board are junk that would eat the probe budget). On an
+    # all-patterned board (ft09 L6: every tile is NTi-class) there is no
+    # uniform lattice — fall back to the DOMINANT patterned-block offset
+    # class instead.
     uoffs = {(x % LAT, y % LAT) for (x, y, _) in uni}
     pat_cands = [(x, y) for (x, y, _) in pat if (x % LAT, y % LAT) in uoffs]
-    cands = [(x, y) for (x, y, _) in uni] + pat_cands
+    if len(uni) < 4 and pat:
+        # all-patterned board (ft09 L6: every tile is NTi-class): the real
+        # tiles repeat ONE identical pattern; junk overlaps vary. Take the
+        # positions of repeated pattern-signature groups, largest first.
+        from collections import defaultdict
+
+        groups: dict[bytes, list[tuple[int, int]]] = defaultdict(list)
+        for (x, y, P) in pat:
+            groups[P.tobytes()].append((x, y))
+        for sig in sorted(groups, key=lambda s: -len(groups[s])):
+            if len(groups[sig]) < 4 or len(pat_cands) >= 80:
+                break
+            pat_cands += groups[sig]
+    by_regions = len(uni) < 4
+    cands = [(x, y) for (x, y, _) in uni] + pat_cands[:160]
     if len(cands) < 2:
         return _result(False, wall=time.time() - t0)
-    effects = _ft09_probe_tiles(backend, root, g0, cands, deadline)
+    effects = _ft09_probe_tiles(backend, root, g0, cands, deadline,
+                                by_regions=by_regions)
     if not effects:
         return _result(False, wall=time.time() - t0)
     # tiles = positions whose center is ever affected

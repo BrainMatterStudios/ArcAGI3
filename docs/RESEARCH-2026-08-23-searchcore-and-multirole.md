@@ -129,3 +129,32 @@ DECISION: build the live graft (stage 7) — the ft09-class instant crack is
 the cheapest banking opportunity the campaign has found, and the banking
 plumbing (graft_bank) is already validated and idle. Live-transfer gate
 per crack still required before any slot.
+
+## Addendum 5 (08-26): STAGE 7 BUILT — explorer v8, the live search graft
+
+Built `submission/_explorer_v8/graft_explorer_v8.py` (+47 offline tests).
+v7's blind reset-replay BFS is replaced by the measured SearchCore portfolio
+on the SAME live backend; v7 keeps the trigger, self-harm gate, semaphore and
+every envelope knob. Safety case with worst-case arithmetic:
+docs/ENVELOPE-2026-08-26-v8.md.
+
+LIVE-COST SIMULATION (v8 graft driven end-to-end on the offline engine with
+backend="reset_replay", every engine call counted, priced at the measured
+live gateway rate of 130 act/s):
+
+  ft09  6 levels FULL CRACK  1_233 acts ->   9.5 s live  (specialist lane)
+  tu93  9 levels FULL CRACK 84_687 acts -> 651.4 s live  (nbfs_macros)
+
+Both fit the 1500 s grind-owned engagement cap; together they are 24% of the
+2700 s cumulative run grind budget. BOTH BANKED end-to-end through the graft
+(75- and 187-action minimal replays on the fresh play post-WIN RESET opens) —
+the first time the banking plumbing has actually fired on a crack.
+
+Warmup + frame-only specialist detection across all 25 fixtures: 44-206 engine
+actions (mean 123) = <=1.6 s live worst case; detectors fire on exactly
+ft09/sc25/tn36/wa30, zero false positives.
+
+BUG FOUND IN THE FLOWN v7: graft_explorer.py:788 passed TWO arguments to the
+one-parameter `bank_replay`, whose argument is a dict — every v7 win would
+have raised TypeError inside `should_stop`'s blanket except and gone unbanked.
+Never observed because v7 never cracked. Repaired.

@@ -726,16 +726,23 @@ def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
                         queue.append(seq + [plan])
         return "frontier_exhausted", None
 
-    def bank_replay(level_seqs: list[list[tuple]]) -> bool:
-        """Post-WIN fresh play, replay the minimal per-level sequences."""
+    def bank_replay(level_seqs: dict[int, list[tuple]]) -> bool:
+        """Post-WIN fresh play, replay the minimal per-level sequences.
+
+        BUGFIX 2026-08-25 (found while building v8, never observed live because
+        v7 never cracked a game): the call site passed TWO arguments to this
+        one-parameter function and the caller's ``level_seqs`` is a dict, so the
+        win path raised TypeError, which ``should_stop``'s blanket except
+        swallowed — every v7 win would have gone unbanked. Now dict-typed and
+        replayed in level order."""
         r = step(("RESET",))
         if r is None or int(r.levels_completed) != 0 or r.state == arcengine.GameState.WIN:
             print(f"[explorer] {game_id}: bank ABORT — post-WIN RESET did not "
                   "open a fresh play", flush=True)
             return False
         total = 0
-        for seq in level_seqs:
-            for plan in seq:
+        for lvl in sorted(level_seqs):
+            for plan in level_seqs[lvl]:
                 if step(plan) is None:
                     print(f"[explorer] {game_id}: bank ABORT — engine refused a "
                           "replay step", flush=True)
@@ -785,7 +792,7 @@ def _grind(session: Any, xs: dict[str, Any], level: int) -> None:
             print(f"[explorer] {game_id}: level {unlocked_level} UNLOCKED "
                   f"({len(seq)} actions minimal, {executed} spent)", flush=True)
             if resp.state == arcengine.GameState.WIN:
-                banked = bank_replay(level_seqs, int(resp.win_levels or 0) or (base_levels + 1))
+                banked = bank_replay(level_seqs)
                 xs["diag"]["games_won_by_grinder"] = xs["diag"].get("games_won_by_grinder", 0) + 1
                 narrate(
                     f"[EXPLORER] This game was fully SOLVED by automated search"
