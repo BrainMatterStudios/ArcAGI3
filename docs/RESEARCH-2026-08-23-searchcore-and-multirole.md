@@ -90,3 +90,19 @@ LLM self-governance.
   re-exploration — i.e., the persona track folds into the search lane as an
   earlier, smarter takeover trigger. Reopen condition: a stronger brain
   (GLM-5.3 ~08-28) re-runs the same 38-case pack for cents.
+
+## Addendum 3 (08-25): falsifier FINAL after repair — cracks bar honestly FAILED
+
+Repair (003397a) eliminated every integration regression (dead-click
+false-kills on component targets, pitch-estimator peak requirement + raster
+fallback, mask twin-validation, state_cap tier escalation, lane rotation):
+all 6 rerun games >= probe baseline, set 9->13 levels, projected full-25 ~44
+levels (PASS bar 35). CRACKS: still 1 (tu93) — sb26's probe 'depth 9/10' was
+a partial, never a solve; vc33 L7 / cd82 L3 / su15 L2 are genuine
+depth/state walls at 20k states. THE >=3-CRACK HYPOTHESIS IS FALSIFIED FOR
+GENERIC SEARCH — by measurement, not defects. Remaining crack sources:
+(1) the SPECIALIST TIER (stage 6, never built: ft09 GF2 / tn36 pattern /
+sc25 glyph / wa30 A* solvers exist in-tree; +2-4 crack upside behind
+frame-only detectors), (2) capacity (memory-lean snapshots > 20k states).
+Level-count channel (44 vs LLM 19) remains live for v7-style narration
+unlocks but priced sub-resolution alone.
