@@ -432,8 +432,13 @@ def solve_ft09(core, target: int, budget_s: float) -> dict:
     targets = sorted(effects)
     alt_queue: list[dict] = [dict(pinned)]
     for (t, deltas) in ne_alt[:3]:          # bounded alternative expansion
-        alt_queue += [dict(q, **{t: d})
-                      for q in list(alt_queue) for d in deltas]
+        extra = []
+        for q in alt_queue:
+            for d in deltas:
+                q2 = dict(q)
+                q2[t] = d
+                extra.append(q2)
+        alt_queue += extra
         if len(alt_queue) > 9:
             alt_queue = alt_queue[:9]
     states = 0
@@ -462,7 +467,7 @@ def solve_ft09(core, target: int, budget_s: float) -> dict:
 # tn36_program — program-register machines
 # --------------------------------------------------------------------------
 
-def _click_targets(g: np.ndarray, cap: int = 70) -> list[tuple[int, int]]:
+def _click_targets(g: np.ndarray, cap: int = 150) -> list[tuple[int, int]]:
     rows = g.tolist()
     bg = _background_color(rows)
     out = []
@@ -505,6 +510,58 @@ def _tn36_probe(core, root, g0, deadline):
         if masked_eq(settled(c2.obs), g0, mb):
             toggles.append((x, y))
     return toggles, runs
+
+
+class _H:
+    """Minimal Handle-compatible carrier (obs/depth/path/env)."""
+
+    __slots__ = ("obs", "depth", "path", "env")
+
+    def __init__(self, obs, depth, path, env):
+        self.obs = obs
+        self.depth = depth
+        self.path = path
+        self.env = env
+
+
+def _apply_direct(env, tok):
+    from arcengine import GameAction
+
+    if tok[0] == "C":
+        return env.step(GameAction.ACTION6,
+                        data={"x": int(tok[1]), "y": int(tok[2])})
+    return env.step(GameAction.from_id(int(tok[1])))
+
+
+def _replay_fresh(backend, toks, target):
+    """Reset the backend's PERSISTENT env and replay toks with DIRECT steps
+    (no deepcopy). tn36's opcode table is a dict of lambdas closing over
+    `self`; copy.deepcopy leaves those lambdas bound to the ORIGINAL machine,
+    so program runs on snapshot copies mutate the wrong object and never win
+    (measured 2026-08-25: identical frames through the toggle clicks, then
+    the run click levels on the raw env and no-ops on the copy — this is
+    also why the generic lanes could not crack tn36's 1024-state register).
+    Returns (won_handle | None, final_obs | None)."""
+    from arcengine import GameState
+
+    env = backend.env
+    obs = env.reset()
+    backend.resets += 1
+    backend.actions_spent += 1
+    if obs is None:
+        return None, None
+    path = []
+    for tok in toks:
+        obs = _apply_direct(env, tok)
+        backend.actions_spent += 1
+        if obs is None:
+            return None, None
+        path.append(tok)
+        if lv(obs) >= target or obs.state == GameState.WIN:
+            return _H(obs, len(path), path, env), obs
+        if obs.state == GameState.GAME_OVER:
+            return None, None
+    return None, obs
 
 
 def _tn36_slots(toggles: list[tuple[int, int]]):
@@ -566,6 +623,41 @@ def solve_tn36(core, target: int, budget_s: float) -> dict:
     slots = [s for s in slots if len(s) <= 6]
     if len(slots) < 2 or not runs:
         return _result(False, wall=time.time() - t0, reason="no_register")
+
+    # ACTIVE cells can be background-colored (tn36 L1: the '5' swatches of
+    # value-3 slots are invisible components), so whole slots go missing
+    # from the centroid probe. Extrapolate the slot row by its x-pitch and
+    # period-2-probe the candidate cell positions.
+    mb = core.mask_bool(g0.shape)
+    xs = sorted(min(x for (x, _) in s) for s in slots)
+    pitch = min((b - a) for a, b in zip(xs, xs[1:])) if len(xs) > 1 else 0
+    y_rows = sorted({y for s in slots for (_, y) in s})
+    if pitch >= 3:
+        cand_xs = set()
+        for base_x in range(xs[0] - 3 * pitch, xs[-1] + 3 * pitch + 1, pitch):
+            if not any(abs(base_x - x) <= 2 for x in xs):
+                cand_xs.add(base_x)
+        for cx in sorted(cand_xs):
+            if not (0 <= cx < g0.shape[1]):
+                continue
+            found = []
+            for cy in y_rows:
+                c1 = step1(backend, root, C(cx, cy))
+                if c1 is None or c1.obs is None or n_layers(c1.obs) >= 3:
+                    continue
+                g1 = settled(c1.obs)
+                if g1.shape != g0.shape:
+                    continue
+                nd = int(masked_diff(g0, g1, mb).sum())
+                if not (1 <= nd <= 16):
+                    continue
+                c2 = step1(backend, c1, C(cx, cy))
+                if c2 is not None and c2.obs is not None \
+                        and masked_eq(settled(c2.obs), g0, mb):
+                    found.append((cx, cy))
+            if len(found) == len(y_rows):
+                slots.append(sorted(found, key=lambda p: (p[1], p[0])))
+        slots.sort(key=lambda s: s[0][0])
     ncell = len(slots[0])
     if any(len(s) != ncell for s in slots) or ncell > 6:
         return _result(False, wall=time.time() - t0, reason="ragged_slots")
@@ -595,24 +687,19 @@ def solve_tn36(core, target: int, budget_s: float) -> dict:
     moving: set[int] = set()
 
     def try_config(patterns: list[int]):
+        """Config test by DIRECT replay on the persistent env (deepcopy
+        breaks tn36's lambda-captured opcode table — see _replay_fresh)."""
         nonlocal states
-        base, won = chain(backend, root, toks_for(patterns),
-                          stop_on_level=target)
-        if won is not None:
-            return won
-        if base is None:
-            return None
-        from arcengine import GameState
-
+        toggle_toks = toks_for(patterns)
         for (rx, ry) in runs[:3]:
-            run_h = step1(backend, base, C(rx, ry))
+            won, final_obs = _replay_fresh(
+                backend, toggle_toks + [C(rx, ry)], target)
             states += 1
-            if run_h is None or run_h.obs is None:
-                continue
-            if lv(run_h.obs) >= target or run_h.obs.state == GameState.WIN:
-                return run_h
-            if len(set(patterns)) == 1 and n_layers(run_h.obs) >= 3:
-                a = np.asarray(run_h.obs.frame)
+            if won is not None:
+                return won
+            if final_obs is not None and len(set(patterns)) == 1 \
+                    and n_layers(final_obs) >= 3:
+                a = np.asarray(final_obs.frame)
                 if (a[0] != a[a.shape[0] // 2]).any():
                     moving.add(patterns[0])   # this opcode animates: vocab
         return None
@@ -1145,7 +1232,12 @@ def solve_wa30(core, target: int, budget_s: float) -> dict:
     g0 = settled(root.obs)
     av_color = _learn_avatar_color(backend, root, g0)
     if av_color is None:
+        # a boxed-in start (all four moves blocked) hides the avatar from
+        # the move probe; the color is game-stable, so reuse last level's
+        av_color = getattr(core, "_wa30_avcolor", None)
+    if av_color is None:
         return _result(False, wall=time.time() - t0, reason="no_avatar")
+    core._wa30_avcolor = av_color
     per = _wa30_perceive(g0, av_color)
     if per is None:
         return _result(False, wall=time.time() - t0, reason="no_percept")
