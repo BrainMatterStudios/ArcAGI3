@@ -314,6 +314,9 @@ def test_D_bank_refuses_a_plan_that_does_not_start_at_level_1():
     assert ok is False and "does not start at level 1" in why
     ok, why = v8.bank_crack(object(), {1: [("S", 1)], 3: [("S", 2)]})
     assert ok is False and "does not start at level 1" in why
+    # a level solved with no recorded sequence cannot be replayed either
+    ok, why = v8.bank_crack(object(), {1: [("S", 1)], 2: []})
+    assert ok is False and "no recorded sequence for level(s) [2]" in why
 
 
 def test_D_bank_trips_shared_kill_switch_on_server_patch_signature():

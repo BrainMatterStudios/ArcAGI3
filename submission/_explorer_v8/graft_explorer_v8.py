@@ -346,6 +346,9 @@ def bank_crack(env: Any, level_seqs: dict[int, list[tuple]], *,
     lvls = sorted(level_seqs)
     if lvls and lvls != list(range(1, len(lvls) + 1)):
         return False, f"plan does not start at level 1 (covers {lvls})"
+    empty = [n for n in lvls if not level_seqs[n]]
+    if empty:
+        return False, f"no recorded sequence for level(s) {empty}"
     plan = bank_plan_actions(level_seqs)
     if not plan:
         return False, "empty_plan"
