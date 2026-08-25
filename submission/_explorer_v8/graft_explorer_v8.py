@@ -15,14 +15,20 @@ gate, semaphore and envelope guards VERBATIM, enforces those guards on EVERY
 engine call instead of only at engagement entry, and hands a full-game crack
 to the validated banking invariants.
 
-Measured 2026-08-25 on the offline engine with backend="reset_replay"
-(submission/_search_core/results/falsifier_livesim_v8_20260825_234923.json):
+Measured 2026-08-26 by driving THIS graft end-to-end on the offline engine
+with backend="reset_replay", counting every engine call and pricing it at the
+live gateway rate (test_H; the standalone falsifier run at
+submission/_search_core/results/falsifier_livesim_v8_20260825_234923.json
+agrees to within the graft's own 2 extra bookkeeping resets):
 
-    ft09   6 levels, FULL CRACK,  1_231 engine actions  ->  9.5 s @130 act/s
-    tu93   9 levels, FULL CRACK, 84_685 engine actions  -> 651.4 s @130 act/s
+    ft09   6 levels, FULL CRACK,  1_233 engine actions  ->   9.5 s @130 act/s
+    tu93   9 levels, FULL CRACK, 84_687 engine actions  -> 651.4 s @130 act/s
 
-v7's blind BFS scores 1 level on ft09 and needs ~3300 s of live grind for
-tu93.  The bank plans are 75 (ft09) and 187 (tu93) actions.
+Both were BANKED end-to-end: 75- and 187-action minimal replays on the fresh
+play post-WIN RESET opens.  For contrast, v7's blind BFS never cracked a game
+in any measurement (hence its banking path never fired), v7's own note records
+tu93's full win at ~3300 s of grind, and on ft09 the closest generic baseline
+is 1 level at 120 s/game (run_falsifier.STAGE2_120).
 
 CHANGES vs v7 (all four are the graft's reason to exist)
 -------------------------------------------------------
