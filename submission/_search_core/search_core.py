@@ -110,6 +110,8 @@ from graft_explorer import (  # noqa: E402  (shipped machinery, reused not forke
     _components,
 )
 
+import specialists  # noqa: E402  (stage 6: mechanic-class specialist tier)
+
 ROOT = os.path.dirname(os.path.dirname(_HERE))
 
 
@@ -1316,14 +1318,28 @@ def run_game(stem: str, budget_s: float, *, backend: str = "snapshot",
             return True
         return False
 
+    # stage 6: frame-only specialist detection (bounded snapshot probes).
+    # On a match the specialist lane OPENS the ranking (and the race is
+    # skipped — the specialist either solves the level outright or fails
+    # once and closes, after which lane rotation runs the generic lanes).
+    specialist = None
+    if algo == "portfolio":
+        try:
+            specialist = specialists.detect(core)
+        except Exception:  # noqa: BLE001 — fail-open by contract
+            specialist = None
+
     if algo == "portfolio":
         order = DISPATCH_ORDER[archetype]
-        t1 = race_t1 if race_t1 is not None else min(60.0, budget_s / 20)
-        winner, race_log, solved = portfolio_race(
-            core, go, 1, order, t1, deadline, max_tier)
-        ranking = [winner] + [n for n in order if n != winner]
-        if solved is not None and bank(solved):
-            pass   # full game cracked during the race
+        if specialist is not None:
+            ranking = ["specialist"] + list(order)
+        else:
+            t1 = race_t1 if race_t1 is not None else min(60.0, budget_s / 20)
+            winner, race_log, solved = portfolio_race(
+                core, go, 1, order, t1, deadline, max_tier)
+            ranking = [winner] + [n for n in order if n != winner]
+            if solved is not None and bank(solved):
+                pass   # full game cracked during the race
     else:
         ranking = [algo]
 
@@ -1356,11 +1372,19 @@ def run_game(stem: str, budget_s: float, *, backend: str = "snapshot",
                 # so near-miss thrash (vc33 L5 = 616 s fresh) is costlier
                 # than a generous first slice
                 lane_slice = slice_s * 2 if name == ranking[0] else slice_s
-                res = solve_with(core, name, target,
-                                 min(lane_slice, remain), max_tier, go)
+                if name == "specialist":
+                    a0 = core.backend.actions_spent
+                    res = specialists.solve_level(
+                        core, specialist, target, min(lane_slice, remain))
+                    # engine steps the specialist actually spent (probes +
+                    # verification chains) — honest live-cost accounting
+                    res["nodes"] = core.backend.actions_spent - a0
+                else:
+                    res = solve_with(core, name, target,
+                                     min(lane_slice, remain), max_tier, go)
                 entry = {k: v for k, v in res.items() if k != "handle"}
                 entry["level"] = target
-                entry["algo"] = name
+                entry["algo"] = res.get("algo", name)
                 entry["slice_s"] = round(min(lane_slice, remain), 1)
                 if res.get("solved"):
                     solved_res = res
@@ -1368,7 +1392,11 @@ def run_game(stem: str, budget_s: float, *, backend: str = "snapshot",
                     ranking.insert(0, name)   # move-to-front
                     break
                 levels.append(entry)
-                if name in DETERMINISTIC_LANES \
+                if name == "specialist":
+                    # deterministic one-shot: a failed specialist attempt
+                    # closes the lane for this level permanently
+                    closed[name] = float("inf")
+                elif name in DETERMINISTIC_LANES \
                         and res.get("reason") == "exhausted":
                     closed[name] = _ever_count()
                 elif name in closed:
@@ -1379,7 +1407,7 @@ def run_game(stem: str, budget_s: float, *, backend: str = "snapshot",
         if bank(solved_res):
             break
     return dict(game=stem, algo=algo, backend=backend,
-                archetype=archetype,
+                archetype=archetype, specialist=specialist,
                 winner=(ranking[0] if ranking else algo),
                 levels_won=won, cracked=cracked, budget_s=budget_s,
                 wall=round(time.time() - t_all, 1),
