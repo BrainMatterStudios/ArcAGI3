@@ -132,7 +132,7 @@ per crack still required before any slot.
 
 ## Addendum 5 (08-26): STAGE 7 BUILT — explorer v8, the live search graft
 
-Built `submission/_explorer_v8/graft_explorer_v8.py` (+47 offline tests).
+Built `submission/_explorer_v8/graft_explorer_v8.py` (+48 offline tests).
 v7's blind reset-replay BFS is replaced by the measured SearchCore portfolio
 on the SAME live backend; v7 keeps the trigger, self-harm gate, semaphore and
 every envelope knob. Safety case with worst-case arithmetic:

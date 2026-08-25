@@ -98,6 +98,7 @@ def _clean_run_state():
     """Each test starts from a pristine run envelope + flag set."""
     saved = {k: os.environ.get(k) for k in list(os.environ)
              if k.startswith("EXPLORER")}
+    saved_grind = v7._grind
     v7._RUN_T0 = None
     v7._GRIND_WALL_SPENT[0] = 0.0
     try:
@@ -111,6 +112,7 @@ def _clean_run_state():
     for k in [k for k in list(os.environ) if k.startswith("EXPLORER")]:
         del os.environ[k]
     os.environ.update({k: v for k, v in saved.items() if v is not None})
+    v7._grind = saved_grind          # no test may leak an installed v8 grind
     v7._RUN_T0 = None
     v7._GRIND_WALL_SPENT[0] = 0.0
 
@@ -499,12 +501,40 @@ def test_F_flag_on_swaps_and_uninstall_restores():
     original = v7._grind
     try:
         note = v8.install()
-        assert "v8: OK" in note or "v8: SKIP" in note
-        if "v8: OK" in note:
-            assert v7._grind is v8._grind_v8
-            assert v7._grind_v7 is original
+        assert "v8: OK (SearchCore portfolio grind)" in note, note
+        # v7's own seams must also have taken (or already be applied)
+        assert note.startswith("explorer: OK") or note.startswith("explorer: SKIP"), note
+        assert v7._grind is v8._grind_v8
+        assert v7._grind_v7 is original
     finally:
         v8.uninstall()
+    assert v7._grind is original
+
+
+def test_F_v7_maybe_grind_dispatches_to_v8_after_install(monkeypatch):
+    """The real seam: v7's trigger must actually call the v8 driver."""
+    from inference.framework import solver as fw
+
+    os.environ["EXPLORER_V8"] = "1"
+    original = v7._grind
+    calls = []
+    try:
+        assert "v8: OK" in v8.install()
+        monkeypatch.setattr(v7, "_grind", lambda s, xs, lv: calls.append(lv))
+        monkeypatch.setattr(fw, "_is_run_complete", lambda g: False)
+        monkeypatch.setattr(fw, "_is_engine_game_over", lambda g: False)
+        monkeypatch.setattr(fw, "_level_number", lambda g: 3)
+
+        session = FakeSession(make_env("tu93"))
+        session.game.current_state = type("S", (), {"levels_completed": 0})()
+        xs = v7._session_state(session)
+        xs["worker_thread"] = threading.get_ident()
+        xs["level_actions"][3] = 500          # far past EXPLORER_AGE_ACTIONS
+        xs["age_marks"][3] = {"actions": 0, "step": 0}
+        v7._maybe_grind(session)
+    finally:
+        v8.uninstall()
+    assert calls == [3], "v7._maybe_grind did not reach the v8 grind driver"
     assert v7._grind is original
 
 
