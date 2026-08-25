@@ -106,3 +106,26 @@ sc25 glyph / wa30 A* solvers exist in-tree; +2-4 crack upside behind
 frame-only detectors), (2) capacity (memory-lean snapshots > 20k states).
 Level-count channel (44 vs LLM 19) remains live for v7-style narration
 unlocks but priced sub-resolution alone.
+
+## Addendum 4 (08-25 night): SPECIALIST TIER RESULTS — ft09 full crack in 1 second
+
+Detached rerun (2700s/game, portfolio with the stage-6 specialist lane):
+  ft09  1 -> **6 levels FULL CRACK in 1.0s** (GF2 lights-out specialist)
+  tn36  0 -> 2    sc25  0 -> 2    wa30  0 -> 2   (tu93 sanity: 9 CRACK, 5s)
+FULL-25 PROJECTION: **55 levels (bar 35: PASS by 57%) / 2 cracks (bar 3: SHORT BY 1)**.
+
+Reading, honestly: the pre-registered crack bar is NOT met (2 vs 3). But the
+evidence moved materially in favor of the live graft anyway:
+1. ft09 — a game scoring 0.00 in BOTH full offline waves and 0-1 for every
+   generic algorithm — is a 6-level full crack costing ~1 SECOND of engine
+   time. Per the scoring arithmetic a full crack = 100 pts = +1.82 LB on the
+   public half (+0.91 expected). Essentially free to attempt.
+2. Detectors are FRAME-ONLY and passed the 25x4 false-positive matrix, so
+   they fire on MECHANIC CLASS, not game id — the hidden set's ft09-class
+   games are reachable.
+3. tn36/sc25/wa30 each moved 0 -> 2 levels: partial credit on three more
+   previously-dead games.
+DECISION: build the live graft (stage 7) — the ft09-class instant crack is
+the cheapest banking opportunity the campaign has found, and the banking
+plumbing (graft_bank) is already validated and idle. Live-transfer gate
+per crack still required before any slot.
