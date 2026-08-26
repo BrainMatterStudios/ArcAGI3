@@ -172,6 +172,7 @@ ns["SMOKE_PHASES"] = [("A-ft09", ["ft09-0d8bbf25"], 3600),
                       ("B-panel", ["dc22-fdcac232", "vc33-5430563c",
                                    "sk48-d8078629"], 3600)]
 ns["V8_PHASE_ERRORS"] = []
+ns["V8_ALL_RUNS"] = []
 run_source(compile(REPORT_CELL, "<report-cell>", "exec"), ns)
 assert ns["verdict"] is True, "report cell should PASS on a cracked+banked ft09"
 assert (WORKING_DIR / "v8_smoke_results.json").is_file()

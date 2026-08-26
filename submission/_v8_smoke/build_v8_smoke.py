@@ -96,6 +96,13 @@ RUN_BLOCK_NEW = '''    try:
         # list collapses to one entry when run_as_submission).
         for _phase_name, _phase_games, _phase_cap in SMOKE_PHASES:
             if not run_as_submission:
+                # bm.game_runs PERSISTS across run() calls, and run() raises
+                # ValueError("duplicate game_ids") whenever
+                # len(set(ids in game_runs)) != len(games) — i.e. on every
+                # phase after the first. Harvest and clear before each phase;
+                # the report reads V8_ALL_RUNS + the last phase's bm.game_runs.
+                V8_ALL_RUNS.extend(bm.game_runs)
+                bm.game_runs = []
                 bm.games = [GameAPI(env_name=_n, arcade_spec=_spec) for _n in _phase_games]
                 bm.n_passes = 1
                 bm.game_weights = None
@@ -156,6 +163,7 @@ SMOKE_PHASES = [
     ("B-panel", ["dc22-fdcac232", "vc33-5430563c", "sk48-d8078629"], 3600),
 ]
 V8_PHASE_ERRORS = []
+V8_ALL_RUNS = []   # game_runs harvested from finished phases (see the run cell)
 
 if not run_as_submission:
     import arc_agi
@@ -575,7 +583,7 @@ COMPARATORS = {
 }
 
 games_out = []
-for game_run in bm.game_runs:
+for game_run in list(V8_ALL_RUNS) + list(bm.game_runs):
     actions = sum(game_run.actions_per_level) if game_run.actions_per_level else len(game_run.history)
     stem = str(game_run.game_id).split("-")[0]
     row = {
