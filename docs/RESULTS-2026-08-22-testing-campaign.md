@@ -76,3 +76,35 @@ arc-prize-2026-arc-agi-3 to any kernel that needs the scored GPU).
 Post-lab queue: the campaign's remaining levers are ALL harness-side —
 effort_medium -> yield_carryover -> mechanical pack -> expect-queue rider ->
 truthful_telemetry -> archetype-triage. Serving stack is certified as-is.
+
+## ADDENDUM 2026-08-26 — drift investigation + a CORRECTION to my own claim
+
+SERVING REFUTED as the cause (serving-lab3, commits a4f562a/c0c39f2): conc28
+636.1 vs 642.6 tok/min/session (0.99x), conc8 1619 vs 1626 (1.00x), p50
+latencies flat, KV figures identical, and the GREEDY DECODE FINGERPRINT
+sha256 matches 08-22 exactly — the served model is behaviourally identical,
+not merely the same bytes. Env captured for future diffs: driver 580.159.04,
+CUDA 13.0, torch 2.10.0+cu128, no throttle flags.
+
+**CORRECTION (I overstated the drift).** I called a "5 consecutive decline,
+p~0.008" and a "3.5 sigma same-bytes spread". Both were wrong:
+1. The 5-run sequence contains TWO effort_medium draws we independently
+   suspect are harmful — it is not 5 draws of a stable process.
+2. My sigma=0.19 came from the 3.6-era duck-base group whose MEAN was 0.93.
+   Variance scales with the mean: measured CV is ~0.2 in ALL THREE eras
+   (hybrid-explorer 0.16 @mean 0.31; duck-base 0.21 @0.93; 3.8-era 0.18
+   @1.43). At our current mean, sigma ~= 0.28, so the pack-v22 same-bytes
+   spread of 0.67 is z=1.69, p~0.09 — SUGGESTIVE, NOT SIGNIFICANT.
+DRIFT VERDICT: unproven. Remaining candidates (hidden-set rotation, gateway
+latency, plain variance) are untested; tonight's duck-38 v2 draw is a third
+draw of the arm that scored 1.29/1.74 and discriminates cheaply.
+
+**MEASUREMENT LAW (new, important): CV ~= 0.20 of the mean.**
+=> at mean ~1.4, per-draw sigma ~0.28; a 2-draw read has SE 0.20 and can only
+detect effects >= ~0.55. EVERY 2-draw ladder read in this campaign is
+UNDERPOWERED for the +0.2-0.3 levers it was aimed at, including the
+effort_medium REVERSION (pooled 1.12 vs comparator 1.55: diff 0.43 < 0.55
+=> that verdict is NOT established either; effort is neither confirmed
+harmful nor cleared). Consequences: stop running 2-draw reads for small
+levers; only >=0.55-class levers are slot-testable at all; smaller levers
+must be validated offline/by mechanism telemetry or bundled.
