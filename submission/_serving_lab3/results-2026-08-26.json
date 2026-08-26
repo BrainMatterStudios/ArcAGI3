@@ -1,0 +1,355 @@
+{
+  "meta": {
+    "kernel": "arc3-serving-lab3",
+    "started_utc": "2026-08-26T16:34:10.064026Z",
+    "model_path": "/kaggle/input/models/foysalemonshanto/qwen3-8-27b-fp8-repacked-v1/pytorch/hf-fp8/1",
+    "served_model_name": "Qwen/Qwen3.8-27B-FP8",
+    "max_model_len": 65536,
+    "q1_rule": ">=550 tok/min/session at conc 28 = throughput UNCHANGED; 400-550 = MODERATE degradation; <400 = SEVERE degradation",
+    "modal_h100_tokmin_session_conc28": 445.0,
+    "baseline_flags": [
+      "--model",
+      "/kaggle/input/models/foysalemonshanto/qwen3-8-27b-fp8-repacked-v1/pytorch/hf-fp8/1",
+      "--served-model-name",
+      "Qwen/Qwen3.8-27B-FP8",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "1234",
+      "--tensor-parallel-size",
+      "1",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "qwen3_coder",
+      "--generation-config",
+      "vllm",
+      "--default-chat-template-kwargs",
+      "{\"preserve_thinking\": true}",
+      "--reasoning-parser",
+      "qwen3",
+      "--max-model-len",
+      "65536",
+      "--enable-prefix-caching"
+    ],
+    "kv_cache_dtype": "default (bf16) \u2014 fp8 KV deliberately NOT copied",
+    "spec_metric_names_verified": [
+      "vllm:spec_decode_num_drafts",
+      "vllm:spec_decode_num_draft_tokens",
+      "vllm:spec_decode_num_accepted_tokens",
+      "vllm:spec_decode_num_accepted_tokens_per_pos"
+    ],
+    "environment": {
+      "gpu_static": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "driver_version": "580.159.04",
+        "vbios_version": "98.02.8D.00.08",
+        "memory.total": "97887 MiB",
+        "clocks.max.sm": "2430 MHz",
+        "clocks.max.mem": "12481 MHz",
+        "clocks.max.graphics": "2430 MHz",
+        "power.max_limit": "600.00 W",
+        "power.limit": "600.00 W",
+        "pcie.link.gen.max": "5",
+        "pcie.link.width.max": "16",
+        "compute_mode": "Default",
+        "persistence_mode": "Disabled"
+      },
+      "gpu_now": {
+        "_batch_query_failed": "",
+        "clocks.sm": "2317 MHz",
+        "clocks.mem": "12481 MHz",
+        "clocks.graphics": null,
+        "temperature.gpu": "40",
+        "power.draw": "197.55 W",
+        "utilization.gpu": "69 %",
+        "utilization.memory": "51 %",
+        "memory.used": "88907 MiB",
+        "clocks_throttle_reasons.active": "0x0000000000000000",
+        "clocks_throttle_reasons.sw_power_cap": "Not Active",
+        "clocks_throttle_reasons.hw_slowdown": "Not Active",
+        "clocks_throttle_reasons.sw_thermal_slowdown": "Not Active"
+      },
+      "nvidia_smi_head": [
+        "Wed Aug 26 16:34:10 2026       ",
+        "+-----------------------------------------------------------------------------------------+",
+        "| NVIDIA-SMI 580.159.04             Driver Version: 580.159.04     CUDA Version: 13.0     |",
+        "+-----------------------------------------+------------------------+----------------------+",
+        "| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |",
+        "| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |",
+        "|                                         |                        |               MIG M. |",
+        "|=========================================+========================+======================|",
+        "|   0  NVIDIA RTX PRO 6000 Blac...    Off |   00000000:05:00.0 Off |                    0 |",
+        "| N/A   39C    P0            191W /  600W |   88907MiB /  97887MiB |     69%      Default |",
+        "|                                         |                        |             Disabled |",
+        "+-----------------------------------------+------------------------+----------------------+"
+      ],
+      "cpu_model": "AMD EPYC 9B45",
+      "cpu_logical_count": 48,
+      "os_cpu_count": 48,
+      "mem_total": "185473264 kB",
+      "mem_available": "175677808 kB",
+      "loadavg": "1.08 1.56 0.93 1/1434 1180",
+      "uptime_s": 662.79,
+      "boot_log_path": "/kaggle/working/vllm-openai-server.log",
+      "boot_lines": {
+        "kv_cache_size": [
+          "(EngineCore pid=469) INFO 08-26 16:33:32 [kv_cache_utils.py:1319] GPU KV cache size: 199,136 tokens"
+        ],
+        "max_concurrency": [
+          "(EngineCore pid=469) INFO 08-26 16:33:32 [kv_cache_utils.py:1324] Maximum concurrency for 65,536 tokens per request: 11.32x"
+        ],
+        "kv_cache_memory": [
+          "(EngineCore pid=469) INFO 08-26 16:33:32 [gpu_worker.py:436] Available KV cache memory: 48.8 GiB"
+        ],
+        "model_weights_mem": [
+          "(EngineCore pid=469) INFO 08-26 16:30:44 [gpu_model_runner.py:4820] Model loading took 28.51 GiB memory and 84.905610 seconds"
+        ]
+      },
+      "vllm_version": "0.19.0",
+      "torch_version": "2.10.0+cu128",
+      "torch_cuda": "12.8",
+      "torch_device_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+      "torch_sm": "(12, 0)",
+      "vllm_argv": [
+        "/usr/bin/python3 -m vllm.entrypoints.openai.api_server --model /kaggle/input/models/foysalemonshanto/qwen3-8-27b-fp8-repacked-v1/pytorch/hf-fp8/1 --served-model-name Qwen/Qwen3.8-27B-FP8 --host 127.0.0.1 --port 1234 --tensor-parallel-size 1 --enable-auto-tool-choice --tool-call-parser qwen3_coder --generation-config vllm --enable-prefix-caching --default-chat-template-kwargs {\"preserve_thinking\": true} --reasoning-parser qwen3 --max-model-len 65536"
+      ]
+    },
+    "reference_tokmin_session_0822": {
+      "8": 1626.0,
+      "16": 1140.1,
+      "28": 642.6
+    },
+    "reference_conc28_reproduction_0823": 699.1,
+    "finished_utc": "2026-08-26T17:02:47.496272Z",
+    "total_elapsed_min": 35.6
+  },
+  "phases": {
+    "parser_roundtrip_scored_stack": {
+      "ok_count": 3,
+      "total": 3,
+      "verdict": "PASS",
+      "outcomes": [
+        {
+          "mode": "auto",
+          "ok": true,
+          "detail": "name=python args_parse=OK"
+        },
+        {
+          "mode": "auto",
+          "ok": true,
+          "detail": "name=python args_parse=OK"
+        },
+        {
+          "mode": "forced",
+          "ok": true,
+          "detail": "name=python args_parse=OK"
+        }
+      ]
+    },
+    "probe_conc1": {
+      "conc": 1,
+      "warmup_s": 30,
+      "measure_min": 2.5,
+      "requests_in_window": 4,
+      "requests_total": 5,
+      "errors": 0,
+      "error_samples": [],
+      "gen_tok_min_session_metric": 2435.0,
+      "gen_tok_min_session_usage": 2536.2,
+      "gen_tok_s_aggregate_metric": 40.6,
+      "gen_tok_s_aggregate_usage": 42.3,
+      "mean_latency_s": 39.5,
+      "p50_latency_s": 28.7,
+      "prompt_tokens_mean": 18866,
+      "prompt_tokens_min": 17743,
+      "prompt_tokens_max": 19989,
+      "completion_tokens_mean": 1585,
+      "acceptance": {
+        "num_drafts": 0.0,
+        "num_draft_tokens": 0.0,
+        "num_accepted_tokens": 0.0,
+        "acceptance_rate": null,
+        "mean_accepted_per_draft": null
+      },
+      "acceptance_log_lines": [],
+      "spec_metric_lines_sample": [
+        "vllm:num_requests_running{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.0",
+        "vllm:num_requests_waiting{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 0.0",
+        "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 97639.0",
+        "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7877620206804082e+09",
+        "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 73696.0",
+        "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7877620206804318e+09",
+        "vllm:num_preemptions_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 0.0",
+        "vllm:num_preemptions_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7877620206804762e+09"
+      ],
+      "gpu_samples_tail": [
+        {
+          "util_pct": 100,
+          "mem_mib": 88909
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 88909
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 88909
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 88911
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 88911
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 88913
+        }
+      ],
+      "server_died": false,
+      "server_alive_at_end": true,
+      "server_tag": "baseline-scored-flags"
+    },
+    "remeasure_conc8": {
+      "conc": 8,
+      "warmup_s": 90,
+      "measure_min": 9.0,
+      "requests_in_window": 81,
+      "requests_total": 94,
+      "errors": 0,
+      "error_samples": [],
+      "gen_tok_min_session_metric": 1619.4,
+      "gen_tok_min_session_usage": 1663.3,
+      "gen_tok_s_aggregate_metric": 215.9,
+      "gen_tok_s_aggregate_usage": 221.8,
+      "mean_latency_s": 54.9,
+      "p50_latency_s": 43.1,
+      "prompt_tokens_mean": 23553,
+      "prompt_tokens_min": 19235,
+      "prompt_tokens_max": 25356,
+      "completion_tokens_mean": 1479,
+      "acceptance": {
+        "num_drafts": 0.0,
+        "num_draft_tokens": 0.0,
+        "num_accepted_tokens": 0.0,
+        "acceptance_rate": null,
+        "mean_accepted_per_draft": null
+      },
+      "acceptance_log_lines": [],
+      "spec_metric_lines_sample": [
+        "vllm:num_requests_running{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 8.0",
+        "vllm:num_requests_waiting{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 0.0",
+        "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 2.630696e+06",
+        "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7877620206804082e+09",
+        "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.718528e+06",
+        "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7877620206804318e+09",
+        "vllm:num_preemptions_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 0.0",
+        "vllm:num_preemptions_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7877620206804762e+09"
+      ],
+      "gpu_samples_tail": [
+        {
+          "util_pct": 100,
+          "mem_mib": 88955
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 88957
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 88965
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 88965
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 88971
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 88973
+        }
+      ],
+      "server_died": false,
+      "server_alive_at_end": true,
+      "server_tag": "baseline-scored-flags"
+    },
+    "remeasure_conc28": {
+      "conc": 28,
+      "warmup_s": 90,
+      "measure_min": 10.0,
+      "requests_in_window": 101,
+      "requests_total": 129,
+      "errors": 0,
+      "error_samples": [],
+      "gen_tok_min_session_metric": 636.1,
+      "gen_tok_min_session_usage": 584.5,
+      "gen_tok_s_aggregate_metric": 296.8,
+      "gen_tok_s_aggregate_usage": 272.8,
+      "mean_latency_s": 160.8,
+      "p50_latency_s": 127.8,
+      "prompt_tokens_mean": 21539,
+      "prompt_tokens_min": 17974,
+      "prompt_tokens_max": 25089,
+      "completion_tokens_mean": 1621,
+      "acceptance": {
+        "num_drafts": 0.0,
+        "num_draft_tokens": 0.0,
+        "num_accepted_tokens": 0.0,
+        "acceptance_rate": null,
+        "mean_accepted_per_draft": null
+      },
+      "acceptance_log_lines": [],
+      "spec_metric_lines_sample": [
+        "vllm:num_requests_running{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 28.0",
+        "vllm:num_requests_waiting{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 0.0",
+        "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 7.05184e+06",
+        "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7877620206804082e+09",
+        "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 2.063488e+06",
+        "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7877620206804318e+09",
+        "vllm:num_preemptions_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 0.0",
+        "vllm:num_preemptions_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7877620206804762e+09"
+      ],
+      "gpu_samples_tail": [
+        {
+          "util_pct": 100,
+          "mem_mib": 89041
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89047
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89051
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89053
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89057
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89057
+        }
+      ],
+      "server_died": false,
+      "server_alive_at_end": true,
+      "server_tag": "baseline-scored-flags"
+    }
+  },
+  "verdicts": {
+    "throughput_2026_08_26": "THROUGHPUT UNCHANGED (636.1 >= 550 tok/min/session at conc 28) \u2014 the GPU-degradation hypothesis is REFUTED; the score drift is elsewhere (hidden set, gateway, or our own arms)",
+    "conc8_tokmin_session": 1619.4,
+    "conc28_tokmin_session": 636.1,
+    "conc1_tokmin_session": 2435.0,
+    "decision_rule": ">=550 UNCHANGED | 400-550 MODERATE | <400 SEVERE (conc 28, gen tok/min/session)"
+  }
+}

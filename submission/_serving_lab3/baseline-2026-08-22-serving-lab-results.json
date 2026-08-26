@@ -1,0 +1,744 @@
+{
+  "meta": {
+    "kernel": "arc3-serving-lab",
+    "started_utc": "2026-08-21T22:52:32.620419Z",
+    "model_path": "/kaggle/input/models/foysalemonshanto/qwen3-8-27b-fp8-repacked-v1/pytorch/hf-fp8/1",
+    "served_model_name": "Qwen/Qwen3.8-27B-FP8",
+    "max_model_len": 65536,
+    "q1_rule": ">=400 tok/min/session at conc 28 = throughput hypothesis DEAD; <300 = throughput is the live discount",
+    "modal_h100_tokmin_session_conc28": 445.0,
+    "baseline_flags": [
+      "--model",
+      "/kaggle/input/models/foysalemonshanto/qwen3-8-27b-fp8-repacked-v1/pytorch/hf-fp8/1",
+      "--served-model-name",
+      "Qwen/Qwen3.8-27B-FP8",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "1234",
+      "--tensor-parallel-size",
+      "1",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "qwen3_coder",
+      "--generation-config",
+      "vllm",
+      "--default-chat-template-kwargs",
+      "{\"preserve_thinking\": true}",
+      "--reasoning-parser",
+      "qwen3",
+      "--max-model-len",
+      "65536",
+      "--enable-prefix-caching"
+    ],
+    "mtp3_flags": [
+      "--model",
+      "/kaggle/input/models/foysalemonshanto/qwen3-8-27b-fp8-repacked-v1/pytorch/hf-fp8/1",
+      "--served-model-name",
+      "Qwen/Qwen3.8-27B-FP8",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "1234",
+      "--tensor-parallel-size",
+      "1",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "qwen3_coder",
+      "--generation-config",
+      "vllm",
+      "--default-chat-template-kwargs",
+      "{\"preserve_thinking\": true}",
+      "--reasoning-parser",
+      "qwen3",
+      "--max-model-len",
+      "65536",
+      "--speculative-config",
+      "{\"method\": \"mtp\", \"num_speculative_tokens\": 3}",
+      "--no-enable-prefix-caching"
+    ],
+    "mtp2_flags": [
+      "--model",
+      "/kaggle/input/models/foysalemonshanto/qwen3-8-27b-fp8-repacked-v1/pytorch/hf-fp8/1",
+      "--served-model-name",
+      "Qwen/Qwen3.8-27B-FP8",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "1234",
+      "--tensor-parallel-size",
+      "1",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "qwen3_coder",
+      "--generation-config",
+      "vllm",
+      "--default-chat-template-kwargs",
+      "{\"preserve_thinking\": true}",
+      "--reasoning-parser",
+      "qwen3",
+      "--max-model-len",
+      "65536",
+      "--speculative-config",
+      "{\"method\": \"mtp\", \"num_speculative_tokens\": 2}",
+      "--no-enable-prefix-caching"
+    ],
+    "kv_cache_dtype": "default (bf16) \u2014 fp8 KV deliberately NOT copied",
+    "spec_metric_names_verified": [
+      "vllm:spec_decode_num_drafts",
+      "vllm:spec_decode_num_draft_tokens",
+      "vllm:spec_decode_num_accepted_tokens",
+      "vllm:spec_decode_num_accepted_tokens_per_pos"
+    ],
+    "finished_utc": "2026-08-22T00:26:46.123471Z",
+    "total_elapsed_min": 100.6
+  },
+  "phases": {
+    "parser_roundtrip_baseline": {
+      "ok_count": 3,
+      "total": 3,
+      "verdict": "PASS",
+      "outcomes": [
+        {
+          "mode": "auto",
+          "ok": true,
+          "detail": "name=python args_parse=OK"
+        },
+        {
+          "mode": "auto",
+          "ok": true,
+          "detail": "name=python args_parse=OK"
+        },
+        {
+          "mode": "forced",
+          "ok": true,
+          "detail": "name=python args_parse=OK"
+        }
+      ]
+    },
+    "baseline_conc8": {
+      "conc": 8,
+      "warmup_s": 90,
+      "measure_min": 10.0,
+      "requests_in_window": 84,
+      "requests_total": 98,
+      "errors": 0,
+      "error_samples": [],
+      "gen_tok_min_session_metric": 1626.0,
+      "gen_tok_min_session_usage": 1640.2,
+      "gen_tok_s_aggregate_metric": 216.8,
+      "gen_tok_s_aggregate_usage": 218.7,
+      "mean_latency_s": 57.4,
+      "p50_latency_s": 44.4,
+      "prompt_tokens_mean": 22780,
+      "prompt_tokens_min": 17661,
+      "prompt_tokens_max": 25592,
+      "completion_tokens_mean": 1562,
+      "acceptance": {
+        "num_drafts": 0.0,
+        "num_draft_tokens": 0.0,
+        "num_accepted_tokens": 0.0,
+        "acceptance_rate": null,
+        "mean_accepted_per_draft": null
+      },
+      "acceptance_log_lines": [],
+      "spec_metric_lines_sample": [
+        "vllm:num_requests_running{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 8.0",
+        "vllm:num_requests_waiting{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 0.0",
+        "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 2.561578e+06",
+        "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873527229157412e+09",
+        "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.592304e+06",
+        "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873527229157634e+09",
+        "vllm:num_preemptions_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 0.0",
+        "vllm:num_preemptions_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873527229158063e+09"
+      ],
+      "gpu_samples_tail": [
+        {
+          "util_pct": 100,
+          "mem_mib": 88957
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 88959
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 88963
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 88965
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 88969
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 88973
+        }
+      ],
+      "server_died": false,
+      "server_alive_at_end": true,
+      "server_tag": "baseline-scored-flags"
+    },
+    "baseline_conc16": {
+      "conc": 16,
+      "warmup_s": 90,
+      "measure_min": 8.0,
+      "requests_in_window": 94,
+      "requests_total": 114,
+      "errors": 0,
+      "error_samples": [],
+      "gen_tok_min_session_metric": 1140.1,
+      "gen_tok_min_session_usage": 1184.9,
+      "gen_tok_s_aggregate_metric": 304.0,
+      "gen_tok_s_aggregate_usage": 316.0,
+      "mean_latency_s": 84.2,
+      "p50_latency_s": 73.5,
+      "prompt_tokens_mean": 21997,
+      "prompt_tokens_min": 18420,
+      "prompt_tokens_max": 25443,
+      "completion_tokens_mean": 1614,
+      "acceptance": {
+        "num_drafts": 0.0,
+        "num_draft_tokens": 0.0,
+        "num_accepted_tokens": 0.0,
+        "acceptance_rate": null,
+        "mean_accepted_per_draft": null
+      },
+      "acceptance_log_lines": [],
+      "spec_metric_lines_sample": [
+        "vllm:num_requests_running{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 16.0",
+        "vllm:num_requests_waiting{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 0.0",
+        "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 5.859558e+06",
+        "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873527229157412e+09",
+        "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 3.01448e+06",
+        "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873527229157634e+09",
+        "vllm:num_preemptions_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 0.0",
+        "vllm:num_preemptions_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873527229158063e+09"
+      ],
+      "gpu_samples_tail": [
+        {
+          "util_pct": 100,
+          "mem_mib": 89029
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89033
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89037
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89043
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89045
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89047
+        }
+      ],
+      "server_died": false,
+      "server_alive_at_end": true,
+      "server_tag": "baseline-scored-flags"
+    },
+    "baseline_conc28": {
+      "conc": 28,
+      "warmup_s": 90,
+      "measure_min": 10.0,
+      "requests_in_window": 103,
+      "requests_total": 131,
+      "errors": 0,
+      "error_samples": [],
+      "gen_tok_min_session_metric": 642.6,
+      "gen_tok_min_session_usage": 582.4,
+      "gen_tok_s_aggregate_metric": 299.9,
+      "gen_tok_s_aggregate_usage": 271.8,
+      "mean_latency_s": 157.6,
+      "p50_latency_s": 133.1,
+      "prompt_tokens_mean": 21512,
+      "prompt_tokens_min": 17660,
+      "prompt_tokens_max": 25355,
+      "completion_tokens_mean": 1583,
+      "acceptance": {
+        "num_drafts": 0.0,
+        "num_draft_tokens": 0.0,
+        "num_accepted_tokens": 0.0,
+        "acceptance_rate": null,
+        "mean_accepted_per_draft": null
+      },
+      "acceptance_log_lines": [],
+      "spec_metric_lines_sample": [
+        "vllm:num_requests_running{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 28.0",
+        "vllm:num_requests_waiting{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 0.0",
+        "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.0400697e+07",
+        "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873527229157412e+09",
+        "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 3.499776e+06",
+        "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873527229157634e+09",
+        "vllm:num_preemptions_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 0.0",
+        "vllm:num_preemptions_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873527229158063e+09"
+      ],
+      "gpu_samples_tail": [
+        {
+          "util_pct": 100,
+          "mem_mib": 89083
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89083
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89083
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89083
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89083
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89083
+        }
+      ],
+      "server_died": false,
+      "server_alive_at_end": true,
+      "server_tag": "baseline-scored-flags"
+    },
+    "mtp3_boot": {
+      "ok": true,
+      "spec_decode_active": true,
+      "probe": {
+        "num_drafts": 90.0,
+        "num_draft_tokens": 270.0,
+        "num_accepted_tokens": 168.0,
+        "acceptance_rate": 0.6222222222222222,
+        "mean_accepted_per_draft": 1.8666666666666667
+      },
+      "spec_metric_lines": [
+        "vllm:spec_decode_num_drafts_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 90.0",
+        "vllm:spec_decode_num_drafts_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.787355065620651e+09",
+        "vllm:spec_decode_num_draft_tokens_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 270.0",
+        "vllm:spec_decode_num_draft_tokens_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873550656206794e+09",
+        "vllm:spec_decode_num_accepted_tokens_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 168.0",
+        "vllm:spec_decode_num_accepted_tokens_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873550656206927e+09",
+        "vllm:spec_decode_num_accepted_tokens_per_pos_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\",position=\"0\"} 75.0",
+        "vllm:spec_decode_num_accepted_tokens_per_pos_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\",position=\"1\"} 54.0",
+        "vllm:spec_decode_num_accepted_tokens_per_pos_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\",position=\"2\"} 39.0",
+        "vllm:spec_decode_num_accepted_tokens_per_pos_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\",position=\"0\"} 1.7873550656207087e+09"
+      ]
+    },
+    "parser_roundtrip_mtp3": {
+      "ok_count": 2,
+      "total": 3,
+      "verdict": "PASS",
+      "outcomes": [
+        {
+          "mode": "auto",
+          "ok": true,
+          "detail": "name=python args_parse=OK"
+        },
+        {
+          "mode": "auto",
+          "ok": true,
+          "detail": "name=python args_parse=OK"
+        },
+        {
+          "mode": "forced",
+          "ok": false,
+          "detail": "name=python args_parse=FAIL"
+        }
+      ]
+    },
+    "mtp3_conc8": {
+      "conc": 8,
+      "warmup_s": 90,
+      "measure_min": 8.0,
+      "requests_in_window": 63,
+      "requests_total": 78,
+      "errors": 0,
+      "error_samples": [],
+      "gen_tok_min_session_metric": 1628.0,
+      "gen_tok_min_session_usage": 1647.4,
+      "gen_tok_s_aggregate_metric": 217.1,
+      "gen_tok_s_aggregate_usage": 219.6,
+      "mean_latency_s": 61.5,
+      "p50_latency_s": 61.6,
+      "prompt_tokens_mean": 23558,
+      "prompt_tokens_min": 18019,
+      "prompt_tokens_max": 25534,
+      "completion_tokens_mean": 1674,
+      "acceptance": {
+        "num_drafts": 35934.0,
+        "num_draft_tokens": 107802.0,
+        "num_accepted_tokens": 68278.0,
+        "acceptance_rate": 0.6333648726368712,
+        "mean_accepted_per_draft": 1.900094617910614
+      },
+      "acceptance_log_lines": [
+        "(APIServer pid=1391) INFO 08-21 23:41:09 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 3.04, Accepted throughput: 184.10 tokens/s, Drafted throughput: 270.60 tokens/s, Accepted: 1841 tokens, Drafted: 2706 tokens, Per-position acceptance rate: 0.851, 0.664, 0.525, Avg Draft acceptance rate: 68.0%",
+        "(APIServer pid=1391) INFO 08-21 23:41:19 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 3.09, Accepted throughput: 135.81 tokens/s, Drafted throughput: 195.31 tokens/s, Accepted: 1358 tokens, Drafted: 1953 tokens, Per-position acceptance rate: 0.845, 0.687, 0.555, Avg Draft acceptance rate: 69.5%",
+        "(APIServer pid=1391) INFO 08-21 23:41:29 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 3.29, Accepted throughput: 131.50 tokens/s, Drafted throughput: 171.90 tokens/s, Accepted: 1315 tokens, Drafted: 1719 tokens, Per-position acceptance rate: 0.911, 0.738, 0.646, Avg Draft acceptance rate: 76.5%",
+        "(APIServer pid=1391) INFO 08-21 23:41:39 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.66, Accepted throughput: 67.40 tokens/s, Drafted throughput: 122.10 tokens/s, Accepted: 674 tokens, Drafted: 1221 tokens, Per-position acceptance rate: 0.779, 0.526, 0.351, Avg Draft acceptance rate: 55.2%",
+        "(APIServer pid=1391) INFO 08-21 23:41:49 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.65, Accepted throughput: 18.70 tokens/s, Drafted throughput: 33.90 tokens/s, Accepted: 187 tokens, Drafted: 339 tokens, Per-position acceptance rate: 0.761, 0.522, 0.372, Avg Draft acceptance rate: 55.2%"
+      ],
+      "spec_metric_lines_sample": [
+        "vllm:spec_decode_num_drafts_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 42386.0",
+        "vllm:spec_decode_num_drafts_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.787355065620651e+09",
+        "vllm:spec_decode_num_draft_tokens_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 127158.0",
+        "vllm:spec_decode_num_draft_tokens_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873550656206794e+09",
+        "vllm:spec_decode_num_accepted_tokens_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 80526.0",
+        "vllm:spec_decode_num_accepted_tokens_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873550656206927e+09",
+        "vllm:spec_decode_num_accepted_tokens_per_pos_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\",position=\"0\"} 34721.0",
+        "vllm:spec_decode_num_accepted_tokens_per_pos_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\",position=\"1\"} 26098.0"
+      ],
+      "gpu_samples_tail": [
+        {
+          "util_pct": 99,
+          "mem_mib": 89243
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89247
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89247
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89249
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89253
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89257
+        }
+      ],
+      "server_died": false,
+      "server_alive_at_end": true,
+      "server_tag": "mtp3"
+    },
+    "mtp3_conc16": {
+      "conc": 16,
+      "warmup_s": 90,
+      "measure_min": 8.0,
+      "requests_in_window": 80,
+      "requests_total": 103,
+      "errors": 0,
+      "error_samples": [],
+      "gen_tok_min_session_metric": 1093.6,
+      "gen_tok_min_session_usage": 1050.5,
+      "gen_tok_s_aggregate_metric": 291.6,
+      "gen_tok_s_aggregate_usage": 280.1,
+      "mean_latency_s": 94.5,
+      "p50_latency_s": 77.5,
+      "prompt_tokens_mean": 22031,
+      "prompt_tokens_min": 18020,
+      "prompt_tokens_max": 25226,
+      "completion_tokens_mean": 1681,
+      "acceptance": {
+        "num_drafts": 49684.0,
+        "num_draft_tokens": 149052.0,
+        "num_accepted_tokens": 90308.0,
+        "acceptance_rate": 0.6058825108015995,
+        "mean_accepted_per_draft": 1.8176475324047983
+      },
+      "acceptance_log_lines": [
+        "(APIServer pid=1391) INFO 08-21 23:51:39 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.78, Accepted throughput: 294.98 tokens/s, Drafted throughput: 497.36 tokens/s, Accepted: 2950 tokens, Drafted: 4974 tokens, Per-position acceptance rate: 0.794, 0.576, 0.410, Avg Draft acceptance rate: 59.3%",
+        "(APIServer pid=1391) INFO 08-21 23:51:49 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.85, Accepted throughput: 220.78 tokens/s, Drafted throughput: 358.77 tokens/s, Accepted: 2208 tokens, Drafted: 3588 tokens, Per-position acceptance rate: 0.802, 0.604, 0.441, Avg Draft acceptance rate: 61.5%",
+        "(APIServer pid=1391) INFO 08-21 23:51:59 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.99, Accepted throughput: 175.30 tokens/s, Drafted throughput: 264.60 tokens/s, Accepted: 1753 tokens, Drafted: 2646 tokens, Per-position acceptance rate: 0.829, 0.643, 0.516, Avg Draft acceptance rate: 66.3%",
+        "(APIServer pid=1391) INFO 08-21 23:52:09 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.94, Accepted throughput: 90.60 tokens/s, Drafted throughput: 140.10 tokens/s, Accepted: 906 tokens, Drafted: 1401 tokens, Per-position acceptance rate: 0.809, 0.640, 0.490, Avg Draft acceptance rate: 64.7%",
+        "(APIServer pid=1391) INFO 08-21 23:52:19 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.76, Accepted throughput: 33.90 tokens/s, Drafted throughput: 57.90 tokens/s, Accepted: 339 tokens, Drafted: 579 tokens, Per-position acceptance rate: 0.793, 0.575, 0.389, Avg Draft acceptance rate: 58.5%"
+      ],
+      "spec_metric_lines_sample": [
+        "vllm:spec_decode_num_drafts_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 102320.0",
+        "vllm:spec_decode_num_drafts_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.787355065620651e+09",
+        "vllm:spec_decode_num_draft_tokens_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 306960.0",
+        "vllm:spec_decode_num_draft_tokens_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873550656206794e+09",
+        "vllm:spec_decode_num_accepted_tokens_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 190127.0",
+        "vllm:spec_decode_num_accepted_tokens_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873550656206927e+09",
+        "vllm:spec_decode_num_accepted_tokens_per_pos_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\",position=\"0\"} 82854.0",
+        "vllm:spec_decode_num_accepted_tokens_per_pos_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\",position=\"1\"} 61439.0"
+      ],
+      "gpu_samples_tail": [
+        {
+          "util_pct": 100,
+          "mem_mib": 89309
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89313
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89317
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89321
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89325
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89327
+        }
+      ],
+      "server_died": false,
+      "server_alive_at_end": true,
+      "server_tag": "mtp3"
+    },
+    "mtp3_conc28": {
+      "conc": 28,
+      "warmup_s": 90,
+      "measure_min": 8.0,
+      "requests_in_window": 86,
+      "requests_total": 117,
+      "errors": 0,
+      "error_samples": [],
+      "gen_tok_min_session_metric": 688.9,
+      "gen_tok_min_session_usage": 688.0,
+      "gen_tok_s_aggregate_metric": 321.5,
+      "gen_tok_s_aggregate_usage": 321.1,
+      "mean_latency_s": 155.0,
+      "p50_latency_s": 146.7,
+      "prompt_tokens_mean": 21055,
+      "prompt_tokens_min": 17835,
+      "prompt_tokens_max": 24375,
+      "completion_tokens_mean": 1792,
+      "acceptance": {
+        "num_drafts": 55297.0,
+        "num_draft_tokens": 165891.0,
+        "num_accepted_tokens": 99045.0,
+        "acceptance_rate": 0.5970486644845109,
+        "mean_accepted_per_draft": 1.7911459934535328
+      },
+      "acceptance_log_lines": [
+        "(APIServer pid=1391) INFO 08-22 00:03:09 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.84, Accepted throughput: 203.21 tokens/s, Drafted throughput: 331.22 tokens/s, Accepted: 2032 tokens, Drafted: 3312 tokens, Per-position acceptance rate: 0.820, 0.597, 0.424, Avg Draft acceptance rate: 61.4%",
+        "(APIServer pid=1391) INFO 08-22 00:03:19 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.76, Accepted throughput: 87.40 tokens/s, Drafted throughput: 148.80 tokens/s, Accepted: 874 tokens, Drafted: 1488 tokens, Per-position acceptance rate: 0.804, 0.560, 0.397, Avg Draft acceptance rate: 58.7%",
+        "(APIServer pid=1391) INFO 08-22 00:03:29 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.81, Accepted throughput: 70.30 tokens/s, Drafted throughput: 116.40 tokens/s, Accepted: 703 tokens, Drafted: 1164 tokens, Per-position acceptance rate: 0.786, 0.570, 0.456, Avg Draft acceptance rate: 60.4%",
+        "(APIServer pid=1391) INFO 08-22 00:03:39 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.68, Accepted throughput: 44.10 tokens/s, Drafted throughput: 78.60 tokens/s, Accepted: 441 tokens, Drafted: 786 tokens, Per-position acceptance rate: 0.805, 0.523, 0.355, Avg Draft acceptance rate: 56.1%",
+        "(APIServer pid=1391) INFO 08-22 00:03:49 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.32, Accepted throughput: 3.70 tokens/s, Drafted throughput: 8.40 tokens/s, Accepted: 37 tokens, Drafted: 84 tokens, Per-position acceptance rate: 0.714, 0.464, 0.143, Avg Draft acceptance rate: 44.0%"
+      ],
+      "spec_metric_lines_sample": [
+        "vllm:spec_decode_num_drafts_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 170453.0",
+        "vllm:spec_decode_num_drafts_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.787355065620651e+09",
+        "vllm:spec_decode_num_draft_tokens_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 511359.0",
+        "vllm:spec_decode_num_draft_tokens_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873550656206794e+09",
+        "vllm:spec_decode_num_accepted_tokens_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 312656.0",
+        "vllm:spec_decode_num_accepted_tokens_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873550656206927e+09",
+        "vllm:spec_decode_num_accepted_tokens_per_pos_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\",position=\"0\"} 137312.0",
+        "vllm:spec_decode_num_accepted_tokens_per_pos_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\",position=\"1\"} 100872.0"
+      ],
+      "gpu_samples_tail": [
+        {
+          "util_pct": 99,
+          "mem_mib": 89379
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89381
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89381
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89381
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89381
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89381
+        }
+      ],
+      "server_died": false,
+      "server_alive_at_end": true,
+      "server_tag": "mtp3"
+    },
+    "mtp3_soak_longctx": {
+      "conc": 6,
+      "duration_s": 480,
+      "requests_ok": 36,
+      "errors": 0,
+      "error_samples": [],
+      "prompt_tokens_max": 36915,
+      "mean_latency_s": 74.7,
+      "server_alive_at_end": true,
+      "crash_lines": [],
+      "verdict": "SURVIVED"
+    },
+    "mtp2_boot": {
+      "ok": true
+    },
+    "mtp2_conc8": {
+      "conc": 8,
+      "warmup_s": 60,
+      "measure_min": 5.0,
+      "requests_in_window": 37,
+      "requests_total": 48,
+      "errors": 0,
+      "error_samples": [],
+      "gen_tok_min_session_metric": 1623.8,
+      "gen_tok_min_session_usage": 1642.7,
+      "gen_tok_s_aggregate_metric": 216.5,
+      "gen_tok_s_aggregate_usage": 219.0,
+      "mean_latency_s": 65.8,
+      "p50_latency_s": 48.2,
+      "prompt_tokens_mean": 21218,
+      "prompt_tokens_min": 17889,
+      "prompt_tokens_max": 24585,
+      "completion_tokens_mean": 1776,
+      "acceptance": {
+        "num_drafts": 26670.0,
+        "num_draft_tokens": 53340.0,
+        "num_accepted_tokens": 38285.0,
+        "acceptance_rate": 0.7177540307461567,
+        "mean_accepted_per_draft": 1.4355080614923135
+      },
+      "acceptance_log_lines": [
+        "(APIServer pid=2613) INFO 08-22 00:19:08 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.34, Accepted throughput: 103.00 tokens/s, Drafted throughput: 153.60 tokens/s, Accepted: 1030 tokens, Drafted: 1536 tokens, Per-position acceptance rate: 0.792, 0.549, Avg Draft acceptance rate: 67.1%",
+        "(APIServer pid=2613) INFO 08-22 00:19:18 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.41, Accepted throughput: 177.70 tokens/s, Drafted throughput: 251.20 tokens/s, Accepted: 1777 tokens, Drafted: 2512 tokens, Per-position acceptance rate: 0.813, 0.602, Avg Draft acceptance rate: 70.7%",
+        "(APIServer pid=2613) INFO 08-22 00:19:28 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.34, Accepted throughput: 135.30 tokens/s, Drafted throughput: 202.00 tokens/s, Accepted: 1353 tokens, Drafted: 2020 tokens, Per-position acceptance rate: 0.775, 0.564, Avg Draft acceptance rate: 67.0%",
+        "(APIServer pid=2613) INFO 08-22 00:19:38 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.35, Accepted throughput: 108.79 tokens/s, Drafted throughput: 161.38 tokens/s, Accepted: 1088 tokens, Drafted: 1614 tokens, Per-position acceptance rate: 0.783, 0.565, Avg Draft acceptance rate: 67.4%",
+        "(APIServer pid=2613) INFO 08-22 00:19:48 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.25, Accepted throughput: 47.40 tokens/s, Drafted throughput: 75.60 tokens/s, Accepted: 474 tokens, Drafted: 756 tokens, Per-position acceptance rate: 0.751, 0.503, Avg Draft acceptance rate: 62.7%"
+      ],
+      "spec_metric_lines_sample": [
+        "vllm:spec_decode_num_drafts_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 31178.0",
+        "vllm:spec_decode_num_drafts_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873575848798592e+09",
+        "vllm:spec_decode_num_draft_tokens_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 62356.0",
+        "vllm:spec_decode_num_draft_tokens_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873575848798869e+09",
+        "vllm:spec_decode_num_accepted_tokens_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 44611.0",
+        "vllm:spec_decode_num_accepted_tokens_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873575848798997e+09",
+        "vllm:spec_decode_num_accepted_tokens_per_pos_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\",position=\"0\"} 25350.0",
+        "vllm:spec_decode_num_accepted_tokens_per_pos_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\",position=\"1\"} 19261.0"
+      ],
+      "gpu_samples_tail": [
+        {
+          "util_pct": 99,
+          "mem_mib": 89287
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89291
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89293
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89297
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89301
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89303
+        }
+      ],
+      "server_died": false,
+      "server_alive_at_end": true,
+      "server_tag": "mtp2"
+    },
+    "mtp2_conc16": {
+      "conc": 16,
+      "warmup_s": 60,
+      "measure_min": 5.0,
+      "requests_in_window": 50,
+      "requests_total": 66,
+      "errors": 0,
+      "error_samples": [],
+      "gen_tok_min_session_metric": 1102.0,
+      "gen_tok_min_session_usage": 1081.9,
+      "gen_tok_s_aggregate_metric": 293.9,
+      "gen_tok_s_aggregate_usage": 288.5,
+      "mean_latency_s": 98.2,
+      "p50_latency_s": 78.6,
+      "prompt_tokens_mean": 20548,
+      "prompt_tokens_min": 17747,
+      "prompt_tokens_max": 23529,
+      "completion_tokens_mean": 1731,
+      "acceptance": {
+        "num_drafts": 36264.0,
+        "num_draft_tokens": 72528.0,
+        "num_accepted_tokens": 51899.0,
+        "acceptance_rate": 0.7155719170527245,
+        "mean_accepted_per_draft": 1.431143834105449
+      },
+      "acceptance_log_lines": [
+        "(APIServer pid=2613) INFO 08-22 00:25:58 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.47, Accepted throughput: 201.90 tokens/s, Drafted throughput: 275.60 tokens/s, Accepted: 2019 tokens, Drafted: 2756 tokens, Per-position acceptance rate: 0.832, 0.633, Avg Draft acceptance rate: 73.3%",
+        "(APIServer pid=2613) INFO 08-22 00:26:08 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.48, Accepted throughput: 265.78 tokens/s, Drafted throughput: 359.58 tokens/s, Accepted: 2658 tokens, Drafted: 3596 tokens, Per-position acceptance rate: 0.831, 0.647, Avg Draft acceptance rate: 73.9%",
+        "(APIServer pid=2613) INFO 08-22 00:26:18 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.43, Accepted throughput: 207.60 tokens/s, Drafted throughput: 289.80 tokens/s, Accepted: 2076 tokens, Drafted: 2898 tokens, Per-position acceptance rate: 0.812, 0.620, Avg Draft acceptance rate: 71.6%",
+        "(APIServer pid=2613) INFO 08-22 00:26:28 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.41, Accepted throughput: 114.59 tokens/s, Drafted throughput: 162.39 tokens/s, Accepted: 1146 tokens, Drafted: 1624 tokens, Per-position acceptance rate: 0.799, 0.612, Avg Draft acceptance rate: 70.6%",
+        "(APIServer pid=2613) INFO 08-22 00:26:38 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 2.57, Accepted throughput: 82.30 tokens/s, Drafted throughput: 104.80 tokens/s, Accepted: 823 tokens, Drafted: 1048 tokens, Per-position acceptance rate: 0.857, 0.714, Avg Draft acceptance rate: 78.5%"
+      ],
+      "spec_metric_lines_sample": [
+        "vllm:spec_decode_num_drafts_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 75696.0",
+        "vllm:spec_decode_num_drafts_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873575848798592e+09",
+        "vllm:spec_decode_num_draft_tokens_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 151392.0",
+        "vllm:spec_decode_num_draft_tokens_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873575848798869e+09",
+        "vllm:spec_decode_num_accepted_tokens_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 108081.0",
+        "vllm:spec_decode_num_accepted_tokens_created{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\"} 1.7873575848798997e+09",
+        "vllm:spec_decode_num_accepted_tokens_per_pos_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\",position=\"0\"} 61474.0",
+        "vllm:spec_decode_num_accepted_tokens_per_pos_total{engine=\"0\",model_name=\"Qwen/Qwen3.8-27B-FP8\",position=\"1\"} 46607.0"
+      ],
+      "gpu_samples_tail": [
+        {
+          "util_pct": 94,
+          "mem_mib": 89329
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89333
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89335
+        },
+        {
+          "util_pct": 97,
+          "mem_mib": 89339
+        },
+        {
+          "util_pct": 100,
+          "mem_mib": 89345
+        },
+        {
+          "util_pct": 99,
+          "mem_mib": 89347
+        }
+      ],
+      "server_died": false,
+      "server_alive_at_end": true,
+      "server_tag": "mtp2"
+    }
+  },
+  "verdicts": {
+    "q1_throughput": "THROUGHPUT HYPOTHESIS DEAD (642.6 >= 400 tok/min/session at conc 28)",
+    "q2_crash": "SURVIVED",
+    "q2_crash_yn": "N",
+    "q2_mtp_speedup": "MTP nst=3 speedup: conc8 1.00x, conc28 1.07x"
+  }
+}
