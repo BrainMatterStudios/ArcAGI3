@@ -151,16 +151,22 @@ SMOKE_CELL = r'''# Smoke/eval hook: a NORMAL COMMIT runs the EXPLORER V8 SMOKE o
 # GPU class. The scored rerun path (KAGGLE_IS_COMPETITION_RERUN) never enters
 # this branch.
 #
-# TWO PHASES, one vLLM boot (the run cell loops over SMOKE_PHASES):
-#   A: ft09 ALONE — the specialist crack target and THE read of this smoke.
-#      Alone because the grind semaphore is run-wide BoundedSemaphore(1): a
-#      competing game's 600-1500 s engagement could hold the gate (or spend
-#      the 2700 s cumulative budget) before ft09 ever engages.
-#   B: dc22 + vc33 + sk48 — the regression read vs the v12 comparators and
-#      the contended-gate / cumulative-budget envelope read.
+# PANEL (smoke #2, after the v1 null read): one phase, four games, 3600 s box.
+#   ft09 — the specialist crack target and THE read of this smoke. With v8.1's
+#          EARLY probe it no longer has to win a long-grind semaphore first:
+#          detection runs at game start, before the LLM's first action.
+#   dc22, sk48 — the trigger-reachable games: both score 0 levels in the v12
+#          corpus, so their level 1 is never completed and v7's stall trigger
+#          (120 scored actions or 10 turns) can actually arm on them. Smoke #1
+#          proved the trigger is NOT reachable on a game the LLM completes
+#          levels on (ft09: 17 actions / 2 levels in 3600 s, engagements=0).
+#   vc33 — the level-regression comparator (v12: L2 / 10.71).
+# The run cell still loops over SMOKE_PHASES (one entry here); the loop resets
+# bm.game_runs per phase because benchmark.run() would otherwise raise
+# ValueError("duplicate game_ids") — the bug that killed smoke #1's phase B.
 SMOKE_PHASES = [
-    ("A-ft09", ["ft09-0d8bbf25"], 3600),
-    ("B-panel", ["dc22-fdcac232", "vc33-5430563c", "sk48-d8078629"], 3600),
+    ("panel", ["ft09-0d8bbf25", "dc22-fdcac232", "sk48-d8078629",
+               "vc33-5430563c"], 3600),
 ]
 V8_PHASE_ERRORS = []
 V8_ALL_RUNS = []   # game_runs harvested from finished phases (see the run cell)
@@ -211,6 +217,14 @@ GRAFT_CELL_HEAD = r'''# Graft install — ONE graft: explorer v8 (EXPLORER_V8=1,
 # was verified end-to-end offline.
 os.environ["EXPLORER"] = "1"
 os.environ["EXPLORER_V8"] = "1"
+# v8.1 (built after smoke #1's null read): specialist DETECTION no longer waits
+# for v7's stall trigger. It runs once per game at game start, before the LLM's
+# first scored action, under its own bounded gate and its own probe caps; on a
+# hit the engagement is taken immediately under the SAME envelope guards.
+# Generic search stays gated behind the stall trigger, exactly as before.
+os.environ["EXPLORER_V8_EARLY"] = "1"
+os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "1"
+os.environ["EXPLORER_V8_STOP_AFTER_CRACK"] = "1"
 for _stale in ("EFFORT_MEDIUM", "EFFORT_DEAD_RETRY", "YIELD_CARRYOVER", "YIELD_SLICE_CAP"):
     os.environ.pop(_stale, None)
 
@@ -231,9 +245,11 @@ _v8mod = _importlib.import_module("graft_explorer_v8")
 _v8_status = _v8mod.install()
 print("[explorer-v8]", _v8_status)
 # A smoke that silently measures v7 (or stock) is worse than one that dies:
-# hard-gate BOTH halves of the install verdict.
+# hard-gate EVERY half of the install verdict, the early seam included — the
+# whole point of smoke #2 is that the early probe actually runs.
 assert "explorer: OK" in _v8_status, "v7 substrate must be live, got: " + repr(_v8_status)
 assert "v8: OK" in _v8_status, "v8 grind must be live, got: " + repr(_v8_status)
+assert "early: OK" in _v8_status, "early probe must be live, got: " + repr(_v8_status)
 print("[explorer-v8] flags:", {k: v for k, v in os.environ.items() if k.startswith("EXPLORER")})
 '''
 
@@ -300,6 +316,15 @@ def _game_rec(game_id):
     if rec is None:
         rec = {
             "game_id": game_id,
+            "polls": 0,
+            "max_analysis_step": 0,
+            "max_action_count": 0,
+            "early_outcome": None,
+            "early_detect": None,
+            "early_probe_actions": 0,
+            "early_probe_wall_s": 0.0,
+            "early_engagements": 0,
+            "stall_engagements": 0,
             "engagements": 0,
             "specialist": None,
             "detect_calls": 0,
@@ -504,24 +529,109 @@ def _tel_bank(env, level_seqs, **kwargs):
 
 _v8m.bank_crack = _tel_bank
 
-# --- engagement accounting: wrap the INSTALLED v8 grind ---
+# --- (0) per-game session accounting + thread attribution -------------------
+# v7's poll runs on every should_stop, i.e. every LLM turn, on the session's
+# own worker thread. It is the one seam that sees BOTH the session and the
+# game id, so it is where the TLS attribution for every other wrapper is set
+# — the early probe does NOT go through the grind seam.
+_inner_poll = _v7m._maybe_grind
+assert getattr(_inner_poll, "_v8_early", False), "the v8.1 early poll must be installed first"
+
+
+def _tel_poll(session):
+    game_id = "?"
+    try:
+        game_id = getattr(getattr(getattr(session, "game", None), "game_run", None),
+                          "game_id", "?")
+        _TEL_TLS.game_id = game_id
+        _TEL_TLS.session = session
+        rec = _game_rec(game_id)
+        with _tel_lock:
+            rec["polls"] += 1
+            rec["max_analysis_step"] = max(rec["max_analysis_step"],
+                                           int(getattr(session, "analysis_step", 0) or 0))
+            rec["max_action_count"] = max(rec["max_action_count"],
+                                          int(getattr(session, "action_count", 0) or 0))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        return _inner_poll(session)
+    finally:
+        try:
+            xs = getattr(session, "_xpl_state", None)
+            if xs is not None:
+                diag = xs.get("diag", {})
+                with _tel_lock:
+                    rec = _game_rec(game_id)
+                    rec["early_outcome"] = xs.get("v8_early_done")
+                    rec["early_detect"] = diag.get("v8_early_detect")
+                    rec["early_probe_actions"] = int(diag.get("v8_early_probe_actions", 0) or 0)
+                    rec["early_engagements"] = int(diag.get("v8_early_engagements", 0) or 0)
+                    rec["stop_after_crack"] = bool(xs.get("v8_stop_game"))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+_tel_poll._v8_early = True     # keep the v8.1 idempotence marker intact
+_v7m._maybe_grind = _tel_poll
+
+# --- (a2) the early probe itself -------------------------------------------
+_inner_early = _v8m.early_specialist_probe
+
+
+def _tel_early(session):
+    t0 = _tel_time.monotonic()
+    out = _inner_early(session)
+    try:
+        if out not in ("disabled", "grinding", "not_playing") and \
+                not str(out).startswith(("probe_gate_busy", "other_thread")):
+            game_id = getattr(_TEL_TLS, "game_id", "?")
+            rec = _game_rec(game_id)
+            with _tel_lock:
+                if rec["early_outcome"] != out:
+                    rec["early_probe_wall_s"] = round(_tel_time.monotonic() - t0, 2)
+            if str(out).startswith(("engaged", "detected", "no_specialist", "abort")):
+                _event(f"{game_id}: EARLY probe -> {out}")
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+_v8m.early_specialist_probe = _tel_early
+
+# --- engagement accounting: wrap _engage, the seam BOTH paths go through ----
+_inner_engage = _v8m._engage
 _inner_grind = _v7m._grind
 assert getattr(_inner_grind, "_v8", False), "the v8 grind must be installed first"
 
 
-def _tel_grind(session, xs, level):
+def _tel_stall_grind(session, xs, level):
+    """v7's stall-triggered path only (the early path calls _engage direct)."""
     game_id = getattr(getattr(getattr(session, "game", None), "game_run", None),
                       "game_id", "?")
+    with _tel_lock:
+        _game_rec(game_id)["stall_engagements"] += 1
+    _event(f"{game_id}: STALL TRIGGER armed -> engaging level {level}")
+    return _inner_grind(session, xs, level)
+
+
+_tel_stall_grind._v8 = True
+_v7m._grind = _tel_stall_grind
+
+
+def _tel_engage(session, xs, level, genv, raw_env, game_id, *args, **kwargs):
     _TEL_TLS.game_id = game_id
     _TEL_TLS.session = session
     rec = _game_rec(game_id)
     with _tel_lock:
         rec["engagements"] += 1
         OBS["engagements"] += 1
-    _event(f"{game_id}: ENGAGE level {level}")
+    _event(f"{game_id}: ENGAGE level {level}"
+           + (" [early specialist]" if kwargs.get("prebuilt") else " [stall]"))
     t0 = _tel_time.monotonic()
     try:
-        return _inner_grind(session, xs, level)
+        return _inner_engage(session, xs, level, genv, raw_env, game_id,
+                             *args, **kwargs)
     finally:
         wall = _tel_time.monotonic() - t0
         try:
@@ -556,8 +666,7 @@ def _tel_grind(session, xs, level):
         _v8_snapshot()
 
 
-_tel_grind._v8 = True  # keep the v8 idempotence marker intact
-_v7m._grind = _tel_grind
+_v8m._engage = _tel_engage
 
 print("[v8-tel] counters installed; caps =", CAPS, flush=True)
 '''
@@ -595,6 +704,7 @@ for game_run in list(V8_ALL_RUNS) + list(bm.game_runs):
         "final_score": game_run.final_score,
         "llm_actions": actions,
         "wallclock_s": game_run.final_wallclock_seconds,
+        "actions_per_level": list(game_run.actions_per_level or []),
         "base_actions_per_level": list(game_run.base_actions_per_level or []),
         "comparator": COMPARATORS.get(stem),
     }
@@ -609,6 +719,73 @@ for game_run in list(V8_ALL_RUNS) + list(bm.game_runs):
 snap = _snapshot_dict()
 tel_games = snap["games"]
 obs = snap["observed"]
+
+print("-" * 78)
+print("TRIGGER REACHABILITY (smoke #1's null read: ft09 = 17 LLM actions / "
+      "3600 s / 2 levels => v7's 120-action-or-10-turn stall trigger never armed)")
+for row in games_out:
+    rec = tel_games.get(row["game_id"], {})
+    turns = rec.get("max_analysis_step", 0)
+    acts = rec.get("max_action_count", row["llm_actions"])
+    armed = "YES" if rec.get("stall_engagements") else "no"
+    reachable = "YES" if (acts >= 120 or turns >= 10) else "NO"
+    print(f"  {row['game_id']}: llm_actions={row['llm_actions']} "
+          f"turns={turns} polls={rec.get('polls', 0)} "
+          f"trigger_thresholds_met={reachable} stall_engaged={armed} "
+          f"levels={row['levels_completed']}")
+
+print("-" * 78)
+print("EARLY SPECIALIST PROBE (v8.1 — detection independent of the stall)")
+for row in games_out:
+    rec = tel_games.get(row["game_id"], {})
+    probe = int(rec.get("early_probe_actions", 0) or 0)
+    base1 = (row["base_actions_per_level"] or [None])[0]
+    print(f"  {row['game_id']}: outcome={rec.get('early_outcome')!r} "
+          f"detected={rec.get('early_detect')!r} "
+          f"probe_actions={probe} ({probe / 130.0:.1f}s at 130 act/s) "
+          f"early_engagements={rec.get('early_engagements', 0)} "
+          f"stop_after_crack={rec.get('stop_after_crack')} "
+          f"| level-1 baseline={base1}")
+
+print("-" * 78)
+print("PROBE TAX, PROJECTED TO THE LIVE LANE — the offline harness scores only "
+      "LLM-executed actions, but the SERVER card bills every engine action to "
+      "the level it lands on, so this is the cost the probe would really carry")
+
+
+def _score_from(apl, baselines, levels_completed, n_levels):
+    """taaf.game.GameRun._compute_final_score, applied to arbitrary counts."""
+    total, weights, max_weights = 0.0, 0, 0
+    for idx in range(int(n_levels or 0)):
+        weight = idx + 1
+        weights += weight
+        acts = apl[idx] if idx < len(apl) else 0
+        base = baselines[idx] if idx < len(baselines) else None
+        score = (min(115.0, (float(base) / acts) ** 2 * 100)
+                 if (idx < levels_completed and acts and base) else 0.0)
+        if score > 0:
+            max_weights += weight
+        total += score * weight
+    if not weights:
+        return None
+    return round(min(total / weights, max_weights / weights * 100), 4)
+
+
+for row in games_out:
+    rec = tel_games.get(row["game_id"], {})
+    probe = int(rec.get("early_probe_actions", 0) or 0)
+    apl = list(row["actions_per_level"])
+    if apl:
+        apl[0] += probe          # the probe runs on level 1 by construction
+    row["score_if_probe_billed"] = _score_from(
+        apl, row["base_actions_per_level"], row["levels_completed"],
+        row["number_of_levels"])
+    row["probe_actions"] = probe
+    row["banked_projected_score"] = rec.get("bank_projected_score")
+    print(f"  {row['game_id']}: harness_score={row['final_score']} "
+          f"-> with {probe} probe actions billed to L1: "
+          f"{row['score_if_probe_billed']} "
+          f"| banked-crack projection: {row['banked_projected_score']}")
 
 print("-" * 78)
 print("GRINDER TELEMETRY (per game)")
@@ -658,7 +835,8 @@ ft09_row = next((r for r in games_out if r["stem"] == "ft09"), None)
 ft09_grind_levels = int(ft09_rec["levels_unlocked_by_grinder"]) if ft09_rec else 0
 ft09_levels_any = max(ft09_grind_levels,
                       int(ft09_row["levels_completed"]) if ft09_row else 0)
-bar1 = bool(ft09_rec and ft09_rec["specialist"])
+ft09_spec = (ft09_rec.get("specialist") or ft09_rec.get("early_detect")) if ft09_rec else None
+bar1 = bool(ft09_spec)
 bar2 = ft09_levels_any >= 3
 bar3 = envelope_ok
 crashed = [r["game_id"] for r in games_out if r["state"] in ("crashed",)]
@@ -675,7 +853,10 @@ bar5 = not regressions
 
 BARS = [
     ("1. specialist fires on ft09", bar1,
-     f"detected={ft09_rec['specialist']!r}" if ft09_rec else "no ft09 engagement"),
+     (f"detected={ft09_spec!r} via early probe outcome "
+      f"{ft09_rec.get('early_outcome')!r} in "
+      f"{ft09_rec.get('early_probe_actions')} probe actions")
+     if ft09_rec else "no ft09 telemetry at all"),
     ("2. ft09 completes >= 3 levels", bar2,
      f"grinder_levels={ft09_grind_levels} harness_levels="
      f"{ft09_row['levels_completed'] if ft09_row else 'n/a'}"),

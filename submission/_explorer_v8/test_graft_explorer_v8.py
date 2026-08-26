@@ -99,6 +99,8 @@ def _clean_run_state():
     saved = {k: os.environ.get(k) for k in list(os.environ)
              if k.startswith("EXPLORER")}
     saved_grind = v7._grind
+    saved_poll = v7._maybe_grind
+    v8._PROBE_GATE = threading.BoundedSemaphore(2)   # no leak between tests
     v7._RUN_T0 = None
     v7._GRIND_WALL_SPENT[0] = 0.0
     try:
@@ -113,6 +115,7 @@ def _clean_run_state():
         del os.environ[k]
     os.environ.update({k: v for k, v in saved.items() if v is not None})
     v7._grind = saved_grind          # no test may leak an installed v8 grind
+    v7._maybe_grind = saved_poll     # ... nor an installed v8 poll
     v7._RUN_T0 = None
     v7._GRIND_WALL_SPENT[0] = 0.0
 
@@ -756,3 +759,185 @@ def test_H_report(capsys):
     print(f"    both cracks together: {total:.1f}s of the 2700s run budget "
           f"({100 * total / 2700:.0f}%)")
     assert total <= 2700.0
+
+
+# ==========================================================================
+# I. v8.1 EARLY SPECIALIST PROBE — detection is not gated behind the stall
+#
+# Motivated by a measured live failure (kernel arc3-v8-smoke v1, 2026-08-26):
+# ft09 spent its whole 3600 s box on 17 LLM actions and completed 2 levels, so
+# v7's stall trigger (120 scored actions or 10 turns on ONE never-completed
+# level) never armed — engagements=0, engine actions=0, specialist never
+# consulted, 14.29 banked where a crack projects ~100.
+# ==========================================================================
+
+def early_session(stem="ft09", **kw):
+    env = make_env(stem)
+    session = FakeSession(env, **kw)
+    xs = v7._session_state(session)
+    v7._RUN_T0 = time.monotonic()
+    os.environ["EXPLORER"] = "1"
+    os.environ["EXPLORER_V8"] = "1"
+    return env, session, xs
+
+
+def test_I_detection_runs_at_warmup_with_no_stall_and_no_engagement():
+    """Detection alone: it must fire on a pristine session (0 LLM actions, 0
+    turns) and cost only probe-sized actions."""
+    env, session, xs = early_session()
+    os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"     # detect only
+    out = v8.early_specialist_probe(session)
+    assert xs["diag"]["v8_early_detect"] == "ft09_gf2", xs["diag"]
+    assert out == "detected(ft09_gf2)_engage_off", out
+    probe_actions = xs["diag"]["v8_early_probe_actions"]
+    assert 0 < probe_actions <= 800, probe_actions
+    # warmup+detect only — nothing like an engagement's action budget
+    assert xs["diag"]["levels_unlocked_by_grinder"] == 0
+    # and the probe leaves the LLM at the level start
+    resp = env.step(arcengine.GameAction.RESET, data={})
+    assert int(resp.levels_completed) == 0
+
+
+def test_I_detection_is_independent_of_the_stall_trigger():
+    """The stall trigger must be provably UNARMED and detection must still
+    happen — the exact condition that made smoke #1 a null read."""
+    env, session, xs = early_session()
+    os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"
+    # v7's trigger: level age is 0 actions / 0 turns, so _maybe_grind refuses
+    v7._grind = lambda *a, **k: pytest.fail("stall grind must not run here")
+    session.analysis_step = 0
+    v7._maybe_grind(session)                      # v7's own poll: no grind
+    assert xs["diag"]["grinder_engagements"] == 0
+    # the early probe, on the same untouched session, detects anyway
+    assert v8.early_specialist_probe(session) == "detected(ft09_gf2)_engage_off"
+    assert xs["diag"]["v8_early_detect"] == "ft09_gf2"
+
+
+def test_I_installed_poll_runs_the_probe_before_v7s_trigger():
+    """install() puts the probe in front of v7's poll without changing what
+    v7's poll itself does."""
+    env, session, xs = early_session()               # sets EXPLORER_V8=1
+    os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"
+    note = v8.install()
+    assert "early: OK" in note, note
+    assert getattr(v7._maybe_grind, "_v8_early", False)
+    seen = []
+    v7._maybe_grind_v7 = lambda s: seen.append("v7-poll")
+    v7._maybe_grind(session)
+    assert seen == ["v7-poll"], seen                # v7's poll still runs
+    assert xs["diag"]["v8_early_detect"] == "ft09_gf2"
+
+
+def test_I_early_path_cracks_and_banks_ft09_end_to_end():
+    """The money test: with no stall whatsoever, the probe detects, engages,
+    cracks all 6 levels and banks the minimal replay."""
+    env, session, xs = early_session()
+    os.environ["EXPLORER_GRIND_TIME_S"] = "100000"
+    os.environ["EXPLORER_OWNED_TIME_S"] = "100000"
+    out = v8.early_specialist_probe(session)
+    assert out.startswith("engaged(ft09_gf2):game_won"), out
+    assert xs["diag"]["v8_specialist"] == "ft09_gf2"
+    assert len(xs["grind_unlocked_levels"]) == 6, xs["grind_unlocked_levels"]
+    assert xs["diag"]["games_won_by_grinder"] == 1
+    assert xs["diag"].get("games_banked_by_grinder") == 1, xs["diag"]
+    assert xs["diag"]["v8_early_engagements"] == 1
+    # a cracked game asks the harness to stop spending actions on it
+    assert xs["v8_stop_game"] is True
+    # the engagement counted against the run-wide cumulative grind budget
+    assert v7._GRIND_WALL_SPENT[0] > 0.0
+    # and it consumed the level's single allowed grind (v7 rule)
+    assert xs["grinds_per_level"][1] == 1
+
+
+def test_I_envelope_caps_are_enforced_on_the_early_path():
+    """Every guard that binds a stall-triggered grind also binds the probe."""
+    # 1. probe action cap
+    env, session, xs = early_session()
+    os.environ["EXPLORER_V8_EARLY_PROBE_ACTIONS"] = "5"
+    out = v8.early_specialist_probe(session)
+    assert out.startswith("abort:budget"), out
+    assert xs["diag"].get("levels_unlocked_by_grinder", 0) == 0
+
+    # 2. cumulative run grind budget already spent -> no engine action at all
+    env2, session2, xs2 = early_session()
+    v7._GRIND_WALL_SPENT[0] = 10 ** 6
+    before = xs2["diag"]["grinder_actions"]
+    assert v8.early_specialist_probe(session2) == "run_grind_budget"
+    assert xs2["diag"]["grinder_actions"] == before
+
+    # 3. run start cutoff
+    env3, session3, xs3 = early_session()
+    os.environ["EXPLORER_RUN_CUTOFF_S"] = "0"
+    assert v8.early_specialist_probe(session3) == "run_cutoff"
+
+    # 4. soft time floor
+    env4, session4, xs4 = early_session()
+    session4.solver._soft = 30.0
+    assert v8.early_specialist_probe(session4) == "soft_time"
+
+    # 5. per-game action cap
+    env5, session5, xs5 = early_session()
+    session5.solver.max_actions_per_game = 10
+    session5.action_count = 10
+    assert v8.early_specialist_probe(session5) == "action_cap"
+
+
+def test_I_self_harm_window_closes_the_probe():
+    """The probe may only run while the level is untouched and the LLM has
+    completed nothing: past that the tax stays and the upside (a bankable
+    level-1-onward plan) is gone."""
+    env, session, xs = early_session()
+    session.action_count = 500                     # far past the window
+    out = v8.early_specialist_probe(session)
+    assert out.startswith("too_late("), out
+    assert xs["diag"]["grinder_actions"] == 0
+
+    env2, session2, xs2 = early_session()
+    xs2["completed_levels"].add(1)                 # the LLM already banked L1
+    assert v8.early_specialist_probe(session2) == "levels_completed"
+    assert xs2["diag"]["grinder_actions"] == 0
+
+
+def test_I_probe_runs_at_most_once_per_game():
+    env, session, xs = early_session()
+    os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"
+    first = v8.early_specialist_probe(session)
+    spent = xs["diag"]["grinder_actions"]
+    second = v8.early_specialist_probe(session)
+    assert second == first
+    assert xs["diag"]["grinder_actions"] == spent   # no second probe
+
+
+def test_I_flags_off_parity():
+    """EXPLORER_V8=0 and EXPLORER_V8_EARLY=0 both leave the flown lane alone."""
+    saved_poll = v7._maybe_grind
+    os.environ["EXPLORER_V8"] = "0"
+    note = v8.install()
+    assert "v8: OFF" in note, note
+    assert v7._maybe_grind is saved_poll            # poll untouched
+    env, session, xs = early_session()
+    os.environ["EXPLORER_V8"] = "0"
+    assert v8.early_specialist_probe(session) == "disabled"
+    assert xs["diag"]["grinder_actions"] == 0
+
+    os.environ["EXPLORER_V8"] = "1"
+    os.environ["EXPLORER_V8_EARLY"] = "0"
+    note = v8.install()
+    assert "early: OFF" in note, note
+    assert v7._maybe_grind is saved_poll
+    assert v8.early_specialist_probe(session) == "disabled"
+
+
+@pytest.mark.parametrize("stem", ["ft09", "cn04", "vc33", "sk48", "dc22"])
+def test_I_probe_cost_is_bounded_and_measured(stem):
+    """The tax, measured per game: probe actions are billed to the CURRENT
+    level, so this is what a non-matching game pays for the chance."""
+    env, session, xs = early_session(stem)
+    os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"
+    t0 = time.time()
+    out = v8.early_specialist_probe(session)
+    spent = xs["diag"].get("v8_early_probe_actions", 0)
+    print(f"    probe {stem}: {spent} engine actions "
+          f"({spent / GATEWAY:.1f}s live) -> {out}")
+    assert spent <= 800, (stem, spent)
+    assert time.time() - t0 < 120.0

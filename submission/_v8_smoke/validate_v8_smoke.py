@@ -107,16 +107,25 @@ os.environ["EXPLORER_RUN_GRIND_BUDGET_S"] = "100000"
 
 env = T.make_env("ft09")
 session = T.FakeSession(env)
-session.game.game_run = types.SimpleNamespace(game_id="ft09-0d8bbf25")
-session.game.base_actions_per_level = [40] * 6
+session.game.game_run = types.SimpleNamespace(game_id="ft09-0d8bbf25",
+                                              state="playing")
+session.game.base_actions_per_level = [43, 12, 23, 28, 65, 37]   # ft09's real ones
 session.game.number_of_levels = 6
+# v7's own poll (which runs right after the probe) reads these; the real
+# _HarnessGameSession has them.
+session.game.current_state = types.SimpleNamespace(levels_completed=0)
 xs = v7._session_state(session)
 v7._RUN_T0 = time.monotonic()
 
-print("== driving the ft09 engagement through the installed+wrapped grind ==")
+# THE path smoke #2 exists to exercise: no stall whatsoever (0 LLM actions,
+# 0 turns), the EARLY probe detects and engages. Driven through v7's poll, the
+# way the harness calls it, so the telemetry's poll seam is exercised too.
+print("== driving ft09 through the installed+wrapped POLL (no stall) ==")
 t0 = time.time()
-v7._grind(session, xs, 0)          # the telemetry-wrapped v8 grind
+v7._maybe_grind(session)
 wall = time.time() - t0
+assert xs["diag"].get("v8_early_detect") == "ft09_gf2", xs["diag"]
+assert xs.get("v8_stop_game") is True, "a cracked game must ask to be finished"
 
 snap = ns["_snapshot_dict"]()
 rec = snap["games"].get("ft09-0d8bbf25", {})
@@ -163,14 +172,14 @@ def fake_run(gid, levels, n, score, apl, base):
 
 
 ns["bm"] = types.SimpleNamespace(game_runs=[
-    fake_run("ft09-0d8bbf25", 0, 6, 0.0, [140, 0, 0, 0, 0, 0], [40] * 6),
+    fake_run("ft09-0d8bbf25", 0, 6, 0.0, [3, 0, 0, 0, 0, 0],
+             [43, 12, 23, 28, 65, 37]),
     fake_run("dc22-fdcac232", 1, 5, 2.1, [120, 30, 0, 0, 0], [50] * 5),
     fake_run("vc33-5430563c", 2, 6, 10.71, [60, 40, 0, 0, 0, 0], [30] * 6),
     fake_run("sk48-d8078629", 0, 4, 0.0, [200, 0, 0, 0], [45] * 4),
 ])
-ns["SMOKE_PHASES"] = [("A-ft09", ["ft09-0d8bbf25"], 3600),
-                      ("B-panel", ["dc22-fdcac232", "vc33-5430563c",
-                                   "sk48-d8078629"], 3600)]
+ns["SMOKE_PHASES"] = [("panel", ["ft09-0d8bbf25", "dc22-fdcac232",
+                                 "sk48-d8078629", "vc33-5430563c"], 3600)]
 ns["V8_PHASE_ERRORS"] = []
 ns["V8_ALL_RUNS"] = []
 run_source(compile(REPORT_CELL, "<report-cell>", "exec"), ns)

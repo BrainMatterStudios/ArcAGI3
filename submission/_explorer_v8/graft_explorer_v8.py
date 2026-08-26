@@ -149,6 +149,15 @@ class _GrindAbort(Exception):
         self.reason = reason
 
 
+# v8.1 EARLY SPECIALIST PROBE — its own bounded gate, separate from the
+# run-wide grind semaphore. A probe is ~123 engine actions (measured mean over
+# 25 fixtures, worst 206), i.e. ~1 s at the live gateway rate, so a couple may
+# safely overlap where a 600-1500 s grind may not. Non-blocking: a session
+# that cannot acquire retries on a later poll, inside its action window.
+_PROBE_GATE = _threading.BoundedSemaphore(
+    max(1, _env_int("EXPLORER_V8_EARLY_CONCURRENCY", 2)))
+
+
 # --------------------------------------------------------------------------
 # GuardedEnv — every envelope guard, enforced on EVERY engine call
 # --------------------------------------------------------------------------
@@ -447,6 +456,13 @@ def _grind_v8(session: Any, xs: dict[str, Any], level: int) -> None:
         v7._grind_v7(session, xs, level)
         return
 
+    genv = GuardedEnv(raw_env, session, xs, t0=_time.monotonic(),
+                      **_engagement_caps())
+    _engage(session, xs, level, genv, raw_env, game_id, search_core, specialists)
+
+
+def _engagement_caps() -> dict[str, Any]:
+    """The v7 engagement caps, unchanged, in GuardedEnv's keyword form."""
     time_cap_s = max(30, _env_int("EXPLORER_GRIND_TIME_S", 600))
     owned_time_cap_s = max(time_cap_s, _env_int("EXPLORER_OWNED_TIME_S", 1500))
     # engine-action ceiling: the v7 knob, additionally clamped to what the
@@ -454,13 +470,22 @@ def _grind_v8(session: Any, xs: dict[str, Any], level: int) -> None:
     # 500000, which no 1500 s cap can ever reach — an inert ceiling).
     action_cap = min(max(1, _env_int("EXPLORER_GRIND_BUDGET", 500000)),
                      int(owned_time_cap_s * GATEWAY_ACT_PER_S * 1.5))
-    t0 = _time.monotonic()
-    genv = GuardedEnv(raw_env, session, xs, t0=t0, action_cap=action_cap,
-                      time_cap_s=time_cap_s, owned_time_cap_s=owned_time_cap_s)
+    return {"action_cap": action_cap, "time_cap_s": time_cap_s,
+            "owned_time_cap_s": owned_time_cap_s}
 
+
+def _engage(session: Any, xs: dict[str, Any], level: int, genv: "GuardedEnv",
+            raw_env: Any, game_id: str, search_core: Any, specialists: Any,
+            prebuilt: tuple | None = None) -> str:
+    """One engagement: lane rotation, banking, narration, teardown.
+
+    Shared by the stall-triggered grind and the early specialist probe; the
+    probe hands over its already-warmed core through ``prebuilt`` so nothing
+    is warmed or detected twice. Returns the stop reason."""
     print(f"[explorer-v8] {game_id}: engaging on level {level} — SearchCore "
-          f"portfolio, caps {action_cap} acts / {time_cap_s}s "
-          f"({owned_time_cap_s}s owned)", flush=True)
+          f"portfolio, caps {genv._action_cap} acts / {genv._time_cap_s}s "
+          f"({genv._owned_time_cap_s}s owned)"
+          + (" [early specialist]" if prebuilt else ""), flush=True)
     xs["grinding"] = True
     xs["diag"].setdefault("v8_engagements", 0)
     xs["diag"]["v8_engagements"] += 1
@@ -482,7 +507,8 @@ def _grind_v8(session: Any, xs: dict[str, Any], level: int) -> None:
 
     try:
         stop_reason = _run_search(session, xs, genv, game_id, search_core,
-                                  specialists, level_seqs, narrate, plan_text)
+                                  specialists, level_seqs, narrate, plan_text,
+                                  prebuilt=prebuilt)
         won = stop_reason == "game_won"
     except _GrindAbort as abort:
         stop_reason = abort.reason
@@ -509,6 +535,11 @@ def _grind_v8(session: Any, xs: dict[str, Any], level: int) -> None:
                if banked else "")
             + ". No further actions are needed on this game; if prompted, do "
             "not reset or replay — the result is already recorded.")
+        # A cracked game has nothing left to win: every further LLM action
+        # lands on the post-bank play and can only add actions to a play whose
+        # levels are already recorded, while holding a worker the next wave
+        # needs. Ask the harness to finish this game (v8.1; flag-gated).
+        xs["v8_stop_game"] = True
 
     try:
         if not won and stop_reason not in ("cancelled", "reset_failed"):
@@ -527,19 +558,217 @@ def _grind_v8(session: Any, xs: dict[str, Any], level: int) -> None:
           f"{genv.actions} engine actions / {genv.wall():.0f}s, "
           f"{len(xs['grind_unlocked_levels'])} grinder unlocks total"
           + (" [BANKED]" if banked else ""), flush=True)
+    return stop_reason
 
 
-def _run_search(session: Any, xs: dict[str, Any], genv: GuardedEnv, game_id: str,
-                search_core: Any, specialists: Any,
-                level_seqs: dict[int, list[tuple]],
-                narrate: Any, plan_text: Any) -> str:
-    """Warmup -> specialist detection -> per-level lane rotation. Returns the
-    stop reason; "game_won" means the engine reported WIN."""
-    import arcengine
+# --------------------------------------------------------------------------
+# v8.1 EARLY SPECIALIST PROBE — detection is no longer gated behind the stall
+# --------------------------------------------------------------------------
 
+def early_enabled() -> bool:
+    return v8_enabled() and _flag("EXPLORER_V8_EARLY", "1")
+
+
+def _early_probe_caps() -> dict[str, Any]:
+    """Caps for the PROBE phase (warmup + detect) — far tighter than an
+    engagement's. Measured cost across all 25 fixtures: 40-111 warmup + 4-114
+    detect actions, worst case 206, mean 123."""
+    wall = float(_env_int("EXPLORER_V8_EARLY_PROBE_S", 120))
+    return {"action_cap": max(1, _env_int("EXPLORER_V8_EARLY_PROBE_ACTIONS", 800)),
+            "time_cap_s": wall, "owned_time_cap_s": wall}
+
+
+def early_specialist_probe(session: Any) -> str:
+    """Run ``specialists.detect`` ONCE per game, right after warmup, with no
+    stall precondition; engage immediately on a hit.
+
+    WHY (measured, v8 smoke #1, 2026-08-26 — kernel arc3-v8-smoke v1): v7's
+    trigger needs 120 scored actions or 10 LLM turns on ONE never-completed
+    level.  ft09 spent its whole 3600 s box on **17 LLM actions** and completed
+    two levels, so the trigger never armed: engagements=0, engine actions=0,
+    and the specialist tier — 1.6 s to detect, 9.5 s to crack the game — was
+    never consulted.  ft09's LLM banked 14.29 (the completion-share cap for
+    2/6 levels) where a banked crack projects ~100.  Gating DETECTION behind a
+    soak wastes it; only GENERIC search still waits for the stall.
+
+    Cost and blast radius, stated honestly: the probe's engine actions are
+    billed to the CURRENT level, so on a game with no specialist they are a
+    tax on level 1's ``(b/a)^2``.  The probe therefore runs only while the
+    level is still untouched (``EXPLORER_V8_EARLY_MAX_ACTIONS``, default 24
+    scored actions — wide enough to survive gate contention at t=0) and only
+    while the LLM has completed NO level (past that, a crack could not be
+    banked from level 1 anyway, so the upside is gone while the tax remains).
+
+    Returns a short outcome string, also recorded in ``diag['v8_early']``."""
+    if not early_enabled():
+        return "disabled"
+    xs = v7._session_state(session)
+    if xs.get("v8_early_done") or xs.get("grinding"):
+        return xs.get("v8_early_done") or "grinding"
+    game = getattr(session, "game", None)
+    run = getattr(game, "game_run", None)
+    if game is None or run is None or getattr(run, "state", None) != "playing":
+        return "not_playing"
+    game_id = getattr(run, "game_id", "?")
+    raw_env = getattr(game, "env", None)
+    if raw_env is None:
+        return _early_done(xs, "no_engine")
+
+    # engine actions only ever from the session's own worker thread (v7 rule;
+    # the probe may run before the first executed action, which is where v7's
+    # own marker gets set, so claim it here when it is still unset)
+    if xs["worker_thread"] is None:
+        xs["worker_thread"] = _threading.get_ident()
+    elif xs["worker_thread"] != _threading.get_ident():
+        return "other_thread"
+
+    if session.stop_event.is_set():
+        return "cancelled"
+    try:
+        from inference.framework import solver
+
+        if solver._is_run_complete(game) or solver._is_engine_game_over(game):
+            return _early_done(xs, "game_over")
+        level = solver._level_number(game)
+    except Exception:  # noqa: BLE001 — dev/test harnesses without the bundle
+        level = 1
+
+    # --- self-harm window: untouched level, no LLM-completed level ---------
+    if xs["completed_levels"]:
+        return _early_done(xs, "levels_completed")
+    spent = int(getattr(session, "action_count", 0) or 0)
+    if spent > _env_int("EXPLORER_V8_EARLY_MAX_ACTIONS", 24):
+        return _early_done(xs, f"too_late({spent} actions)")
+
+    # --- the same run-level guards a stall-triggered grind must pass -------
+    try:
+        if session.runtime_limit_reached():
+            return "runtime_cap"
+        cap = session.solver.max_actions_per_game
+        if cap is not None and session.action_count >= int(cap):
+            return _early_done(xs, "action_cap")
+        soft = session.solver.soft_time_remaining_seconds()
+        if soft is not None and float(soft) < 120.0:
+            return _early_done(xs, "soft_time")
+    except Exception:  # noqa: BLE001 — a broken probe never blocks
+        pass
+    with v7._RUN_LOCK:
+        if v7._RUN_T0 is None:
+            v7._RUN_T0 = _time.monotonic()
+        run_elapsed = _time.monotonic() - v7._RUN_T0
+        spent_wall = v7._GRIND_WALL_SPENT[0]
+    if run_elapsed >= _env_int("EXPLORER_RUN_CUTOFF_S", 18000):
+        return _early_done(xs, "run_cutoff")
+    if spent_wall >= _env_int("EXPLORER_RUN_GRIND_BUDGET_S", 2700):
+        return _early_done(xs, "run_grind_budget")
+
+    try:
+        search_core, specialists = _import_core()
+    except Exception as exc:  # noqa: BLE001 — no SearchCore, no probe
+        return _early_done(xs, f"core_unavailable:{type(exc).__name__}")
+
+    if not _PROBE_GATE.acquire(blocking=False):
+        return "probe_gate_busy"      # retry on a later poll, inside the window
+    t0 = _time.monotonic()
+    genv = GuardedEnv(raw_env, session, xs, t0=t0, label="probe",
+                      **_early_probe_caps())
+    outcome = "probe_error"
+    engaged = False
+    retry = False
+    try:
+        prebuilt = _warm_and_detect(xs, genv, game_id, search_core, specialists)
+        specialist = prebuilt[3]
+        xs["diag"]["v8_early_probe_actions"] = genv.actions
+        xs["diag"]["v8_early_detect"] = specialist
+        print(f"[explorer-v8] {game_id}: EARLY probe -> specialist="
+              f"{specialist!r} in {genv.actions} engine actions "
+              f"({genv.wall():.1f}s, level {level}, {spent} LLM actions spent)",
+              flush=True)
+        if specialist is None:
+            outcome = "no_specialist"
+        elif not hasattr(specialists, "SOLVERS") or specialist not in specialists.SOLVERS:
+            outcome = f"no_solver_for({specialist})"
+        elif not _flag("EXPLORER_V8_EARLY_ENGAGE", "1"):
+            outcome = f"detected({specialist})_engage_off"
+        elif not v7._GRIND_GATE.acquire(blocking=False):
+            # another game is grinding; keep the detection but do NOT close
+            # the probe — retry the ENGAGEMENT on a later poll, while the
+            # session is still inside its action window
+            outcome = "engage_gate_busy"
+            retry = True
+        else:
+            engaged = True
+            try:
+                xs["grinds_per_level"][level] = xs["grinds_per_level"].get(level, 0) + 1
+                xs["diag"]["grinder_engagements"] += 1
+                xs["diag"]["v8_early_engagements"] = \
+                    xs["diag"].get("v8_early_engagements", 0) + 1
+                # widen the caps from probe-sized to engagement-sized; t0 stays
+                # at the probe's start, so the probe's wall counts against the
+                # engagement (conservative, never the other way round)
+                caps = _engagement_caps()
+                genv._action_cap = caps["action_cap"]
+                genv._time_cap_s = caps["time_cap_s"]
+                genv._owned_time_cap_s = caps["owned_time_cap_s"]
+                stop_reason = _engage(session, xs, level, genv, raw_env, game_id,
+                                      search_core, specialists, prebuilt=prebuilt)
+                outcome = f"engaged({specialist}):{stop_reason}"
+            finally:
+                v7._GRIND_GATE.release()
+    except _GrindAbort as abort:
+        outcome = f"abort:{abort.reason}"
+    except Exception as exc:  # noqa: BLE001 — fail-open, always
+        outcome = f"error:{type(exc).__name__}"
+        print(f"[explorer-v8] {game_id}: early probe error {exc!r}", flush=True)
+    finally:
+        if not engaged:
+            _PROBE_GATE.release()
+            try:    # leave the LLM at the current level's start (v7 contract)
+                import arcengine
+
+                raw_env.step(arcengine.GameAction.RESET, data={})
+            except Exception:  # noqa: BLE001
+                pass
+        with v7._RUN_LOCK:
+            v7._GRIND_WALL_SPENT[0] += _time.monotonic() - t0
+    print(f"[explorer-v8] {game_id}: EARLY probe done ({outcome}) after "
+          f"{genv.actions} engine actions / {genv.wall():.1f}s", flush=True)
+    if retry:
+        return outcome          # deliberately NOT closed: a later poll retries
+    return _early_done(xs, outcome)
+
+
+def _early_done(xs: dict[str, Any], outcome: str) -> str:
+    """Record the probe's verdict and close it for this game (one per game)."""
+    xs["v8_early_done"] = outcome
+    xs["diag"]["v8_early"] = outcome
+    return outcome
+
+
+def _maybe_grind_v8(session: Any) -> None:
+    """v7's poll, with the early specialist probe in front of it.
+
+    The probe is INDEPENDENT of the stall trigger; v7's trigger, self-harm
+    gate and bounded takeover then run exactly as before for GENERIC search."""
+    try:
+        early_specialist_probe(session)
+    except Exception:  # noqa: BLE001 — never break the poll
+        pass
+    v7._maybe_grind_v7(session)
+
+
+def _warm_and_detect(xs: dict[str, Any], genv: GuardedEnv, game_id: str,
+                     search_core: Any, specialists: Any) -> tuple:
+    """RESET -> archetype -> SearchCore -> warmup -> specialists.detect.
+
+    The shared head of BOTH entry points: a stall-triggered engagement
+    (``_run_search``) and the early probe (``early_specialist_probe``).
+    Returns ``(archetype, core, go, specialist, obs0)``; raises ``_GrindAbort``
+    if a guard trips. ``specialist`` is None when detection declines or is
+    off."""
     obs0 = genv.reset()
     if obs0 is None:
-        return "reset_failed"
+        return None, None, None, None, None
     archetype = search_core.archetype_frame0(list(obs0.available_actions or []))
 
     core = search_core.SearchCore(
@@ -563,6 +792,7 @@ def _run_search(session: Any, xs: dict[str, Any], genv: GuardedEnv, game_id: str
         print(f"[explorer-v8] {game_id}: warmup failed ({exc!r}) — raw mask",
               flush=True)
     warm_spent = genv.actions - a0
+    xs["diag"]["v8_warmup_actions"] = warm_spent
     if warm_spent > warm_cap:
         print(f"[explorer-v8] {game_id}: warmup overran ({warm_spent} > "
               f"{warm_cap} actions)", flush=True)
@@ -583,6 +813,26 @@ def _run_search(session: Any, xs: dict[str, Any], genv: GuardedEnv, game_id: str
         print(f"[explorer-v8] {game_id}: specialist={specialist} "
               f"({genv.actions - d0} probe actions)", flush=True)
     xs["diag"]["v8_specialist"] = specialist
+    return archetype, core, go, specialist, obs0
+
+
+def _run_search(session: Any, xs: dict[str, Any], genv: GuardedEnv, game_id: str,
+                search_core: Any, specialists: Any,
+                level_seqs: dict[int, list[tuple]],
+                narrate: Any, plan_text: Any, prebuilt: tuple | None = None) -> str:
+    """Warmup -> specialist detection -> per-level lane rotation. Returns the
+    stop reason; "game_won" means the engine reported WIN.
+
+    ``prebuilt`` hands over an already warmed-and-detected
+    ``(archetype, core, go, specialist, obs0)`` from the early probe, so a
+    probe that hits does NOT pay for a second warmup or a second detection."""
+    import arcengine
+
+    if prebuilt is None:
+        prebuilt = _warm_and_detect(xs, genv, game_id, search_core, specialists)
+    archetype, core, go, specialist, obs0 = prebuilt
+    if core is None or obs0 is None:
+        return "reset_failed"
 
     order = list(search_core.DISPATCH_ORDER[archetype])
     ranking = (["specialist"] + order) if specialist else order
@@ -698,13 +948,52 @@ def install() -> str:
         v7._grind_v7 = v7._grind        # keep the blind BFS as a fallback lane
     _grind_v8._v8 = True                # type: ignore[attr-defined]
     v7._grind = _grind_v8
-    return note + " | v8: OK (SearchCore portfolio grind)"
+    early = _install_early(note)
+    return note + " | v8: OK (SearchCore portfolio grind)" + early
+
+
+def _install_early(note: str) -> str:
+    """v8.1 seams: the stall-independent probe in front of v7's poll, and the
+    finish-the-game-after-a-crack hook. Both are additive and flag-gated."""
+    if not _flag("EXPLORER_V8_EARLY", "1"):
+        return " | early: OFF"
+    if not hasattr(v7, "_maybe_grind_v7"):
+        v7._maybe_grind_v7 = v7._maybe_grind
+    if not getattr(v7._maybe_grind, "_v8_early", False):
+        _maybe_grind_v8._v8_early = True    # type: ignore[attr-defined]
+        v7._maybe_grind = _maybe_grind_v8
+    out = " | early: OK (stall-independent specialist probe)"
+    try:
+        from inference.framework import solver
+
+        cls = solver._HarnessGameSession
+        inner = cls.should_stop
+        if not getattr(inner, "_v8_stop_patched", False):
+            def should_stop(self: Any) -> bool:
+                try:
+                    xs = getattr(self, "_xpl_state", None)
+                    if (xs is not None and xs.get("v8_stop_game")
+                            and _flag("EXPLORER_V8_STOP_AFTER_CRACK", "1")):
+                        return True     # cracked+banked: free the worker
+                except Exception:  # noqa: BLE001
+                    pass
+                return inner(self)
+
+            should_stop._v8_stop_patched = True   # type: ignore[attr-defined]
+            should_stop._xpl_patched = True       # keep v7's idempotence marker
+            cls.should_stop = should_stop
+            out += " + stop-after-crack"
+    except Exception as exc:  # noqa: BLE001 — optional seam, never fatal
+        out += f" (stop-after-crack unavailable: {type(exc).__name__})"
+    return out
 
 
 def uninstall() -> None:
-    """Restore v7's grind (tests; never called in the scored lane)."""
+    """Restore v7's grind + poll (tests; never called in the scored lane)."""
     if hasattr(v7, "_grind_v7"):
         v7._grind = v7._grind_v7
+    if hasattr(v7, "_maybe_grind_v7"):
+        v7._maybe_grind = v7._maybe_grind_v7
 
 
 def explorer_diagnostics(session: Any) -> dict[str, Any]:

@@ -1,0 +1,262 @@
+{
+ "arm": "v8-smoke",
+ "install_verdict": "explorer: OK | v8: OK (SearchCore portfolio grind)",
+ "flags": {
+  "EXPLORER": "1",
+  "EXPLORER_V8": "1",
+  "EXPLORER_V8_CORE_DIR": "/kaggle/working/v8_bundle"
+ },
+ "phases": [
+  [
+   "A-ft09",
+   [
+    "ft09-0d8bbf25"
+   ],
+   3600
+  ],
+  [
+   "B-panel",
+   [
+    "dc22-fdcac232",
+    "vc33-5430563c",
+    "sk48-d8078629"
+   ],
+   3600
+  ]
+ ],
+ "phase_errors": [
+  "B-panel: ValueError: duplicate game_ids in benchmark.games are not allowed"
+ ],
+ "games": [
+  {
+   "game_id": "ft09-0d8bbf25",
+   "stem": "ft09",
+   "state": "gave_up",
+   "levels_completed": 2,
+   "number_of_levels": 6,
+   "final_score": 14.285714285714285,
+   "llm_actions": 17,
+   "wallclock_s": 3600.0196123929995,
+   "base_actions_per_level": [
+    43,
+    12,
+    23,
+    28,
+    65,
+    37
+   ],
+   "comparator": {
+    "levels": 1,
+    "score": null,
+    "note": "v12 lanes: 0-1 levels, no specialist tier"
+   }
+  },
+  {
+   "game_id": "dc22-fdcac232",
+   "stem": "dc22",
+   "state": "crashed",
+   "levels_completed": 0,
+   "number_of_levels": 6,
+   "final_score": 0.0,
+   "llm_actions": 0,
+   "wallclock_s": 0.039257969999198394,
+   "base_actions_per_level": [
+    59,
+    102,
+    67,
+    98,
+    324,
+    578
+   ],
+   "comparator": {
+    "levels": 1,
+    "score": null,
+    "note": "same-rig 8v8 A/B: v12 2/8 nonzero => L0-L1"
+   }
+  },
+  {
+   "game_id": "vc33-5430563c",
+   "stem": "vc33",
+   "state": "crashed",
+   "levels_completed": 0,
+   "number_of_levels": 7,
+   "final_score": 0.0,
+   "llm_actions": 0,
+   "wallclock_s": 0.013991029999488092,
+   "base_actions_per_level": [
+    7,
+    18,
+    44,
+    61,
+    131,
+    34,
+    152
+   ],
+   "comparator": {
+    "levels": 2,
+    "score": 10.71,
+    "note": "v12 comparator (task); effort-smoke 08-23 L2/4.73"
+   }
+  },
+  {
+   "game_id": "sk48-d8078629",
+   "stem": "sk48",
+   "state": "crashed",
+   "levels_completed": 0,
+   "number_of_levels": 8,
+   "final_score": 0.0,
+   "llm_actions": 0,
+   "wallclock_s": 0.00019364999934623484,
+   "base_actions_per_level": [
+    61,
+    177,
+    101,
+    103,
+    230,
+    181,
+    125,
+    92
+   ],
+   "comparator": {
+    "levels": 0,
+    "score": 0.0,
+    "note": "0 levels in the effort + carryover smokes"
+   }
+  }
+ ],
+ "telemetry": {
+  "caps": {
+   "engagement_wall_generic_s": 600,
+   "engagement_wall_owned_s": 1500,
+   "engagement_actions": 292500,
+   "run_grind_budget_s": 2700,
+   "run_start_cutoff_s": 18000,
+   "run_hard_cutoff_s": 19500,
+   "bank_max_actions": 2000,
+   "grinds_per_level": 1
+  },
+  "observed": {
+   "max_engagement_wall_generic_s": 0.0,
+   "max_engagement_wall_owned_s": 0.0,
+   "max_engagement_actions": 0,
+   "max_cumulative_grind_s": 0.0,
+   "max_run_elapsed_at_grind_s": 0.0,
+   "max_bank_replay_actions": 0,
+   "abort_reasons": {},
+   "engagements": 0,
+   "engine_actions_total": 0
+  },
+  "games": {},
+  "events": []
+ },
+ "envelope": [
+  {
+   "guard": "per-engagement wall, generic",
+   "observed": 0.0,
+   "cap": 600,
+   "unit": "s",
+   "within": true
+  },
+  {
+   "guard": "per-engagement wall, grind-owned",
+   "observed": 0.0,
+   "cap": 1500,
+   "unit": "s",
+   "within": true
+  },
+  {
+   "guard": "per-engagement engine actions",
+   "observed": 0,
+   "cap": 292500,
+   "unit": "acts",
+   "within": true
+  },
+  {
+   "guard": "cumulative grind wall, whole run",
+   "observed": 0.0,
+   "cap": 2700,
+   "unit": "s",
+   "within": true
+  },
+  {
+   "guard": "absolute grind ceiling (run clock)",
+   "observed": 0.0,
+   "cap": 19500,
+   "unit": "s",
+   "within": true
+  },
+  {
+   "guard": "bank replay actions",
+   "observed": 0,
+   "cap": 2000,
+   "unit": "acts",
+   "within": true
+  }
+ ],
+ "bars": [
+  {
+   "bar": "1. specialist fires on ft09",
+   "pass": false,
+   "detail": "no ft09 engagement"
+  },
+  {
+   "bar": "2. ft09 completes >= 3 levels",
+   "pass": false,
+   "detail": "grinder_levels=0 harness_levels=2"
+  },
+  {
+   "bar": "3. no envelope guard exceeded",
+   "pass": true,
+   "detail": "all observed maxima <= caps"
+  },
+  {
+   "bar": "4. no crash",
+   "pass": false,
+   "detail": "crashed=['dc22-fdcac232', 'vc33-5430563c', 'sk48-d8078629'] phase_errors=['B-panel: ValueError: duplicate game_ids in benchmark.games are not allowed']"
+  },
+  {
+   "bar": "5. no regression > 1 level on vc33/dc22",
+   "pass": false,
+   "detail": "vc33: 0 < 2-1"
+  }
+ ],
+ "verdict": "FAIL",
+ "comparators": {
+  "ft09": {
+   "levels": 1,
+   "score": null,
+   "note": "v12 lanes: 0-1 levels, no specialist tier"
+  },
+  "vc33": {
+   "levels": 2,
+   "score": 10.71,
+   "note": "v12 comparator (task); effort-smoke 08-23 L2/4.73"
+  },
+  "dc22": {
+   "levels": 1,
+   "score": null,
+   "note": "same-rig 8v8 A/B: v12 2/8 nonzero => L0-L1"
+  },
+  "sk48": {
+   "levels": 0,
+   "score": 0.0,
+   "note": "0 levels in the effort + carryover smokes"
+  }
+ },
+ "offline_reference": {
+  "ft09": {
+   "levels": 6,
+   "crack": true,
+   "lane": "spec:ft09_gf2",
+   "engine_actions": 1233,
+   "bank_actions": 75
+  },
+  "tu93": {
+   "levels": 9,
+   "crack": true,
+   "lane": "nbfs_macros",
+   "engine_actions": 84687,
+   "bank_actions": 187
+  }
+ }
+}
