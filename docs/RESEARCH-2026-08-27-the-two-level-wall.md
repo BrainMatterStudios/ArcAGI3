@@ -469,6 +469,113 @@ because a banked crack is worth a flat +1.82 per hidden game: 0 cracks ≈ 1.4
 (base band, floor measured at 0.00), 1 ≈ 3.2, 2 ≈ 5.0, 3 ≈ 6.8. It is the only
 thing on the pad with a 5-tail, and it is already smoke-verified 5/5.
 
+## 11. THE CRACK LANE — what a live-affordable crack actually costs
+
+Following §9d's conclusion that the banking lane is the surviving route, this
+section prices it. All of it runs offline on the engine; no GPU, no slots.
+
+### 11a. The live cost model is forced (checked, closed)
+
+Offline, `Arcade(OFFLINE)` returns a `LocalEnvironmentWrapper` — an in-process
+object. `copy.deepcopy(env)` costs 0.8 ms, the copy runs at ~57,000 steps/s,
+and stepping it does **not** touch the real scorecard (verified with a working
+positive control: 3 real steps move the card, 500 copy steps do not; the copy's
+`scorecard_manager` is a distinct object). So offline search is effectively free.
+
+That does **not** transfer. `Arcade.make` branches on operation mode
+(`arc_agi/base.py`): OFFLINE → `_find_local_game`, COMPETITION →
+`_create_remote_wrapper`, and a COMPETITION Arcade holds a
+`requests.Session()` against `arc_base_url`. **Live, the game state lives
+server-side**, so there is nothing to copy and every step is billed. The
+campaign's reset-replay cost model is correct and the "search on a copy" idea
+is closed.
+
+### 11b. Replay overhead is 11–17×, and it is inherent
+
+Measured on tu93, reset-replay, per level:
+
+| level | nodes | actions | resets | actions/node |
+|---|---|---|---|---|
+| 1 | 246 | 2,807 | 247 | 11.4 |
+| 5 | 395 | 5,759 | 396 | 14.6 |
+| 6 (unsolved) | 2,610 | 44,834 | 2,612 | 17.2 |
+
+**One reset per node.** ~94% of every action is replay, not new information.
+Two attempts to shave it both came back null:
+
+1. `ResetReplayBackend.children()` ignored its `consume` parameter and
+   re-walked the prefix for every token. Added a path cache so a walk already
+   standing on the requested state costs nothing. Result: **identical search
+   results, 9 actions saved out of 58,522 (0.015%)** — the frontier order means
+   the env is essentially never where the next request wants it.
+2. A per-level depth bound (see 11c). **0 nodes pruned.**
+
+The overhead is structural: star-expansion on a single env with no undo costs
+`k × (1 + d)` per parent, and there is no local trick around it. Getting past it
+needs a different search shape (deep chains rather than stars), or not searching
+at all.
+
+### 11c. NEW: 10 of 25 games enforce a per-level move budget
+
+`submission/_search_core/step_budgets.py`. The games carry a `StepCounter` in
+their level data and the engine renders it as the edge bar the system prompt
+warns the model not to click on. It is enforced — `wa30.py:1252`,
+`tu93.py:1270`: `if not current_steps: self.lose()`, checked *after* the win
+test, so a solve landing on the last move still counts.
+
+Games with budgets: ar25, dc22, ka59, lp85, ls20, re86, s5i5, tu93, vc33, wa30
+(plus cn04 `MaxSteps`, sp80/su15 `steps`).
+
+**The important consequence is about baselines, not search.** On **30 levels**
+the published human baseline EXCEEDS that level's own move budget (wa30 L9:
+baseline 415, budget 70; tu93 L5: 123 vs 50). A single attempt cannot exceed the
+budget, so **the published baselines count multiple attempts.** Two things follow:
+
+- A clean single-attempt solve on a budget level always saturates the
+  efficiency cap, since `baseline/actions ≥ baseline/B > 1`. Independent
+  confirmation of §5b.
+- The wa30 specialist's open note is resolved: it reported "L3's optimal plan
+  (169 acts) exceeds the level's step budget (~100)". A within-budget solution
+  must exist, so 169 is **our planner being ~1.7× worse than the level allows**,
+  not the level being unsolvable. That is a concrete solver target.
+
+The bound was also wired into the search as `SearchCore(max_depth=...)`
+(firewalled: `None` = byte-identical, verified deterministic). It is
+**measured null** — 0 nodes pruned on tu93 and ar25 — because the frontier is
+breadth-first and times out at depth 10–29 against budgets of 20–64, never
+reaching the bound. Kept, off by default, for the knowledge rather than the
+speed.
+
+### 11d. Census: the generic search cannot produce a live-affordable crack
+
+25 games, reset-replay (the live cost model), 900 s/game, portfolio algorithm:
+
+- **cracks: 1** — ft09, and only via its specialist, at **1,231 actions**.
+- every other game: **0.4M–3.5M actions** for 0–3 levels and no crack.
+
+A full 1,500 s live engagement allows roughly **195,000 live actions**
+(~73,000 offline-equivalent at the measured ×2.66 guard tax). The generic
+search is **2–18× over that** without cracking anything, and v8's flight config
+caps a specialist at 4,000 actions.
+
+> **A live-affordable crack has to be COMPUTED, not searched.** ft09_gf2 costs
+> 1,231 actions because it reads the board, solves a linear system, and plays
+> the answer. tu93 is cracked only by generic search at 84,685 actions and is
+> therefore not flightworthy at any cap we can afford.
+
+So "grow the crack inventory" means **write more solvers**, not tune the search.
+The existing inventory and its blockers:
+
+| specialist | reaches | blocker |
+|---|---|---|
+| `ft09_gf2` | **6/6 — cracks** | none; 1,231 actions |
+| `sc25_glyph` | 1–2 of 6 | fails at L2 (`spec_failed`) |
+| `tn36_program` | 2 of 7 | enumeration does not reach L3 configs |
+| `wa30_grabdrag` | 2 of 9 | planner emits 169 moves for a 100-move level |
+
+Each converted class adds ~`p × 85.7` with a floor of zero, where `p` is that
+class's frequency in the hidden half.
+
 ## 10. Open questions this pass did not close
 
 - **The 1.8× dev→live discount** is now measured twice but still unexplained.

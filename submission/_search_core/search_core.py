@@ -502,28 +502,45 @@ class ResetReplayBackend:
         self.env = env
         self.actions_spent = 0   # every engine call: resets AND steps
         self.resets = 0
+        # Where the one real env currently sits, and what it last observed.
+        # MEASURED 2026-08-27: without this the backend spent one reset per
+        # NODE (tu93: 3,739 resets for 3,727 nodes) and ~94% of every action
+        # was replay, because `children()` re-walked the whole prefix for each
+        # token even when the env was already standing on it. Replay is
+        # deterministic, so a path already walked never has to be walked again.
+        self._cur_path: list[tuple] | None = None
+        self._cur_obs = None
 
     def _reset(self):
         obs = self.env.reset()
         self.resets += 1
         self.actions_spent += 1
+        self._cur_path, self._cur_obs = [], obs
         return obs
 
     def _replay(self, path: list[tuple]):
         from arcengine import GameState
 
+        # Already standing exactly here — the reset and the whole walk are
+        # both pure overhead. Same resulting state, no engine calls.
+        if self._cur_path is not None and self._cur_path == list(path):
+            return self._cur_obs
         obs = self._reset()
         if obs is None:
             return None
-        for tok in path:
+        for i, tok in enumerate(path):
             obs = _apply(self.env, tok)
             self.actions_spent += 1
+            self._cur_path, self._cur_obs = list(path[:i + 1]), obs
             if obs is None or obs.state == GameState.GAME_OVER:
+                self._cur_path = None   # position no longer trustworthy
                 return None
         return obs
 
     def root(self) -> Handle:
-        obs = self._reset()
+        # _replay([]) resets only when the env is not already standing at the
+        # level start (it is, right after adopt()).
+        obs = self._replay([])
         return Handle(obs, 0, [])
 
     def children(self, handle: Handle, tokens: list[tuple], consume: bool = False):
@@ -534,7 +551,10 @@ class ResetReplayBackend:
                 continue
             obs = _apply(self.env, tok)
             self.actions_spent += 1
+            self._cur_path = handle.path + [tok]
+            self._cur_obs = obs
             if obs is None:
+                self._cur_path = None
                 yield tok, None
                 continue
             yield tok, Handle(obs, handle.depth + 1, handle.path + [tok])
@@ -573,7 +593,10 @@ class ResetReplayBackend:
         # children() leaves the real env AT the yielded child's state; the
         # winning child is always the last executed, so the env is already
         # there. Future paths are relative to the new level's start.
-        pass
+        # The env therefore stands at the empty path of the NEW level, which
+        # is exactly what the next root() asks for — record that so the path
+        # cache does not pay a reset to reach where it already is.
+        self._cur_path, self._cur_obs = [], handle.obs
 
 
 # --------------------------------------------------------------------------
@@ -590,7 +613,18 @@ class SearchCore:
                  warmup_rounds: int = 6, warmup_clicks: int = 3,
                  warmup_min_transitions: int = 40,
                  max_states: int = 20000, dead_click_k: int = 3,
-                 use_macros: bool = False):
+                 use_macros: bool = False, max_depth: int | None = None):
+        # max_depth: hard search-depth bound for the CURRENT level. 10 of the
+        # 25 public games enforce a per-level move budget B
+        # (`StepCounter` -> wa30.py:1252 `elif not current_steps: self.lose()`,
+        # checked AFTER the win test, so a solve landing on the last move still
+        # counts). Past B the level is GAME_OVER, so no node deeper than B can
+        # ever be part of a scored solution. Under reset-replay those doomed
+        # branches are the most expensive in the tree — reaching depth d costs
+        # 1 reset + d replay actions — so the bound is a direct cost lever, not
+        # just a node-count one. None = unbounded = byte-identical to the
+        # pre-2026-08-27 core. See step_budgets.py.
+        self.max_depth = max_depth
         self.backend = SnapshotBackend(env) if backend == "snapshot" \
             else ResetReplayBackend(env)
         self.mask = VolatilityMask()
@@ -828,6 +862,14 @@ class SearchCore:
             else:
                 handle, pgm = slow.popleft()
                 self.stats["deferred_expanded"] += 1
+            # Level move budget: a child of this node sits at depth+1, and any
+            # node past the budget is already GAME_OVER, so expanding here can
+            # only buy doomed branches (and, on reset-replay, their full replay
+            # cost). Bound is inclusive: a solve landing ON the last move wins,
+            # because the engine tests the win before the budget.
+            if self.max_depth is not None and handle.depth >= self.max_depth:
+                self.stats["depth_pruned"] = self.stats.get("depth_pruned", 0) + 1
+                continue
             toks = self.actions_for(handle.obs, tier)
             if not had_clicks and any(t[0] == "C" for t in toks):
                 had_clicks = True
@@ -868,6 +910,9 @@ class SearchCore:
                     for _ in range(self.MACRO_CAP - 1):
                         if time.time() - t0 > budget_s:
                             break
+                        if (self.max_depth is not None
+                                and cur.depth >= self.max_depth):
+                            break     # same budget bound as the main loop
                         (_, nxt), = self.backend.children(cur, [tok])
                         nodes += 1
                         if nxt is None or nxt.obs is None:
