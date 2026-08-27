@@ -685,14 +685,72 @@ problem than the one being planned.
    (disjoint matching, occupied targets excluded, handoff credit) did not
    change the outcome.
 
+3. **`wa30_macro.py`** — the hierarchical shape 12d called for: macros are
+   `DELIVER(block, pad)` (one A* drag leg replanned against the current board)
+   and `WAIT(k)`, composed by best-first search on (unplaced, moves), every
+   macro executed on a deepcopy of the real engine. Three real bugs were found
+   and fixed along the way, each worth recording:
+
+   - **avatar colour was being guessed.** Taking "the first colour that
+     perceives successfully" silently produced a garbage board. With the real
+     colour (14, from the specialist's own probe) the A* legs came back
+     **11–14 moves instead of the 33–62 the shipped greedy assignment pays.**
+   - **`WAIT` was `ACTION5` repeated — and ACTION5 is grab/release**, so
+     "waiting" beside a block picked it up and dragged it around. Replaced with
+     a probed inert action (one that provably moves nothing).
+   - **facing was hard-coded to 0** in the leg call, though the drag model can
+     only grab in the direction the avatar faces and facing changes with every
+     macro. Now all four are tried. (This turned out not to be the blocker.)
+
+   It reaches **2 of 5 placed at 29–33 moves** and then returns **zero legs**.
+
+### 12c-bis. Why it stalls: the wall model is wrong
+
+Dumping the board at the stalled state shows a **solid wall column at x=32
+running the full height, with every remaining block to its left and every pad
+to its right**:
+
+```
+|  B     #       |
+|     B  #       |     A avatar   B block
+|       A#    o. |     o filled pad   . free pad
+|        #    o. |     # wall
+|   B    #       |
+```
+
+The board is bisected, so no leg can exist. It is a **phantom**: the carrier
+demonstrably ferries blocks across that column. The cause is that
+`engine_percept` derives walls from the game's `kblzhbvysd` predicate, which is
+*not* avatar passability — it reports that whole column impassable. Legs existed
+at move 0 only because two blocks were sitting **on** the column and the code
+subtracts blocks from walls, punching temporary holes; once the carrier
+delivered those two the holes closed and the search died.
+
+So the macro architecture is not disproven — it never got a fair test. The
+blocker is now a small, well-localised modelling bug rather than a search-design
+question.
+
 ### 12d. Next step, precisely
 
-The architecture the evidence points to is **macro-level search**: avatar
-macro-actions are A* drag legs (which the shipped planner already computes
-well — level 1 in 26 moves), composed by a search that also has a "mark time"
-macro letting the agents work, with legs re-planned as the agents move blocks
-and free pads. That is hierarchical planning over a small macro set, not flat
-beam over primitives, and it is the shape that fits the measured mechanic.
+The macro architecture is built (`wa30_macro.py`) and needs exactly one fix:
+**a correct wall set.** `kblzhbvysd` is the wrong source. Two candidates, both
+cheap:
+
+1. Derive walls the way the shipped perceiver does — non-background cells that
+   are not the avatar, a block or a pad — which is known to work at level start
+   (it produces the 79-wall model that found 16 legs) and only needs to survive
+   mid-level states.
+2. Or probe passability empirically: the snapshot backend makes a move test
+   free, so the avatar's true obstacle set can be measured rather than inferred.
+
+Option 2 is the more robust one and fits the design law from §11e: the model
+should come from measurement, not from a guess at an obfuscated predicate.
+
+Encouraging sign from the run: with the correct avatar colour the A* legs are
+**11–14 moves**, against the 33–62 the shipped greedy assignment pays. Three
+such legs plus the carrier's two free deliveries is well inside 100 — which is
+the first evidence that the budget is comfortably reachable once the model is
+right.
 
 Falsifier unchanged and still zero-slot: a ≤100-move plan for wa30 level 3,
 verified on the engine.

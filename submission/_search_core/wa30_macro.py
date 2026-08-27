@@ -1,0 +1,325 @@
+"""wa30_macro — hierarchical planner for grab-drag levels with autonomous agents.
+
+WHY THIS SHAPE (docs/RESEARCH-2026-08-27 §12)
+
+Two planners already failed on wa30 level 3 and each failed informatively:
+
+  solve_wa30 (shipped)  A* legs, avatar delivers EVERY block   -> 169 moves / 100
+  wa30_beam             joint order+assignment over those legs -> 185 moves
+  wa30_coop             flat beam over primitive actions with
+                        the engine as the model                -> stalls at 2/5
+
+The first two solve the wrong problem: the level's carriers deliver blocks for
+free (2 of 5 on level 3, 4 of 5 on level 2), so the avatar's job is the
+REMAINDER. The third models the carriers exactly but searches primitives, and a
+flat beam cannot find a coherent 30-move drag across a 100-move horizon.
+
+So: keep the exact model, raise the action granularity.
+
+MACROS
+  DELIVER(block, pad)   one A* drag leg, replanned against the CURRENT board
+                        (the shipped `_astar_leg` already does this well —
+                        level 1 falls in 26 moves)
+  WAIT(k)               k mark-time actions; the carriers keep working, which
+                        is the only way to spend the free labour
+
+Each macro is executed on a deepcopy of the real engine, so carrier behaviour
+during the macro is exact — including a carrier stealing the block we were
+dragging, which the search simply sees as the resulting state.
+
+Search is best-first on (blocks unplaced, moves spent), bounded by the level's
+own StepCounter budget.
+
+Usage:  ONLY_RESET_LEVELS=true python wa30_macro.py [level] [beam] [time_s]
+"""
+from __future__ import annotations
+
+import copy
+import heapq
+import logging
+import os
+import sys
+import time
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+import specialists as sp  # noqa: E402
+
+WAITS = (4, 10, 20)
+
+
+def _action(a: int):
+    from arcengine import GameAction
+    return GameAction[f"ACTION{a}"]
+
+
+def game_of(env):
+    return env._game                      # noqa: SLF001
+
+
+def targets_of(g) -> list[tuple[int, int]]:
+    cached = getattr(g, "_macro_targets", None)
+    if cached is None:
+        cached = [(x, y) for x in range(0, 64, 4) for y in range(0, 64, 4)
+                  if g.shbxbhnhjc((x, y))]
+        g._macro_targets = cached         # noqa: SLF001
+    return cached
+
+
+def status(g):
+    """-> (unplaced_positions, occupied_target_positions)."""
+    bl = g.current_level.get_sprites_by_tag("geezpjgiyd")
+    unplaced, occupied = [], set()
+    for b in bl:
+        if g.shbxbhnhjc((b.x, b.y)) and b not in g.zmqreragji:
+            occupied.add((b.x, b.y))
+        else:
+            unplaced.append((b.x, b.y))
+    return unplaced, occupied
+
+
+def run_actions(env, acts, lc0):
+    """Execute action ids on `env`. -> ('win'|'dead'|'ok', moves_done)."""
+    done = 0
+    for a in acts:
+        o = env.step(_action(a))
+        done += 1
+        if o is None:
+            return "dead", done
+        if o.levels_completed > lc0:
+            return "win", done
+        if str(o.state).endswith("GAME_OVER"):
+            return "dead", done
+    return "ok", done
+
+
+def engine_percept(g):
+    """Board model read from the ENGINE, not the frame.
+
+    `sp._wa30_perceive` is frame-based and returns None on mid-level states
+    (measured: 0 legs after the first macro) — the avatar merges with a held
+    block, and pads stop reading as pads once covered. That is a perception
+    problem, and it is not the one this planner is testing, so the planner
+    takes the board from the engine and leaves perception to be solved
+    separately once a within-budget plan is known to exist.
+
+    Walls come from the game's OWN passability predicate `kblzhbvysd`, the same
+    one the carriers' BFS uses, so the obstacle set cannot disagree with the
+    engine.
+    """
+    av = g.current_level.get_sprites_by_tag("wbmdvjhthc")
+    if not av:
+        return None
+    avatar = (av[0].x, av[0].y)
+    unplaced, occupied = status(g)
+    blocks = [tuple(b) for b in unplaced]
+    free_pads = [p for p in targets_of(g) if p not in occupied]
+    walls = set()
+    for x in range(0, 64, 4):
+        for y in range(0, 64, 4):
+            try:
+                if not g.kblzhbvysd((x, y)):
+                    walls.add((x, y))
+            except Exception:  # noqa: BLE001
+                walls.add((x, y))
+    walls -= {avatar} | set(blocks) | set(free_pads)
+    for i in range(0, 64, 4):
+        walls |= {(-4, i), (64, i), (i, -4), (i, 64)}
+    return avatar, blocks, free_pads, walls, occupied
+
+
+def idle_action(env, lc0):
+    """An action that spends a move without disturbing the board.
+
+    Waiting is the whole point of the mechanic — the carriers only advance when
+    the player acts — but ACTION5 is grab/release, so 'waiting' beside a block
+    picks it up and drags it around. This probes the five actions on a copy and
+    returns one that leaves the avatar and every block where they were,
+    preferring a blocked move (a wall bump is a true no-op).
+    """
+    g = game_of(env)
+    av = g.current_level.get_sprites_by_tag("wbmdvjhthc")
+    if not av:
+        return None
+    before = ((av[0].x, av[0].y),
+              tuple(sorted((b.x, b.y) for b in g.current_level.get_sprites_by_tag("geezpjgiyd"))))
+    for a in (1, 2, 3, 4, 5):
+        probe = copy.deepcopy(env)
+        o = probe.step(_action(a))
+        if o is None or o.levels_completed > lc0 or str(o.state).endswith("GAME_OVER"):
+            continue
+        gg = game_of(probe)
+        av2 = gg.current_level.get_sprites_by_tag("wbmdvjhthc")
+        if not av2:
+            continue
+        after = ((av2[0].x, av2[0].y),
+                 tuple(sorted((b.x, b.y) for b in gg.current_level.get_sprites_by_tag("geezpjgiyd"))))
+        if after == before and not gg.zmqreragji:
+            return a
+    return None
+
+
+def deliver_legs(env, av_color, deadline):
+    """-> [(label, action_ids)] one A* drag leg per (unplaced block, free pad)."""
+    g = game_of(env)
+    per = engine_percept(g)
+    if per is None:
+        return []
+    avatar, blocks, free_pads, walls, occupied = per
+    out = []
+    for b in blocks:
+        others = set(x for x in blocks if x != b)
+        model = sp._DragModel(walls | others | occupied)   # noqa: SLF001
+        for pad in free_pads:
+            if time.time() > deadline:
+                return out
+            # FACING MATTERS. The drag model can only grab in the direction the
+            # avatar is facing, and facing changes with every macro. Hard-coding
+            # 0 made A* fail on every (block, pad) pair from move 33 onward --
+            # 0 legs, which looked like a dead end and was really a bad start
+            # state. The true facing is not in the sprite data we read, so try
+            # all four and keep the cheapest leg that exists.
+            best = None
+            for facing in (0, 90, 180, 270):
+                path = sp._astar_leg(                       # noqa: SLF001
+                    model, (avatar[0], avatar[1], b[0], b[1], facing, False), pad)
+                if path and (best is None or len(path) < len(best)):
+                    best = path
+            if best:
+                out.append((f"deliver{b}->{pad}", best))
+    return out
+
+
+def plan(env0, budget: int, beam: int = 8, time_s: float = 600.0, verbose=True,
+         av_color: int | None = None):
+    """Best-first over macro sequences. -> (plan_actions, moves) or (None, None)."""
+    t0 = time.time()
+    deadline = t0 + time_s
+    g0 = game_of(env0)
+    frame = env0.observation_space
+    lc0 = frame.levels_completed
+    # The avatar colour must be the REAL one. Taking "the first colour that
+    # perceives successfully" silently produces a garbage board model, so it
+    # is passed in from the specialist's own probe (core._wa30_avcolor).
+    if av_color is None:
+        return None, None
+    grid = sp.settled(frame)
+
+    unplaced0, _ = status(g0)
+    start = (len(unplaced0), 0, 0, [], env0)
+    heap = [start]
+    seen_best = len(unplaced0)
+    expansions = 0
+    while heap and time.time() < deadline:
+        heap.sort(key=lambda s: (s[0], s[1]))
+        node = heap.pop(0)
+        nun, moves, _tb, acts, env = node
+        expansions += 1
+        if nun < seen_best:
+            seen_best = nun
+            if verbose:
+                print(f"   {moves:>3} moves: {nun} unplaced  "
+                      f"({expansions} macro expansions, {time.time()-t0:.0f}s)")
+        legs = deliver_legs(env, av_color, deadline)
+        cands = list(legs)
+        idle = idle_action(env, lc0)
+        if idle is not None:
+            for k in WAITS:
+                cands.append((f"wait{k}", [idle] * k))
+        if verbose and expansions <= 4:
+            per = engine_percept(game_of(env))
+            if per is None:
+                print(f"      [expand {expansions}] PERCEPT=None moves={moves}")
+            else:
+                av_, bl_, fp_, wl_, oc_ = per
+                print(f"      [expand {expansions}] {len(legs)} legs "
+                      f"(lens {sorted(len(p) for _l, p in legs)[:6]}) moves={moves} "
+                      f"| avatar {av_} blocks {bl_} freepads {len(fp_)} walls {len(wl_)} occupied {len(oc_)}")
+                if not legs:
+                    for yy in range(0, 64, 4):
+                        row = ""
+                        for xx in range(0, 64, 4):
+                            c = (xx, yy)
+                            row += ("A" if c == av_ else "B" if c in bl_ else
+                                    "o" if c in oc_ else "." if c in fp_ else
+                                    "#" if c in wl_ else " ")
+                        print("        |" + row + "|")
+        for label, path in cands:
+            if moves + len(path) > budget:
+                continue
+            child = copy.deepcopy(env)
+            verdict, done = run_actions(child, path, lc0)
+            if verdict == "win":
+                return acts + path[:done], moves + done
+            if verdict == "dead":
+                continue
+            un, _ = status(game_of(child))
+            heap.append((len(un), moves + done, expansions, acts + path[:done], child))
+        heap = sorted(heap, key=lambda s: (s[0], s[1]))[:beam]
+    return None, None
+
+
+def main() -> int:
+    logging.disable(logging.INFO)
+    level = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+    beam = int(sys.argv[2]) if len(sys.argv) > 2 else 8
+    time_s = float(sys.argv[3]) if len(sys.argv) > 3 else 600.0
+    if os.environ.get("ONLY_RESET_LEVELS") != "true":
+        print("ERROR: run with ONLY_RESET_LEVELS=true")
+        return 2
+
+    import search_core as sc
+    from arc_agi import Arcade, OperationMode
+    from step_budgets import budgets_for
+
+    root_dir = os.path.dirname(os.path.dirname(_HERE))
+    arc = Arcade(operation_mode=OperationMode.OFFLINE,
+                 environments_dir=os.path.join(root_dir, "environment_files"))
+    probe = arc.make("wa30")
+    probe.reset()
+    buds = budgets_for(game_of(probe))
+
+    env = arc.make("wa30")
+    env.reset()
+    core = sc.SearchCore(env, backend="snapshot", max_states=20000)
+    core.warmup_and_freeze()
+    for lvl in range(1, level):
+        r = sp.solve_level(core, "wa30_grabdrag", lvl, 120.0)
+        if not r.get("solved"):
+            print(f"stalled reaching level {level} at L{lvl}")
+            return 1
+        core.backend.adopt(r["handle"])
+    live = core.backend.env
+    budget = buds[level - 1]
+    un, _ = status(game_of(live))
+    carr = len(game_of(live).current_level.get_sprites_by_tag("kdweefinfi"))
+    print(f"wa30 L{level}: {len(un)} unplaced blocks, {carr} carriers, "
+          f"budget {budget}, beam {beam}\n")
+
+    av = getattr(core, "_wa30_avcolor", None)
+    print(f"avatar colour from the specialist probe: {av}")
+    p, moves = plan(live, budget, beam=beam, time_s=time_s, av_color=av)
+    if p is None:
+        print(f"\nno plan inside {budget} moves")
+        return 1
+    print(f"\nPLAN: {moves} moves (budget {budget})")
+
+    # clean-room verification
+    env2 = arc.make("wa30")
+    env2.reset()
+    c2 = sc.SearchCore(env2, backend="snapshot", max_states=20000)
+    c2.warmup_and_freeze()
+    for lvl in range(1, level):
+        c2.backend.adopt(sp.solve_level(c2, "wa30_grabdrag", lvl, 120.0)["handle"])
+    v = c2.backend.env
+    lc = v.observation_space.levels_completed
+    verdict, done = run_actions(v, p, lc)
+    print(f"ENGINE VERIFY (clean replay): {verdict} after {done} moves -> "
+          f"level {level} {'SOLVED' if verdict == 'win' else 'NOT solved'}")
+    return 0 if verdict == "win" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
