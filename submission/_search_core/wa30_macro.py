@@ -95,7 +95,7 @@ def run_actions(env, acts, lc0):
     return "ok", done
 
 
-def engine_percept(g):
+def engine_percept(g, frame=None):
     """Board model read from the ENGINE, not the frame.
 
     `sp._wa30_perceive` is frame-based and returns None on mid-level states
@@ -116,15 +116,29 @@ def engine_percept(g):
     unplaced, occupied = status(g)
     blocks = [tuple(b) for b in unplaced]
     free_pads = [p for p in targets_of(g) if p not in occupied]
+    # WALLS COME FROM THE FRAME, not from `kblzhbvysd`.
+    # kblzhbvysd reported a solid column at x=32 spanning the whole board, with
+    # every block on one side and every pad on the other — a phantom the
+    # carrier demonstrably walks through. It is not avatar passability.
+    # The frame rule (a cell holding anything that is not background, and not
+    # the avatar / a block / a pad) is the one the shipped perceiver uses and it
+    # is right at level start. Geometry from the frame, semantics from the
+    # engine.
+    from graft_explorer import _background_color                    # noqa: PLC0415
+    if frame is None:
+        return None
+    grid = sp.settled(frame)
+    rows = grid.tolist()
+    bg = _background_color(rows)
+    known = {avatar} | set(blocks) | set(free_pads) | set(occupied)
     walls = set()
-    for x in range(0, 64, 4):
-        for y in range(0, 64, 4):
-            try:
-                if not g.kblzhbvysd((x, y)):
-                    walls.add((x, y))
-            except Exception:  # noqa: BLE001
-                walls.add((x, y))
-    walls -= {avatar} | set(blocks) | set(free_pads)
+    for yy in range(0, 64, 4):
+        for xx in range(0, 64, 4):
+            if (xx, yy) in known:
+                continue
+            cell = grid[yy:yy + 4, xx:xx + 4]
+            if cell.size and (cell != bg).any():
+                walls.add((xx, yy))
     for i in range(0, 64, 4):
         walls |= {(-4, i), (64, i), (i, -4), (i, 64)}
     return avatar, blocks, free_pads, walls, occupied
@@ -164,7 +178,7 @@ def idle_action(env, lc0):
 def deliver_legs(env, av_color, deadline):
     """-> [(label, action_ids)] one A* drag leg per (unplaced block, free pad)."""
     g = game_of(env)
-    per = engine_percept(g)
+    per = engine_percept(g, env.observation_space)
     if per is None:
         return []
     avatar, blocks, free_pads, walls, occupied = per
@@ -190,6 +204,55 @@ def deliver_legs(env, av_color, deadline):
             if best:
                 out.append((f"deliver{b}->{pad}", best))
     return out
+
+
+def all_blocks_viable(env, av_color, deadline) -> bool:
+    """True when every unplaced block still has at least one route to a pad.
+
+    A block with no route is unplaceable, so the level can no longer be won —
+    the classic Sokoban deadlock test, which this level needs because the
+    carrier can seal the board while apparently helping.
+    """
+    g = game_of(env)
+    per = engine_percept(g, env.observation_space)
+    if per is None:
+        return False
+    avatar, blocks, free_pads, walls, occupied = per
+    if len(free_pads) < len(blocks):
+        return False
+    # STATIC obstacles only. Other unplaced blocks are movable, so treating
+    # them as walls would call the START state dead: the left-hand blocks reach
+    # a pad only through a gap another block is sitting in, and that block can
+    # be moved. A block is dead only when the immovable geometry — walls plus
+    # already-placed blocks — cuts it off from every free pad, which is exactly
+    # the sealed board the carrier creates.
+    #
+    # This is a FLOOD FILL, not an A* set. The A* version ran
+    # blocks x pads x facings searches per child and the whole planner managed
+    # 4 expansions in 600 s. Reachability over static geometry is a necessary
+    # condition for placeability and costs one BFS per child.
+    blocked = walls | occupied
+    seen = {tuple(blocks[0])} if blocks else set()
+    pads = set(free_pads)
+    for b in blocks:
+        start = tuple(b)
+        stack, seen = [start], {start}
+        found = False
+        while stack:
+            x, y = stack.pop()
+            if (x, y) in pads:
+                found = True
+                break
+            for nx, ny in ((x - 4, y), (x + 4, y), (x, y - 4), (x, y + 4)):
+                if (nx, ny) in seen or (nx, ny) in blocked:
+                    continue
+                if not (0 <= nx < 64 and 0 <= ny < 64):
+                    continue
+                seen.add((nx, ny))
+                stack.append((nx, ny))
+        if not found:
+            return False
+    return True
 
 
 def plan(env0, budget: int, beam: int = 8, time_s: float = 600.0, verbose=True,
@@ -229,7 +292,7 @@ def plan(env0, budget: int, beam: int = 8, time_s: float = 600.0, verbose=True,
             for k in WAITS:
                 cands.append((f"wait{k}", [idle] * k))
         if verbose and expansions <= 4:
-            per = engine_percept(game_of(env))
+            per = engine_percept(game_of(env), env.observation_space)
             if per is None:
                 print(f"      [expand {expansions}] PERCEPT=None moves={moves}")
             else:
@@ -242,7 +305,10 @@ def plan(env0, budget: int, beam: int = 8, time_s: float = 600.0, verbose=True,
                         row = ""
                         for xx in range(0, 64, 4):
                             c = (xx, yy)
+                            carr_cells = {(cc.x, cc.y) for cc in
+                                          game_of(env).current_level.get_sprites_by_tag("kdweefinfi")}
                             row += ("A" if c == av_ else "B" if c in bl_ else
+                                    "C" if c in carr_cells else
                                     "o" if c in oc_ else "." if c in fp_ else
                                     "#" if c in wl_ else " ")
                         print("        |" + row + "|")
@@ -256,6 +322,19 @@ def plan(env0, budget: int, beam: int = 8, time_s: float = 600.0, verbose=True,
             if verdict == "dead":
                 continue
             un, _ = status(game_of(child))
+            # DEADLOCK PRUNE. Measured on level 3: the wall column at x=32 has
+            # exactly two gaps, and both are held open by blocks. The carrier
+            # autonomously delivers those two — which SEALS the board, stranding
+            # the other three blocks on the far side from every pad. The avatar
+            # then cannot cross x=32 at any row (probed: blocked at x=28 for
+            # y=12, 24 and 32).
+            # Best-first on (unplaced, moves) walks straight into that state,
+            # because the carrier's two free deliveries look like the fastest
+            # progress available. So a child is discarded when ANY unplaced
+            # block has no leg to any free pad: that block can never be placed
+            # again and the branch is already lost, however good its count is.
+            if un and not all_blocks_viable(child, av_color, deadline):
+                continue
             heap.append((len(un), moves + done, expansions, acts + path[:done], child))
         heap = sorted(heap, key=lambda s: (s[0], s[1]))[:beam]
     return None, None

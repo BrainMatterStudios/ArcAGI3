@@ -704,7 +704,49 @@ problem than the one being planned.
 
    It reaches **2 of 5 placed at 29–33 moves** and then returns **zero legs**.
 
-### 12c-bis. Why it stalls: the wall model is wrong
+### 12c-ter. What level 3 actually is: a race against your own helper
+
+Chasing the stall produced the real structure of the level, which is more
+interesting than the planner bug it started as.
+
+The board is **bisected by a wall column at x=32**. Every remaining block is on
+one side, every pad on the other. The column has exactly two gaps, and at level
+start both gaps are occupied by blocks — blocks that are themselves waiting to
+be delivered.
+
+The carrier's autonomous behaviour is to take the two nearest reachable blocks,
+which are exactly those two. Probed on the engine after it has done so: the
+avatar **cannot cross x=32 at y=12, y=24 or y=32** — it stops at x=28 in every
+case. So the carrier, by helping, **seals the board and makes the level
+unwinnable.**
+
+That is why every planner so far walks into a dead state: best-first on
+(unplaced, moves) treats the carrier's two free deliveries as the fastest
+progress on offer, and they are the one move that loses the game. Level 3 is a
+race — the player has to use the gaps before the helper closes them.
+
+Two consequences worth carrying:
+
+- **`WAIT` is not free on this level.** The wait macro was introduced to spend
+  the carrier's free labour, and on level 3 spending it is fatal.
+- **A carrier is not a pure benefit.** On level 2 it places 4 of 5 blocks and
+  the level is trivially won; on level 3 the same behaviour destroys the level.
+  Any solver for this class needs to reason about *which* blocks the carrier
+  will take next, not just how many it delivers.
+
+A deadlock prune was added on the back of this (`all_blocks_viable`): a child is
+discarded when any unplaced block can no longer reach a free pad across static
+geometry — walls plus already-placed blocks, flood-filled, with other unplaced
+blocks treated as movable. Getting it right took two passes: the first version
+tested a full A* leg, which called the *start* state dead (the left-hand blocks
+reach a pad only through a gap another block occupies) and pruned everything;
+the second is a flood fill, which is both correct and ~100× cheaper.
+
+With the prune in place the search does start exploring the right idea — it
+parks a block *in* the doorway at (32,24)/(32,28)/(32,36) to hold the gap open.
+It has not yet found a ≤100-move plan.
+
+### 12c-bis. Why it first stalled: the wall model
 
 Dumping the board at the stalled state shows a **solid wall column at x=32
 running the full height, with every remaining block to its left and every pad
@@ -732,25 +774,26 @@ question.
 
 ### 12d. Next step, precisely
 
-The macro architecture is built (`wa30_macro.py`) and needs exactly one fix:
-**a correct wall set.** `kblzhbvysd` is the wrong source. Two candidates, both
-cheap:
+`wa30_macro.py` is built, its board model is now frame-derived, and its deadlock
+prune is correct and cheap. **It has not produced a ≤100-move plan.** Three
+things stand between it and one, in the order they should be attacked:
 
-1. Derive walls the way the shipped perceiver does — non-background cells that
-   are not the avatar, a block or a pad — which is known to work at level start
-   (it produces the 79-wall model that found 16 legs) and only needs to survive
-   mid-level states.
-2. Or probe passability empirically: the snapshot backend makes a move test
-   free, so the avatar's true obstacle set can be measured rather than inferred.
-
-Option 2 is the more robust one and fits the design law from §11e: the model
-should come from measurement, not from a guess at an obfuscated predicate.
-
-Encouraging sign from the run: with the correct avatar colour the A* legs are
-**11–14 moves**, against the 33–62 the shipped greedy assignment pays. Three
-such legs plus the carrier's two free deliveries is well inside 100 — which is
-the first evidence that the budget is comfortably reachable once the model is
-right.
+1. **Settle the doorway geometry.** The evidence is currently contradictory and
+   this must be resolved before more search: the two blocks read as sitting
+   *at* x=32, which is also where the frame says the wall column is, and a
+   block cannot stand inside a wall. Either the frame rule misclassifies the
+   column (it is a passable divider) or the block coordinates are being read
+   against a different origin. Decide it with one direct probe: at level start,
+   walk the avatar at each y and record where it stops.
+2. **Make the carrier a planned resource, not a background process.** The
+   search needs to know which block the carrier takes next — that is
+   deterministic (nearest reachable unclaimed block, by its own BFS) and can be
+   simulated cheaply, so `WAIT` can be scored by *what it will cost*, not just
+   by what it delivers.
+3. **Then re-run.** The leg costs are already encouraging: with the correct
+   avatar colour the A* legs come back at **11–14 moves** against the 33–62 the
+   shipped greedy assignment pays, so three legs plus two free deliveries sits
+   well inside 100 once the plan avoids the sealed branch.
 
 Falsifier unchanged and still zero-slot: a ≤100-move plan for wa30 level 3,
 verified on the engine.
