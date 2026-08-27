@@ -704,7 +704,38 @@ problem than the one being planned.
 
    It reaches **2 of 5 placed at 29–33 moves** and then returns **zero legs**.
 
-### 12c-ter. What level 3 actually is: a race against your own helper
+### 12c-quater. CORRECTION — it is not a race, it is a handoff channel
+
+The "race against your own helper" account in 12c-ter is **wrong** and is
+corrected here. It was written from one probe; two further measurements
+overturned it.
+
+**Measured, twice, by BFS over real engine moves:** the avatar's free-walk
+region is `x ≤ 28` — **both before and after the carrier takes the plugs**. The
+carrier does not seal anything. The avatar could never cross that column, so
+nothing the carrier does changes its reach.
+
+The real structure of level 3:
+
+- A wall column at **x = 32** divides the board. The avatar is confined to its
+  left for the whole level; every pad is at x = 52/56.
+- **The avatar can therefore never place a block on a pad.** Only the carrier
+  can. The shipped `solve_wa30` plans avatar→pad legs, which is why its plans
+  are both long and unexecutable.
+- Blocks, unlike the avatar, **can be pushed into the column** — the search
+  demonstrably parked them at (32,24), (32,28) and (32,36), cells that read as
+  wall. The column is a *handoff channel*: the avatar pushes a block in from
+  the left (standing at x=24, dragging 28→32), and the carrier collects it from
+  the right.
+- The two blocks that start at (32,12) and (32,32) are simply blocks already
+  sitting in that channel, which is why the carrier delivers exactly those two
+  for free and then idles — the rest are on the avatar's side.
+
+So the correct macro is **HANDOFF (block → column)**, not DELIVER (block → pad),
+and "wait" is neither free nor fatal — it is how the carrier's ferry time gets
+spent while the avatar works.
+
+### 12c-ter. Superseded first account: "a race against your own helper"
 
 Chasing the stall produced the real structure of the level, which is more
 interesting than the planner bug it started as.
@@ -774,26 +805,26 @@ question.
 
 ### 12d. Next step, precisely
 
-`wa30_macro.py` is built, its board model is now frame-derived, and its deadlock
-prune is correct and cheap. **It has not produced a ≤100-move plan.** Three
-things stand between it and one, in the order they should be attacked:
+`wa30_macro.py` now has the right macro (HANDOFF: block → the x=32 channel), a
+correct frame-derived board model, a cheap flood-fill deadlock prune, an inert
+wait action, and a progress key that counts a handed-off block as progress
+(without it, every handoff scored as zero and best-first had no gradient).
+It reaches `(3 blocks still needing the avatar, 4 not yet on a pad)` at 13
+moves. **It has not produced a ≤100-move plan.**
 
-1. **Settle the doorway geometry.** The evidence is currently contradictory and
-   this must be resolved before more search: the two blocks read as sitting
-   *at* x=32, which is also where the frame says the wall column is, and a
-   block cannot stand inside a wall. Either the frame rule misclassifies the
-   column (it is a passable divider) or the block coordinates are being read
-   against a different origin. Decide it with one direct probe: at level start,
-   walk the avatar at each y and record where it stops.
-2. **Make the carrier a planned resource, not a background process.** The
-   search needs to know which block the carrier takes next — that is
-   deterministic (nearest reachable unclaimed block, by its own BFS) and can be
-   simulated cheaply, so `WAIT` can be scored by *what it will cost*, not just
-   by what it delivers.
-3. **Then re-run.** The leg costs are already encouraging: with the correct
-   avatar colour the A* legs come back at **11–14 moves** against the 33–62 the
-   shipped greedy assignment pays, so three legs plus two free deliveries sits
-   well inside 100 once the plan avoids the sealed branch.
+What is left is search quality, not modelling:
+
+1. **The carrier's next pick is deterministic** (nearest reachable unclaimed
+   block by its own BFS) and is still being treated as a background process.
+   Simulating it would let `WAIT` be scored by what it will *achieve*, and
+   would let the planner interleave avatar work with ferry time deliberately
+   instead of hoping.
+2. **Best-first on a coarse key ties everywhere.** Blocks in the channel at
+   different rows are not equivalent — some are far shorter ferries than
+   others — so the key needs the carrier's travel distance in it.
+3. **The remaining arithmetic looks comfortable**: avatar legs are 7–13 moves
+   with the correct model, three of them is ~30 moves, and the carrier ferries
+   in parallel. There is no evidence yet that 100 is out of reach.
 
 Falsifier unchanged and still zero-slot: a ≤100-move plan for wa30 level 3,
 verified on the engine.

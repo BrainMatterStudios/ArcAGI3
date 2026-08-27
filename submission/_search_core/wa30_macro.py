@@ -175,14 +175,67 @@ def idle_action(env, lc0):
     return None
 
 
+def handoff_cells(walls, occupied, blocks):
+    """Cells in the dividing wall line that a block can be parked in.
+
+    MEASURED on level 3: the avatar's free-walk region is entirely x <= 28
+    (BFS over real engine moves), while every pad is at x = 52/56. **The avatar
+    can never deliver a block to a pad.** The two cells at (32,12) and (32,32)
+    are gaps in the dividing wall, plugged at level start by two blocks; they
+    are reachable by the carrier from the right and pushable-into by the avatar
+    from the left (stand at x=24, drag a block 28 -> 32).
+
+    So the avatar's only useful move is a HANDOFF: park a block in a gap for
+    the carrier to collect. `deliver_legs` targeting pads was planning moves the
+    avatar is physically incapable of making, which is why its "16 legs" at
+    move 0 were mostly fiction.
+    """
+    xs = sorted({x for (x, _y) in walls})
+    if not xs:
+        return []
+    # the dividing line is the column that walls occupy most densely
+    from collections import Counter
+    col = Counter(x for (x, _y) in walls if 0 <= x < 64).most_common(1)[0][0]
+    gaps = []
+    for y in range(0, 64, 4):
+        if (col, y) in walls or (col, y) in occupied:
+            continue
+        gaps.append((col, y))
+    return gaps
+
+
 def deliver_legs(env, av_color, deadline):
-    """-> [(label, action_ids)] one A* drag leg per (unplaced block, free pad)."""
+    """-> [(label, action_ids)] A* drag legs to a free pad OR a handoff gap."""
     g = game_of(env)
     per = engine_percept(g, env.observation_space)
     if per is None:
         return []
     avatar, blocks, free_pads, walls, occupied = per
+    blockset = {tuple(b) for b in blocks}
+    gaps = [c for c in handoff_cells(walls, occupied, blocks) if c not in blockset]
     out = []
+    # HANDOFF LEGS. The avatar cannot reach any pad (walk region x <= 28,
+    # pads at x = 52/56, verified by engine BFS both before and after the slots
+    # are vacated), so a leg to a pad is fiction. What it CAN do is stand at
+    # x = 24 and push a block from 28 into a slot at x = 32, where the carrier
+    # collects it. The slot is a wall cell for walking but a legal resting place
+    # for a block, so it is opened in the obstacle set only as that leg's goal.
+    # Any leg the model gets wrong simply fails when executed on the engine and
+    # the child is discarded — the engine is the arbiter, not the model.
+    for b in blocks:
+        others = blockset - {tuple(b)}
+        for gcell in gaps:
+            if time.time() > deadline:
+                return out
+            model = sp._DragModel((walls - {gcell}) | others | occupied)  # noqa: SLF001
+            best = None
+            for facing in (0, 90, 180, 270):
+                path = sp._astar_leg(                                     # noqa: SLF001
+                    model, (avatar[0], avatar[1], b[0], b[1], facing, False), gcell)
+                if path and (best is None or len(path) < len(best)):
+                    best = path
+            if best:
+                out.append((f"handoff{tuple(b)}->{gcell}", best))
     for b in blocks:
         others = set(x for x in blocks if x != b)
         model = sp._DragModel(walls | others | occupied)   # noqa: SLF001
@@ -204,6 +257,28 @@ def deliver_legs(env, av_color, deadline):
             if best:
                 out.append((f"deliver{b}->{pad}", best))
     return out
+
+
+def progress_key(env):
+    """(blocks needing avatar work, blocks not yet on a pad).
+
+    A block parked in the dividing wall column is HANDED OFF: the avatar's job
+    on it is done and the carrier will collect it. Scoring only on 'unplaced'
+    made every handoff look like zero progress, so best-first had no gradient
+    and wandered — the search was already discovering handoffs at (32,24),
+    (32,28), (32,36) and then throwing them away.
+    """
+    g = game_of(env)
+    per = engine_percept(g, env.observation_space)
+    unplaced, occupied = status(g)
+    if per is None:
+        return (len(unplaced), len(unplaced))
+    _av, _bl, _fp, walls, _oc = per
+    from collections import Counter
+    cols = Counter(x for (x, _y) in walls if 0 <= x < 64)
+    col = cols.most_common(1)[0][0] if cols else None
+    todo = sum(1 for (x, _y) in unplaced if x != col)
+    return (todo, len(unplaced))
 
 
 def all_blocks_viable(env, av_color, deadline) -> bool:
@@ -270,10 +345,9 @@ def plan(env0, budget: int, beam: int = 8, time_s: float = 600.0, verbose=True,
         return None, None
     grid = sp.settled(frame)
 
-    unplaced0, _ = status(g0)
-    start = (len(unplaced0), 0, 0, [], env0)
+    start = (progress_key(env0), 0, 0, [], env0)
     heap = [start]
-    seen_best = len(unplaced0)
+    seen_best = start[0]
     expansions = 0
     while heap and time.time() < deadline:
         heap.sort(key=lambda s: (s[0], s[1]))
@@ -321,7 +395,7 @@ def plan(env0, budget: int, beam: int = 8, time_s: float = 600.0, verbose=True,
                 return acts + path[:done], moves + done
             if verdict == "dead":
                 continue
-            un, _ = status(game_of(child))
+            un = progress_key(child)
             # DEADLOCK PRUNE. Measured on level 3: the wall column at x=32 has
             # exactly two gaps, and both are held open by blocks. The carrier
             # autonomously delivers those two — which SEALS the board, stranding
@@ -333,9 +407,9 @@ def plan(env0, budget: int, beam: int = 8, time_s: float = 600.0, verbose=True,
             # progress available. So a child is discarded when ANY unplaced
             # block has no leg to any free pad: that block can never be placed
             # again and the branch is already lost, however good its count is.
-            if un and not all_blocks_viable(child, av_color, deadline):
+            if un[0] and not all_blocks_viable(child, av_color, deadline):
                 continue
-            heap.append((len(un), moves + done, expansions, acts + path[:done], child))
+            heap.append((un, moves + done, expansions, acts + path[:done], child))
         heap = sorted(heap, key=lambda s: (s[0], s[1]))[:beam]
     return None, None
 
