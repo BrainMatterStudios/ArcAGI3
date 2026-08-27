@@ -622,6 +622,81 @@ level 1), and §11c proved a within-budget solution to level 3 must exist. The
 gap is a planning-quality problem — 169 moves against a 100-move budget —
 not a perception or cost problem.
 
+## 12. THE wa30 BUILD — the blocker was a missing mechanic, not a weak planner
+
+Status: **mechanic found and quantified; solver not yet fixed.** No crack to
+report. What changed is that we now know what the problem actually is.
+
+### 12a. wa30 has autonomous agents that move blocks for you
+
+`wa30.py:1198 dhrikuybfo()` runs after **every player action** and calls
+`ynmgxjqkgh()`, which drives every sprite tagged `kdweefinfi`:
+
+- carrying a block → BFS toward a drop cell, step one cell, release on arrival
+- adjacent to a free block → grab it
+- otherwise → BFS toward a cell adjacent to an unplaced block, step one cell
+
+`aoeyzovteg()` does the same for a second class (`ysysltqlke`). The win test is
+`ymzfopzgbq()` — every block on a target and not currently held.
+
+**These are carriers that do the avatar's work, one cell per player action, for
+free.** Measured by marking time with ACTION5 inside each level's own budget:
+
+| level | agents | blocks | budget | placed free | moves used |
+|---|---|---|---|---|---|
+| 1 | 0 | 3 | 200 | 0/3 | — |
+| 2 | 1 | 5 | 70 | **4/5** | 68 |
+| 3 | 1 | 5 | 100 | 2/5 | 27 |
+| 4 | 3 | 7 | 100 | 1/7 | 17 |
+| 5 | 1 | 6 | 125 | **4/6** | 116 |
+| 6 | 0+1 | 2 | 75 | 1/2 | — |
+| 7 | 0+1 | 2 | 125 | 0/2 | — |
+| 8 | 2 | 13 | 150 | 5/13 | 82 |
+| 9 | 2 | 9 | 70 | **4/9** | 43 |
+
+**Level 1 has no agents at all — which is exactly why the drag-only
+`solve_wa30` cracks it (26 moves) and nothing else.**
+
+### 12b. This corrects the specialist's own stated blocker
+
+`specialists.py` records the wa30 limit as: *"L3's optimal plan (169 acts)
+exceeds the level's step budget (~100) — measured wall, specialist fails open
+there."* That reading is wrong. The plan is 169 because the planner is solving
+**the wrong problem**: it assumes the avatar must personally deliver all five
+blocks. On level 3 the carrier delivers two of them for free in 27 moves,
+leaving the avatar three blocks and ~73 moves — a different, much smaller
+problem than the one being planned.
+
+### 12c. What was tried, and where it stands
+
+1. **`wa30_beam.py`** — joint (order + assignment) beam over A* legs, replacing
+   the shipped greedy assignment. Motivation was sound (greedy hands the
+   farthest block the deepest pad and pays 62 moves for that one leg), but it
+   returned **185 moves, worse than the 169** from full order enumeration:
+   layer-greedy beam commits to cheap early legs and strands the expensive
+   ones. Kept as a measured negative.
+2. **`wa30_coop.py`** — beam search over avatar actions using the **engine
+   itself** as the forward model (snapshot backend, deepcopy 0.8 ms, and free
+   per §11a), so the carrier's real behaviour is included by construction and
+   no hand-written agent model can be wrong. Reaches **2 of 5 placed by move
+   27 and then stalls** — which is exactly the carrier's own free output, so
+   the avatar contributed nothing. Diagnosis: flat beam search cannot discover
+   a coherent 30-move drag over a 100-move horizon; the corrected heuristic
+   (disjoint matching, occupied targets excluded, handoff credit) did not
+   change the outcome.
+
+### 12d. Next step, precisely
+
+The architecture the evidence points to is **macro-level search**: avatar
+macro-actions are A* drag legs (which the shipped planner already computes
+well — level 1 in 26 moves), composed by a search that also has a "mark time"
+macro letting the agents work, with legs re-planned as the agents move blocks
+and free pads. That is hierarchical planning over a small macro set, not flat
+beam over primitives, and it is the shape that fits the measured mechanic.
+
+Falsifier unchanged and still zero-slot: a ≤100-move plan for wa30 level 3,
+verified on the engine.
+
 ## 10. Open questions this pass did not close
 
 - **The 1.8× dev→live discount** is now measured twice but still unexplained.
