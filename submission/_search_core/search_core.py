@@ -502,45 +502,40 @@ class ResetReplayBackend:
         self.env = env
         self.actions_spent = 0   # every engine call: resets AND steps
         self.resets = 0
-        # Where the one real env currently sits, and what it last observed.
-        # MEASURED 2026-08-27: without this the backend spent one reset per
-        # NODE (tu93: 3,739 resets for 3,727 nodes) and ~94% of every action
-        # was replay, because `children()` re-walked the whole prefix for each
-        # token even when the env was already standing on it. Replay is
-        # deterministic, so a path already walked never has to be walked again.
-        self._cur_path: list[tuple] | None = None
-        self._cur_obs = None
+        # MEASURED 2026-08-27 and deliberately NOT optimised. This backend
+        # spends one reset per NODE (tu93: 3,739 resets for 3,727 nodes), so
+        # ~94% of every action is replay rather than new information. A path
+        # cache that skipped the walk when the env already stood on the
+        # requested state was built and measured: IDENTICAL search results,
+        # 9 actions saved out of 58,522 (0.015%) — the frontier order means the
+        # env is essentially never where the next request wants it. It was
+        # reverted because it bought nothing and made this class understate the
+        # live cost it exists to model (test_reset_replay_cost_model pins the
+        # 1 reset + d replay + 1 action contract). The overhead is structural:
+        # star-expansion on one undo-less env costs k*(1 + d) per parent.
+        # Beating it needs a different search SHAPE, or no search at all.
 
     def _reset(self):
         obs = self.env.reset()
         self.resets += 1
         self.actions_spent += 1
-        self._cur_path, self._cur_obs = [], obs
         return obs
 
     def _replay(self, path: list[tuple]):
         from arcengine import GameState
 
-        # Already standing exactly here — the reset and the whole walk are
-        # both pure overhead. Same resulting state, no engine calls.
-        if self._cur_path is not None and self._cur_path == list(path):
-            return self._cur_obs
         obs = self._reset()
         if obs is None:
             return None
-        for i, tok in enumerate(path):
+        for tok in path:
             obs = _apply(self.env, tok)
             self.actions_spent += 1
-            self._cur_path, self._cur_obs = list(path[:i + 1]), obs
             if obs is None or obs.state == GameState.GAME_OVER:
-                self._cur_path = None   # position no longer trustworthy
                 return None
         return obs
 
     def root(self) -> Handle:
-        # _replay([]) resets only when the env is not already standing at the
-        # level start (it is, right after adopt()).
-        obs = self._replay([])
+        obs = self._reset()
         return Handle(obs, 0, [])
 
     def children(self, handle: Handle, tokens: list[tuple], consume: bool = False):
@@ -551,10 +546,7 @@ class ResetReplayBackend:
                 continue
             obs = _apply(self.env, tok)
             self.actions_spent += 1
-            self._cur_path = handle.path + [tok]
-            self._cur_obs = obs
             if obs is None:
-                self._cur_path = None
                 yield tok, None
                 continue
             yield tok, Handle(obs, handle.depth + 1, handle.path + [tok])
@@ -593,10 +585,7 @@ class ResetReplayBackend:
         # children() leaves the real env AT the yielded child's state; the
         # winning child is always the last executed, so the env is already
         # there. Future paths are relative to the new level's start.
-        # The env therefore stands at the empty path of the NEW level, which
-        # is exactly what the next root() asks for — record that so the path
-        # cache does not pay a reset to reach where it already is.
-        self._cur_path, self._cur_obs = [], handle.obs
+        pass
 
 
 # --------------------------------------------------------------------------
