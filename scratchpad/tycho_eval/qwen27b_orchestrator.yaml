@@ -1,0 +1,43 @@
+# Kill-or-scale feasibility config: Tycho actor-controlled builder (orchestrator)
+# driven by our local Qwen3.6-27B-FP8 vLLM serve (Modal H100, 65536 ctx).
+# Deviations from the paper configs, all forced by the 27B/64k-ctx brain:
+#   - backend openai (OpenAI-compatible Chat Completions -> vLLM)
+#   - vision OFF (base Qwen3.6-27B is text-only; image_url would 400)
+#   - animation_summary OFF (image transport)
+#   - max_tokens 16000 (fits 65536 ctx with ~42k prompt soft cap)
+#   - context_emergency_soft_tokens 42000 (paper: 850000 on 1M-ctx Opus)
+#   - grid_keep 2 (context economy on 64k)
+#   - max_llm_calls 120 (~1.5M-token proxy; Qwen prices to $0 so cost guards are inert)
+model:
+  backend: openai
+  llm_model: vrfai/Qwen3.6-27B-FP8
+  effort: medium          # non-empty -> chat_template_kwargs enable_thinking
+  http_timeout: 1800      # cold start ~4-6 min + long thinking generations
+  retry_budget_s: 1800
+
+reasoning:
+  effort: medium
+  max_tokens: 12000
+  max_llm_calls: 120
+  max_tool_steps: 25
+
+vision:
+  vision: false
+  text_grid: full
+  animation_summary: false
+
+context:
+  prompt_caching: false
+  history: tail_evict
+  grid_keep: 2
+  reasoning_keep: 2
+  # v2 after sb26 overflow (prompt +10k/turn; 400 at 49.5k): heavy tool/frame text
+  # must be capped on a 64k model — Tycho's own Qwen dev note says tool round-trips
+  # were 89% of retained text. text_keep>0 enables the elision cap.
+  text_keep: 4
+  evict_each_llm_call: true
+  context_emergency_soft_tokens: 36000
+  context_emergency_keep_turns: 3
+
+orchestration:
+  mode: orchestrator

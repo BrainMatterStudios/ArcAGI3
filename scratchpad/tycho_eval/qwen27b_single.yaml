@@ -1,0 +1,37 @@
+# PART-1 falsifier config (2026-08-14): Tycho SINGLE mode — the actor writes
+# world_model.py ITSELF (removes the invoke_builder delegation dependency the
+# 27B never exercised in orchestrator mode: sb26_v2 builder_invocations=0/120 calls).
+# Inherits every v2 context repair from qwen27b_orchestrator.yaml verbatim.
+# Only deltas vs the orchestrator config:
+#   - orchestration.mode: single
+#   - max_llm_calls: 300 (the pre-registered cap for this falsifier)
+model:
+  backend: openai
+  llm_model: vrfai/Qwen3.6-27B-FP8
+  effort: medium          # non-empty -> chat_template_kwargs enable_thinking
+  http_timeout: 1800      # cold start ~4-6 min + long thinking generations
+  retry_budget_s: 1800
+
+reasoning:
+  effort: medium
+  max_tokens: 12000
+  max_llm_calls: 300
+  max_tool_steps: 25
+
+vision:
+  vision: false
+  text_grid: full
+  animation_summary: false
+
+context:
+  prompt_caching: false
+  history: tail_evict
+  grid_keep: 2
+  reasoning_keep: 2
+  text_keep: 4
+  evict_each_llm_call: true
+  context_emergency_soft_tokens: 36000
+  context_emergency_keep_turns: 3
+
+orchestration:
+  mode: single

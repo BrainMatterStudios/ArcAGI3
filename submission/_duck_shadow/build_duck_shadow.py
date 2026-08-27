@@ -104,7 +104,7 @@ meta = {
     "title": "arc-agi-3-duck-shadow",
     "code_file": "duck-shadow.ipynb",
     "language": "python", "kernel_type": "notebook",
-    "is_private": True, "enable_gpu": True, "enable_internet": False,
+    "is_private": True, "enable_gpu": True, "enable_internet": False, "machine_shape": "NvidiaRtxPro6000",
     "dataset_sources": ["driessmit1/arc3-vllm-h100-wheelhouse-v3",
                         "ahmedmobasher86/taaf-src-hybrid",
                         "driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot"],

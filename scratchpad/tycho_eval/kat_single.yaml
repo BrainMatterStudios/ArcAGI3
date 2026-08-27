@@ -1,0 +1,36 @@
+# Track-1 FINAL probe (2026-08-15): KAT-Coder-V2.5-Dev (AWQ-INT4) in Tycho
+# SINGLE mode on sb26, 300-call cap. Identical to qwen27b_single.yaml except
+# the model id (sampling swap is env-side: TYCHO_EVAL_KAT_SAMPLING in
+# run_kat_single.sh — card opinion 1.0/0.95/20 instead of qwen 0.6/0.95/20).
+# Pre-registered question: does KAT EDIT world_model.py and RUN the verifier
+# (the structural defect the 27B showed)?
+model:
+  backend: openai
+  llm_model: sahilchachra/KAT-Coder-V2.5-Dev-W4A16
+  effort: medium          # non-empty -> chat_template_kwargs enable_thinking
+  http_timeout: 1800      # cold start ~4-6 min + long thinking generations
+  retry_budget_s: 1800
+
+reasoning:
+  effort: medium
+  max_tokens: 12000
+  max_llm_calls: 300
+  max_tool_steps: 25
+
+vision:
+  vision: false
+  text_grid: full
+  animation_summary: false
+
+context:
+  prompt_caching: false
+  history: tail_evict
+  grid_keep: 2
+  reasoning_keep: 2
+  text_keep: 4
+  evict_each_llm_call: true
+  context_emergency_soft_tokens: 36000
+  context_emergency_keep_turns: 3
+
+orchestration:
+  mode: single

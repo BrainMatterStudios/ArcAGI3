@@ -1,0 +1,94 @@
+{
+ "schema_version": 1,
+ "hypothesis": "shipped-config-screen-2026-08-10",
+ "arm": "shipped",
+ "arm_env": {},
+ "source_base_sha256": "ae49c5db3ee60e92948734ff0f795fa8f3657e29beddf77f1146978c0e266b6a",
+ "patch_sha256": "UNPATCHED",
+ "geometry": {
+  "clones": 28,
+  "per_game_s": 7920,
+  "concurrency": 28
+ },
+ "identity": {
+  "arm": "shipped",
+  "env_realized": {},
+  "toggles_realized": {
+   "TAAF_WATCHDOG": true,
+   "TAAF_HUD_MASK": true,
+   "TAAF_WIN_REPLAY": true,
+   "TAAF_ANTIFREEZE": true,
+   "TAAF_ANIMATION": true,
+   "TAAF_GRAPH": true,
+   "TAAF_COMPACT": true,
+   "TAAF_PLAYBOOK": true,
+   "TAAF_GRID_BURNER": false
+  },
+  "toggles_expected": {},
+  "toggles_ok": true,
+  "patch_proof": {
+   "shipped_no_patch_markers": true,
+   "execute_chain_repr": "<function install.<locals>._execute_action at 0x10a36e3e0>",
+   "play_chain_repr": "<function _HarnessGameSession.play at 0x110f1cb80>"
+  },
+  "animation_prompt_probe": {
+   "marker": "last_animation",
+   "present": false,
+   "expected": false,
+   "prompt_sha256": "c97fed837f90fed0c3d8ced1fc5942cca1479f09ec28d4958d258c0540dc285e",
+   "prompt_chars": 12681
+  },
+  "config": {
+   "temperature": 0.6,
+   "top_p": 0.95,
+   "top_k": 20,
+   "context_window": 32768,
+   "model": "vrfai/Qwen3.6-27B-FP8"
+  },
+  "serving": {
+   "base_url": "https://a-m-mobasher--arc3-vllm-serve.modal.run/v1",
+   "served_ids": [
+    "vrfai/Qwen3.6-27B-FP8"
+   ],
+   "expected_id": "vrfai/Qwen3.6-27B-FP8",
+   "ok": true
+  }
+ },
+ "rows": [],
+ "rows_by_source": {},
+ "behavior": null,
+ "patch_diagnostics": null,
+ "dry_run": false,
+ "stage": "install_instruments",
+ "error": null,
+ "pre_registered_reading": {
+  "hypothesis": "The shipped unpatched config (duck-base v2, no duck_patches) differs from BASE_ENV (the settled patched rig baseline) on the true objective; live-ledger hint of the magnitude: 0.18 (patched family 0.788 n=5 heterogeneous vs shipped base 0.965 n=10).",
+  "reading_rule": "Decision statistic: true_score_all_games (per game MAX over clones, per wave MEAN over the full 25 games; rows[].score as stored by pc_driver) for the shipped arm MINUS the fresh base arm from the SAME session at the frozen geometry (28 clones, 7920s, concurrency 28, full 25 games). Directional verdict only if |delta| >= 0.2712 (the banked base pair's own repeat spread); otherwise INDISTINGUISHABLE. Secondary (report, never gate): true_score_excl_ft09, per-game deltas, levels.",
+  "banked_controls": "Two COMPLETE banked base waves at IDENTICAL geometry exist (scratchpad/banked_waves_20260809/pc_base.json, w2_base.json; true_score_all_games 1.4751 and 1.2039) and serve as additional base-side controls: report where the shipped wave falls relative to the banked band [1.2039, 1.4751] alongside the primary same-session delta.",
+  "power_honesty": "One wave per arm CANNOT resolve the 0.18 live hint: the banked base pair's same-arm spread is 0.2712 at this exact geometry. This screen can only detect a LARGE offline difference or band the effect; a null here (INDISTINGUISHABLE) does NOT refute the live-ledger hint. The live ledger comparison itself is heterogeneous (patched n=5 spans several configs) \u2014 treat 0.18 as a hint, not a measurement.",
+  "not_a_readout": "Do not read levels: the level count correlates with the objective at r = -0.009 across the eight banked waves. Do not promote either config off this screen alone; a slot decision needs the live distribution (base n=10 mean 0.965 sd 0.208, one-slot MDE 0.61).",
+  "banked_base_controls": {
+   "path": "scratchpad/banked_waves_20260809/",
+   "files": [
+    "pc_base.json",
+    "w2_base.json"
+   ],
+   "kernel": "ahmedmobasher86/arc-agi-3-patch-closure-base",
+   "geometry": {
+    "clones": 28,
+    "per_game_s": 7920,
+    "concurrency": 28
+   },
+   "geometry_verified": "2026-08-10: both waves are full-25-game, 28-clone, 7920s, concurrency-28, stage=done",
+   "true_score_all_games_by_wave": [
+    1.4751,
+    1.2039
+   ],
+   "true_score_excl_ft09_by_wave": [
+    0.9414,
+    0.6588
+   ]
+  }
+ },
+ "elapsed_s": 0.7
+}

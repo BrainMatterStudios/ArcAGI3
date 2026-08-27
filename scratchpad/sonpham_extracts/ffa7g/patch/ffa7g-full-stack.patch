@@ -1,0 +1,1882 @@
+diff -ruN a/inference/agent/action_names.py b/inference/agent/action_names.py
+--- a/inference/agent/action_names.py	2026-07-19 13:52:50.799769715 -0400
++++ b/inference/agent/action_names.py	2026-07-19 13:52:50.810238352 -0400
+@@ -11,6 +11,9 @@
+     "ACTION4": "RIGHT",
+     "ACTION5": "SPACE",
+     "ACTION6": "MOUSE",
++    # ACTION7 round-trip fix (see action7-anim harness): was model-visible but
++    # to_engine_action returned None, so it silently no-op'd.
++    "ACTION7": "ACTION7",
+     "RESET": "RESET",
+ }
+ 
+diff -ruN a/inference/agent/frame_mode.py b/inference/agent/frame_mode.py
+--- a/inference/agent/frame_mode.py	1969-12-31 19:00:00.000000000 -0500
++++ b/inference/agent/frame_mode.py	2026-07-19 13:52:50.810255346 -0400
+@@ -0,0 +1,27 @@
++"""Harness-level frame mode: last-frame (default) vs full-frame animation.
++
++`full`  (default) -- the harness captures every frame the engine produced for
++           each action and exposes it to the agent's python sandbox as the
++           `last_animation` global (one entry per action, each with `.frames`),
++           plus a running `frame_stats` gauge. The settled `current_frame` is
++           still always present; the extra frames are the agent's to use or
++           ignore, per turn, as it judges the motion informative.
++`last`  -- collapse each engine animation to its final frame only, exactly as
++           the stock harness always behaved. Kept as the ablation arm for A/B.
++
++Selected by the run config via the ARC3_FRAME_MODE env var so a single bundle
++can run either way -- no separate patched bundle. Default is `full`; set
++ARC3_FRAME_MODE=last for the last-frame-only ablation.
++"""
++from __future__ import annotations
++
++import os
++
++
++def frame_mode() -> str:
++    mode = os.environ.get("ARC3_FRAME_MODE", "").strip().lower()
++    return "last" if mode == "last" else "full"
++
++
++def full_frame_enabled() -> bool:
++    return frame_mode() == "full"
+diff -ruN a/inference/agent/prompts.py b/inference/agent/prompts.py
+--- a/inference/agent/prompts.py	2026-07-19 13:52:50.799907652 -0400
++++ b/inference/agent/prompts.py	2026-07-19 13:52:50.810398975 -0400
+@@ -23,7 +23,7 @@
+ VISUAL_GAME_ADDENDUM = (
+     "\n\nVisual-game guidance:\n"
+     "- Treat each board as a scene with objects, blockers, targets, adjacency, containment, motion, and symmetry.\n"
+-    "- Game entities are usually be rendered as connected multi-tile shapes such as 2×2, 2×3, 3×3, or longer patterned structures. Sometime they might also be 1x1 tokens."
++    "- Game entities are usually rendered as connected multi-tile shapes such as 2×2, 2×3, 3×3, or longer patterned structures. Sometimes they might also be 1x1 tokens.\n"
+     "- Some games are logic or layout puzzles with no explicit player avatar or controllable sprite on the board. Do not assume a player exists; the relevant state may be an object, region, cursor, selector, or whole-board configuration.\n"
+     "- Background colors are often white or gray/black-ish large regions, but not always. Verify background hypotheses by area, stability, and object boundaries rather than assuming them.\n"
+     "- In many games, a long horizontal or vertical line near an edge is a timer or remaining-steps bar. It often shrinks or changes each step. If you identify such a bar, do not get distracted by it or treat it as core gameplay state unless there is concrete evidence that it interacts with the puzzle mechanics.\n"
+@@ -59,12 +59,25 @@
+     "- `last_action_frame` is the post-action frame for `last_action`; it matches `current_frame` after a real action.\n"
+     "- `transitions` is a chronological list of actual action transitions, excluding the initial seeded frame. Each transition exposes `.action`, `.before_frame`, `.after_frame`, `.frame` (alias of `.after_frame`), and `.result`.\n"
+     "- `last_transition` is `transitions[-1]` or `None`. Its `.result` mirrors `last_action_result`; older transitions may have an empty `.result`. For before/after diffs, compare `last_transition.before_frame` to `last_transition.after_frame`; do not compare `current_frame` to `history[-1].frame`.\n"
+-    "- `last_action_result` is the persisted result dict from the most recent `action(...)` call. It remains available across later Python inspection calls that do not call `action(...)`, and is `{}` before any action result exists. Read transition metadata from fields/keys such as `last_action_result['board_changed']`, `last_action_result['done']`, `last_action_result['level_completed']`, `last_action_result['game_over']`, `last_action_result['run_complete']`, `last_action_result['reward']`, and `last_action_result['valid_actions']`.\n"
++    "- `last_action_result` is the persisted result dict from the most recent `action(...)` call. It remains available across later Python inspection calls that do not call `action(...)`, and is `{}` before any action result exists. Read transition metadata from fields/keys such as `last_action_result['board_changed']`, `last_action_result['done']`, `last_action_result['level_completed']`, `last_action_result['game_over']`, `last_action_result['reward']`, and `last_action_result['valid_actions']`.\n"
+     "- `valid_actions` is the current list of valid action names.\n"
+     "- Call `action(actions)` to execute one or more real environment actions from Python.\n"
+     "- Pass `action(actions)` a list like `['LEFT']` or `[{'action': 'MOUSE', 'row': 4, 'col': 7}]`.\n"
+     "- One action usually returns one frame, but a single action can result in a short multi-frame animation.\n"
+     "- After `action(actions)` returns, `current_frame`, `previous_frame`, `history`, `transitions`, `valid_actions`, and `last_action_result` are refreshed.\n"
++    "- Each result reports `board_changed`, plus `gameplay_changed` and `no_impact`: the harness learns the game's deterministic HUD/edge band (a moves-remaining or timer bar) online and tells you whether your action changed real gameplay (`gameplay_changed`) or only advanced that band (`no_impact` -- a wasted move, e.g. pressing into a wall). `hud_band` names the learned band when one exists (e.g. `rows 61-62`).\n"
++    "- `action(actions, intent=...)` defaults to `intent='explore'`: an explore action that turns out `no_impact` STOPS the rest of that batch (`stop_reason='no_impact_action'`) and returns so you re-ground, instead of wasting the queued actions on a plan the environment just disproved. Pass `intent='solve'` for a committed sequence you do not want interrupted by the no-impact check.\n"
++    "- Optional precision upgrade for that check: if you can pin down the deterministic HUD/bar exactly, write a PURE `advance_hud(frame, action) -> frame` (frame is the `.ascii` letter grid; return it with ONLY the bar advanced one step, everything else identical) and commit it in a `HUD model:` section with a fenced python code block. The harness re-verifies it against every action and, while its bar prediction holds, uses it (`no_impact_source: model`) instead of the statistical band -- you write it ONCE and it then runs free every turn with no further tokens. It only asks you to rewrite when it mispredicts (`hud_model: stale`, e.g. a refill or a new level). No HUD in this game? Don't write one -- the statistical fallback handles it (`no_impact_source: band` or `exact`).\n"
++    "- `ACTION7` is a valid game-specific action when it appears in `valid_actions`. Its meaning is not fixed across games; infer it from a safe probe and the returned before/after and animation metadata rather than assuming it means undo, confirm, or back.\n"
++    "- Every action in the result's `executed_actions` carries an `animation` record summarizing its intermediate frames (which are not visible in `current_frame`): `num_frames`, `changed`, `only_changed` (a transient flash that left the same final board), `total_cells_changed`, `cells_changed_per_frame` (per frame, where 0 is a held/dwell frame), and `objects` -- one string per connected animated region, e.g. `top-left (19,27) 4x4, 16 cells, per-frame [...]`, so two things moving at once (a box resizing while a light blinks) each keep a tight bounding box.\n"
++)
++
++# The per-level state-graph bullets, appended to the runtime-state addendum only when the graph is
++# enabled (ARC3_STATE_GRAPH != off). Gated so the disabled A/B arm never advertises inert graph tools.
++STATE_GRAPH_ADDENDUM = (
++    "- The harness keeps a per-level STATE GRAPH of the canonical (HUD-excluded) boards you have visited and the actions between them. Each state has a node id AND a turn co-identity (the turn you first reached it), so `state_node_id`/`state_turn` in a result let you map your position back to a point in `history`. EVERY action result already gives you, for FREE, your current node's immediate edges -- `edges_here` maps each valid action to its known destination (`{to, turn}`, or a list if non-deterministic) or the string `'unexplored'`, and `untried_here` is the flat list of those unexplored actions (your local frontier). Act on `edges_here`/`untried_here` directly; do NOT spend a tool-call turn re-deriving your position or local frontier.\n"
++    "- The full graph is NOT shipped each turn (only your immediate edges are). To look DEEPER, the `state_graph` sandbox global exposes on-demand queries -- each is one round-trip, so use them to plan a route, not every turn: `state_graph.chains(depth=k)` enumerates explored action chains from your node up to `k` actions (each ends in a node `{to,turn}` or `'unexplored'` -- pick `k` yourself, deeper = more of the tree); `.frontier()` lists every node that still has an untried action `[{id, turn, untried}]`; `.path(a,b)`/`.distance(a,b)` route between nodes; `.neighbors(id)` lists a node's out-edges; and `frame_from_state(id)` -> a FrameView (`.ascii`/`.segmentation`) to inspect a distant node before navigating to it (accepts a node id or `{'turn': N}`).\n"
++    "- In `intent='explore'`, a whole action sequence that follows ONLY already-tried edges is REJECTED without executing (`stop_reason='known_action_rejected'`): it re-treads explored ground and reaches no new (state, action). You MAY route back through known / fully-explored states, but the plan must END with an untried action so it reaches new ground -- the untried actions at your node are the `'unexplored'` entries in `edges_here` (== `untried_here`); to end on a DISTANT frontier, plan with `state_graph.chains(depth=k)` / `.frontier()` / `.path(a,b)`. Use `intent='re-explore'` to deliberately traverse known states (the batch is only flagged, or hard-stopped in the strict A/B arm, if it reaches nothing new); `intent='solve'` bypasses the graph and no-impact checks entirely.\n"
+ )
+ 
+ MULTIMODAL_CONTEXT_ADDENDUM = (
+@@ -74,6 +87,43 @@
+     "- You can use images and other tools to understand the game state and guide your strategy, each may be useful depending on the current uncertainty.\n"
+ )
+ 
++LAST_ANIMATION_ADDENDUM = (
++    "- Beyond the `animation` record above, two optional runtime variables expose the actual"
++    " per-action frames: `last_animation` and `frame_stats`.\n"
++    "- `current_frame` is always the settled board after your last action -- on its own it is enough"
++    " for a purely static reading, and you never have to look further.\n"
++    "- If you want to, `last_animation` additionally exposes every frame the engine produced for each"
++    " INDIVIDUAL action of your most recent `action(...)` call: a list with one entry per action, in"
++    " execution order, each with `.action` and `.frames` (intermediate animation frames plus the"
++    " final frame; length 1 means that action caused no animation). After `action(['UP','UP','LEFT'])`"
++    " there are three entries. All change within one entry's `.frames` is that single action"
++    " animating -- read it to see per-move motion and causality that the settled frame discards.\n"
++    "- `frame_stats` summarizes how much THIS game has animated so far: `actions`,"
++    " `animated_actions`, `mean_frames_per_action`, `max_frames`, and `recent_frame_counts`"
++    " (per action, most recent last). Use it to gauge, from the game so far, whether the extra"
++    " frames are likely worth reading.\n"
++    "- `show_animation_by_objects(action_index=0)` prints that action's animation one object at a"
++    " time, each cropped to its own bounding box (labeled with the object's top-left row, col) and"
++    " reduced to its distinct states -- small and legible even for a long animation. Reach for it"
++    " when an action reports animated objects, especially when a small `total_cells_changed` signals"
++    " a focused, meaningful animation (a box growing, a token sliding) rather than a full-board redraw.\n"
++    "- `show_animation_by_bbox(action_index=0, row=..., col=..., rows=..., cols=...)` prints the same"
++    " animation cropped to a region YOU choose (top-left `row`,`col` plus `rows`,`cols`) -- use it to"
++    " inspect a spot the object split missed. Omit `rows`/`cols` to watch the FULL animation frames.\n"
++    "- It is entirely your judgement whether the intermediate frames are signal or noise. Motion may"
++    " be meaningful (an object sliding, a chain reaction, a knock-on effect) OR incidental (a"
++    " decorative transition, a flashing timer/HUD, a cosmetic redraw). Treat multi-frame motion as a"
++    " HYPOTHESIS to test against the puzzle, not a fact. Reading `last_animation` costs tokens only"
++    " when you inspect it, so pull it only when you expect it to help.\n"
++)
++
++# Appended to the per-turn "It receives ..." line only in full-frame mode.
++LAST_ANIMATION_TOOL_CLAUSE = (
++    " It also provides `last_animation` (per-action frames of your last `action(...)` call) and"
++    " `frame_stats` (how much this game has animated so far) -- optional; use them only if you"
++    " judge the intermediate motion informative rather than incidental."
++)
++
+ PYTHON_ADDENDUM = (
+     "\n\nPython tool guidance:\n"
+     "- Use `current_frame.segmentation` as your primary view of the board -- objects, colors, containment, adjacency, and cross-frame object hashes.\n"
+@@ -98,7 +148,7 @@
+     "- Call `action(...)` inside Python rather than returning action text in the chat.\n"
+     "- `action(...)` accepts an ordered list of one or more actions. Once your code has selected a reliable sequence, it is often useful to batch it.\n"
+     "- You can also call `action(...)` multiple times in one Python snippet, including inside loops. Each call updates the preloaded variables before execution continues.\n"
+-    "- If an action result reports `game_over`, `run_complete`, `level_completed`, or `done`, stop acting immediately and re-ground on the next turn.\n"
++    "- If an action result reports `game_over`, `level_completed`, or `done`, stop acting immediately and re-ground on the next turn.\n"
+ )
+ 
+ COMPACT_TOOL_SESSION_ADDENDUM = (
+diff -ruN a/inference/agent/python_tool_sandbox.py b/inference/agent/python_tool_sandbox.py
+--- a/inference/agent/python_tool_sandbox.py	2026-07-19 13:52:50.799790323 -0400
++++ b/inference/agent/python_tool_sandbox.py	2026-07-19 13:52:50.810305219 -0400
+@@ -145,6 +145,71 @@
+ 
+         __repr__ = __str__
+ 
++    class StateGraphView:
++        # Per-level graph of canonical (HUD-excluded) states and the actions between them. Only your
++        # CURRENT node's immediate edges are shipped each turn (cheap, always here); the deeper graph
++        # is fetched ON DEMAND via the methods below -- each is ONE host round-trip, so use them to
++        # plan a route, not every turn.
++        #   .current       -- your node id now
++        #   .current_turn  -- the TURN you first reached this node (map it to a point in `history`)
++        #   .graph_nodes   -- number of distinct states seen this level
++        #   .edges         -- immediate edge map at the current node:
++        #                     {action: {'to': id, 'turn': t} | 'unexplored' | {'to':[ids],'nondet':True}}
++        #                     'unexplored' actions are your local frontier (mouse is always unexplored).
++        def __init__(self, raw):
++            raw = raw if isinstance(raw, dict) else {}
++            self.current = raw.get("current")
++            self.current_turn = raw.get("current_turn")
++            self.graph_nodes = int(raw.get("graph_nodes") or 0)
++            self.edges = dict(raw.get("edges") or {})
++
++        def untried(self):
++            # actions at the CURRENT node you have not tried yet (the local frontier) -- already known
++            # from `.edges`, no round-trip.
++            return [a for a, v in self.edges.items() if v == "unexplored"]
++
++        def _query(self, op, **kw):
++            _send({"type": "graph_query", "op": op, **kw})
++            reply = _recv()
++            if reply.get("type") != "graph_result":
++                raise RuntimeError("Invalid graph_query response from sandbox host.")
++            return reply.get("result")
++
++        def chains(self, depth=3, node=None):
++            # Deeper explored chains from a node (default current), up to `depth` ACTIONS. Returns
++            # {from, depth, chains:[{actions:[...], to: <id> | 'unexplored' | [ids]}, ...], truncated}.
++            # YOU pick depth (deeper = more of the explored tree, more tokens). 'unexplored' = a chain
++            # that reaches a new (state, action) -- the frontier to aim a plan at.
++            return self._query("chains", depth=depth, node=node)
++
++        def neighbors(self, node_id):
++            # [{action, to, turn}, ...] -- every recorded out-edge of node_id (mouse clicks included).
++            return self._query("neighbors", node=node_id)
++
++        def distance(self, a, b):
++            # fewest known edges from node a to node b, or None if b is unreachable via explored edges.
++            return self._query("distance", a=a, b=b)
++
++        def path(self, a, b):
++            # a shortest action sequence [action, ...] from node a to node b over known edges, or None.
++            return self._query("path", a=a, b=b)
++
++        def frontier(self):
++            # every node that still has an untried valid action: [{id, turn, untried:[actions]}], most
++            # recent first -- the open exploration frontier across the whole level.
++            return self._query("frontier")
++
++        def immediate_edges(self, node=None):
++            # the immediate edge map for any node (default = current, served from `.edges` with no
++            # round-trip); same shape as `.edges`.
++            return dict(self.edges) if node is None else self._query("immediate_edges", node=node)
++
++        def __str__(self):
++            return (f"StateGraphView(current={self.current}@turn{self.current_turn}, "
++                    f"nodes={self.graph_nodes}, edges_here={len(self.edges)})")
++
++        __repr__ = __str__
++
+ 
+     class HistoryEntryView:
+         def __init__(self, *, action, frame):
+@@ -157,6 +222,127 @@
+         __repr__ = __str__
+ 
+ 
++    class ActionFramesView:
++        # One executed action and every frame the engine produced for it
++        # (intermediates + final). Only populated in full-frame mode.
++        def __init__(self, *, action, frames):
++            self.action = action
++            self.frames = frames
++
++        def __str__(self):
++            return f"ActionFramesView(action={self.action!r}, frames={len(self.frames)})"
++
++        __repr__ = __str__
++
++        def _rows(self):
++            return [f.ascii.split("\n") for f in self.frames]
++
++        def objects(self, gap=1):
++            # Separate the animation into distinct animated objects: a cell is animated if
++            # its value varies across the frames; animated cells that touch (8-connected,
++            # with `gap` cells of slack) form one object. Largest first -- a box resizing
++            # and a light blinking at once each get their own tight box.
++            rows = self._rows()
++            if not rows:
++                return []
++            nrows = max(len(r) for r in rows)
++            ncols = max((len(r[0]) if r and r[0] else 0) for r in rows)
++            active = set()
++            for r in range(nrows):
++                for c in range(ncols):
++                    vals = set()
++                    for g in rows:
++                        vals.add(g[r][c] if r < len(g) and c < len(g[r]) else None)
++                        if len(vals) > 1:
++                            active.add((r, c)); break
++            visited = set(); objs = []
++            for start in active:
++                if start in visited:
++                    continue
++                stack = [start]; visited.add(start); comp = []
++                while stack:
++                    rr, cc = stack.pop(); comp.append((rr, cc))
++                    for dr in range(-gap, gap + 1):
++                        for dc in range(-gap, gap + 1):
++                            nb = (rr + dr, cc + dc)
++                            if nb in active and nb not in visited:
++                                visited.add(nb); stack.append(nb)
++                rs = [p[0] for p in comp]; cs = [p[1] for p in comp]
++                objs.append({"pos": [min(rs), min(cs)],
++                             "size": [max(rs) - min(rs) + 1, max(cs) - min(cs) + 1],
++                             "cells": len(comp), "bbox": (min(rs), min(cs), max(rs), max(cs))})
++            objs.sort(key=lambda o: (-o["cells"], o["pos"]))
++            return objs
++
++        def render_objects(self, pad=0, gap=1, max_objects=8):
++            # Compact ASCII of the animation, one separated object at a time, each cropped
++            # to its own bounding box and deduped to its distinct states (hold frames
++            # dropped). Small and legible even for a long animation -- use it when an action
++            # reports animated objects and you want to see what actually moved.
++            rows = self._rows()
++            if len(rows) <= 1:
++                return "(single frame -- no animation)"
++            objs = self.objects(gap=gap)
++            if not objs:
++                return "(no motion within the animation)"
++            lines = [f"{len(objs)} animated object(s) across {len(self.frames)} frames (action {self.action}):"]
++            for o in objs[:max_objects]:
++                r0, c0, r1, c1 = o["bbox"]
++                r0 = max(0, r0 - pad); c0 = max(0, c0 - pad); r1 = r1 + pad; c1 = c1 + pad
++                states = []; prev = None
++                for i, g in enumerate(rows):
++                    crop = tuple((g[r][c0:c1 + 1] if r < len(g) else "") for r in range(r0, r1 + 1))
++                    if crop != prev:
++                        states.append((i, crop)); prev = crop
++                lines.append(
++                    f"object top-left row {o['pos'][0]}, col {o['pos'][1]} -- size {o['size'][0]}x{o['size'][1]}"
++                    f" ({o['cells']} cells) -- {len(states)} states:"
++                )
++                for i, crop in states:
++                    lines.append(f"  f{i}: " + " | ".join(crop))
++            if len(objs) > max_objects:
++                lines.append(f"... (+{len(objs) - max_objects} smaller objects not shown)")
++            return "\n".join(lines)
++
++        def render_bbox(self, row=0, col=0, rows=None, cols=None, max_frames=10):
++            # Compact ASCII of the animation cropped to a region YOU choose (top-left
++            # row,col + rows,cols; omit rows/cols for the whole board = the full animation).
++            # Consecutive identical frames are collapsed and the shown frames are capped so
++            # the output stays small; each shown frame is labeled with its index.
++            grids = self._rows()
++            if not grids:
++                return "(no frames)"
++            nr = max(len(g) for g in grids)
++            nc = max((len(g[0]) if g and g[0] else 0) for g in grids)
++            r0 = max(0, int(row)); c0 = max(0, int(col))
++            r1 = (nr - 1) if rows is None else min(nr - 1, r0 + int(rows) - 1)
++            c1 = (nc - 1) if cols is None else min(nc - 1, c0 + int(cols) - 1)
++            if r1 < r0 or c1 < c0:
++                return "(empty region)"
++            distinct = []; prev = None
++            for i, g in enumerate(grids):
++                crop = tuple((g[r][c0:c1 + 1] if r < len(g) else "") for r in range(r0, r1 + 1))
++                if crop != prev:
++                    distinct.append((i, crop)); prev = crop
++            ch = r1 - r0 + 1; cw = c1 - c0 + 1
++            per = ch * (cw + 1) + 8
++            cap = min(len(distinct), max_frames, max(1, 3500 // max(1, per)))
++            if len(distinct) > cap:
++                pick = sorted({round(k * (len(distinct) - 1) / (cap - 1)) for k in range(cap)})
++                shown = [distinct[j] for j in pick]
++            else:
++                shown = distinct
++            out = [
++                f"animation region top-left row {r0}, col {c0} -- size {ch}x{cw};"
++                f" {len(distinct)} distinct of {len(grids)} frames, showing {len(shown)}"
++                f" (action {self.action}):"
++            ]
++            for i, crop in shown:
++                out.append(f"[frame {i}]")
++                out.extend(crop)
++            return "\n".join(out)
++
++
+     class TransitionView:
+         def __init__(self, *, action, before_frame, after_frame, result):
+             self.action = action
+@@ -343,6 +529,27 @@
+             runtime_globals["history"] = history
+             runtime_globals["transitions"] = transitions
+             runtime_globals["last_transition"] = last_transition
++            # Full-frame mode only: present iff the harness wrote last_animation.
++            # In last-frame mode the key is absent, so this stays an empty list and
++            # the global is effectively inert (the agent just never sees animation).
++            _anim_raw = state_payload.get("last_animation")
++            _anim_raw = _anim_raw if isinstance(_anim_raw, dict) else {}
++            runtime_globals["last_animation"] = [
++                ActionFramesView(
++                    action=str(item.get("action", "")),
++                    frames=[
++                        f for f in (_frame_from_payload(p) for p in item.get("frames", []))
++                        if f is not None
++                    ],
++                )
++                for item in _anim_raw.get("entries", [])
++                if isinstance(item, dict)
++            ]
++            runtime_globals["last_animation_total_actions"] = int(_anim_raw.get("total_actions", 0) or 0)
++            _fs = state_payload.get("frame_stats")
++            runtime_globals["frame_stats"] = dict(_fs) if isinstance(_fs, dict) else {}
++            runtime_globals["state_graph"] = StateGraphView(state_payload.get("state_graph"))
++            runtime_globals["current_state_id"] = runtime_globals["state_graph"].current
+             runtime_globals["previous_frame"] = (
+                 last_transition.before_frame if last_transition is not None else None
+             )
+@@ -353,9 +560,9 @@
+             runtime_globals["valid_actions"] = [str(item) for item in state_payload.get("valid_actions", [])]
+             runtime_globals["last_action_result"] = action_result
+ 
+-        def action(actions):
++        def action(actions, intent="explore"):
+             normalized_actions = _normalize_actions(actions)
+-            _send({"type": "action", "actions": normalized_actions})
++            _send({"type": "action", "actions": normalized_actions, "intent": intent})
+             reply = _recv()
+             if reply.get("type") == "action_error":
+                 raise RuntimeError(str(reply.get("error", "action failed")))
+@@ -367,6 +574,50 @@
+             return action_result
+ 
+         runtime_globals["action"] = action
++
++        def frame_from_state(node):
++            # Reconstruct a FrameView (.ascii / .segmentation / objects) for a PAST state-graph node,
++            # so you can reason about a state you are NOT currently in ("imagine you were standing
++            # there"). `node` is a node id (int) or its canonical key. Returns a FrameView, or None
++            # if the node is unknown / has been clipped from the graph.
++            _send({"type": "frame_from_state", "node": node})
++            reply = _recv()
++            if reply.get("type") != "frame_result":
++                raise RuntimeError("Invalid frame_from_state response from sandbox host.")
++            fr = reply.get("frame")
++            return _frame_from_payload(fr) if fr else None
++
++        runtime_globals["frame_from_state"] = frame_from_state
++
++        def _pick_animation(action_index):
++            anim = runtime_globals.get("last_animation") or []
++            if not anim:
++                print("(no last_animation -- no action yet this turn, or ascii/last-frame mode)")
++                return None
++            if not isinstance(action_index, int) or not (0 <= action_index < len(anim)):
++                print(f"(action_index {action_index} out of range 0..{len(anim) - 1})")
++                return None
++            return anim[action_index]
++
++        def show_animation_by_objects(action_index=0, pad=0, gap=1, max_objects=8):
++            # Print one action's animation split into separate animated objects, each cropped
++            # to its own tight bounding box (with its top-left row,col). Cheap and legible --
++            # reach for it when an action reports animated objects (especially a small
++            # total_cells_changed) and you want to see what moved.
++            entry = _pick_animation(action_index)
++            if entry is not None:
++                print(entry.render_objects(pad=pad, gap=gap, max_objects=max_objects))
++
++        def show_animation_by_bbox(action_index=0, row=0, col=0, rows=None, cols=None, max_frames=10):
++            # Print one action's animation cropped to a region YOU choose (top-left row,col +
++            # rows,cols). Omit rows/cols to see the FULL animation (whole board). Use it to
++            # focus on a spot the object-split missed, or to watch the full frames.
++            entry = _pick_animation(action_index)
++            if entry is not None:
++                print(entry.render_bbox(row=row, col=col, rows=rows, cols=cols, max_frames=max_frames))
++
++        runtime_globals["show_animation_by_objects"] = show_animation_by_objects
++        runtime_globals["show_animation_by_bbox"] = show_animation_by_bbox
+         _refresh_state(initial.get("state") or {})
+ 
+         try:
+@@ -451,6 +702,8 @@
+     timeout_seconds: int,
+     initial_state: dict[str, Any],
+     action_handler: Callable[[list[dict[str, Any]]], dict[str, Any]],
++    frame_handler: Callable[[Any], dict[str, Any] | None] | None = None,
++    graph_handler: Callable[[dict[str, Any]], Any] | None = None,
+ ) -> dict[str, Any]:
+     with tempfile.TemporaryDirectory(prefix="rgb_python_tool_") as sandbox_dir:
+         host_action_results: list[dict[str, Any]] = []
+@@ -536,7 +789,7 @@
+             msg_type = str(message.get("type", "")).strip()
+             if msg_type == "action":
+                 try:
+-                    action_result_payload = action_handler(list(message.get("actions") or []))
++                    action_result_payload = action_handler(list(message.get("actions") or []), message.get("intent"))
+                 except Exception:  # noqa: BLE001
+                     _send_json_line(
+                         process.stdin,
+@@ -559,6 +812,26 @@
+                 )
+                 continue
+ 
++            if msg_type == "frame_from_state":
++                frame = None
++                if frame_handler is not None:
++                    try:
++                        frame = frame_handler(message.get("node"))
++                    except Exception:  # noqa: BLE001
++                        frame = None
++                _send_json_line(process.stdin, {"type": "frame_result", "frame": frame})
++                continue
++
++            if msg_type == "graph_query":
++                result = None
++                if graph_handler is not None:
++                    try:
++                        result = graph_handler({k: v for k, v in message.items() if k != "type"})
++                    except Exception:  # noqa: BLE001
++                        result = None
++                _send_json_line(process.stdin, {"type": "graph_result", "result": result})
++                continue
++
+             if msg_type in {"final", "error"}:
+                 _wait_for_process_exit(process)
+                 return {
+diff -ruN a/inference/agent/runtime_state.py b/inference/agent/runtime_state.py
+--- a/inference/agent/runtime_state.py	2026-07-19 13:52:50.799814946 -0400
++++ b/inference/agent/runtime_state.py	2026-07-19 13:52:50.810215517 -0400
+@@ -124,12 +124,63 @@
+     *,
+     current_frame: Frame | None,
+     history: list[HistoryEntry],
++    last_animation: dict[str, Any] | None = None,
++    frame_stats: dict[str, Any] | None = None,
++    state_graph: dict[str, Any] | None = None,
+ ) -> None:
+     path.parent.mkdir(parents=True, exist_ok=True)
+     payload = {
+         "current_frame": frame_to_payload(current_frame),
+         "history": [history_entry_to_payload(entry) for entry in history],
+     }
++    # Only present in full-frame mode; their absence is what makes a state file
++    # read back as last-frame (see load_last_animation / load_frame_stats).
++    if last_animation is not None:
++        payload["last_animation"] = last_animation
++    if frame_stats is not None:
++        payload["frame_stats"] = frame_stats
++    if state_graph is not None:
++        payload["state_graph"] = state_graph
+     tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+     tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+     tmp_path.replace(path)
++
++
++def load_frame_stats(path: Path) -> dict[str, Any]:
++    """Running per-action animation gauge for the game so far; {} in last-frame
++    mode or for older states, so the sandbox global is just an empty dict then."""
++    if not path.exists():
++        return {}
++    payload = json.loads(path.read_text(encoding="utf-8"))
++    stats = payload.get("frame_stats")
++    return stats if isinstance(stats, dict) else {}
++
++
++def load_state_graph(path: Path) -> dict[str, Any]:
++    """Per-level state graph (light view: current id, per-node stats, edges) as of the last
++    action; {} when absent so the sandbox `state_graph` global degrades to an empty graph."""
++    if not path.exists():
++        return {}
++    payload = json.loads(path.read_text(encoding="utf-8"))
++    graph = payload.get("state_graph")
++    return graph if isinstance(graph, dict) else {}
++
++
++def load_last_animation(path: Path) -> tuple[int, list[tuple[str, list[Frame]]]]:
++    """(total_actions, [(action, [frames]), ...]) for full-frame mode.
++
++    Returns (0, []) when the state has no last_animation -- i.e. last-frame mode,
++    or any older state file -- so callers degrade to last-frame automatically."""
++    if not path.exists():
++        return 0, []
++    payload = json.loads(path.read_text(encoding="utf-8"))
++    anim = payload.get("last_animation")
++    if not isinstance(anim, dict):
++        return 0, []
++    entries: list[tuple[str, list[Frame]]] = []
++    for item in anim.get("entries", []):
++        if not isinstance(item, dict):
++            continue
++        frames = [f for f in (frame_from_payload(p) for p in item.get("frames", [])) if f is not None]
++        entries.append((str(item.get("action", "")), frames))
++    return int(anim.get("total_actions", 0) or 0), entries
+diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
+--- a/inference/agent/tool_agent.py	2026-07-19 13:52:50.799832208 -0400
++++ b/inference/agent/tool_agent.py	2026-07-19 13:52:50.810338417 -0400
+@@ -17,20 +17,32 @@
+ from inference.agent.prompts import (
+     COMPACT_TOOL_SESSION_ADDENDUM,
+     GAME_OVERVIEW_ADDENDUM,
++    LAST_ANIMATION_ADDENDUM,
++    LAST_ANIMATION_TOOL_CLAUSE,
+     PYTHON_ADDENDUM,
+     STRUCTURED_RUNTIME_STATE_ADDENDUM,
++    STATE_GRAPH_ADDENDUM,
+     MULTIMODAL_CONTEXT_ADDENDUM,
+     TOOL_CALL_FORMAT_GUIDANCE,
+     VISUAL_GAME_ADDENDUM,
+ )
+ 
++from inference.agent.frame_mode import full_frame_enabled
+ from inference.agent.vision_context import (
+     current_grid_image_enabled,
+     current_grid_image_part,
+ )
+ 
+ from inference.agent.python_tool_sandbox import run_sandboxed_python
+-from inference.agent.runtime_state import Frame, HistoryEntry, RUNTIME_STATE_FILENAME, load_runtime_state
++from inference.agent.runtime_state import (
++    Frame,
++    HistoryEntry,
++    RUNTIME_STATE_FILENAME,
++    load_frame_stats,
++    load_last_animation,
++    load_runtime_state,
++    load_state_graph,
++)
+ from inference.utils.openai_compat import build_chat_payload, build_headers
+ 
+ log = logging.getLogger(__name__)
+@@ -260,6 +272,18 @@
+     }
+ 
+ 
++def _extract_hud_model_code(content: str) -> str:
++    """Pull a fenced code block that defines `advance_hud`, preserving newlines and
++    indentation. The labeled-block extractor collapses a multi-line note to a single
++    line (right for prose, fatal for Python), so HUD-model CODE takes this path
++    instead. Returns the first such block raw, or '' when the assistant wrote none."""
++    for match in re.finditer(r"```[^\n]*\n(.*?)```", content, re.DOTALL):
++        block = match.group(1)
++        if "def advance_hud" in block:
++            return block.strip("\n")
++    return ""
++
++
+ def _extract_scientist_note(content: str) -> dict[str, str]:
+     if not content.strip():
+         return {}
+@@ -279,6 +303,7 @@
+         ],
+     )
+     result = {
++        "hud_model": _extract_hud_model_code(content),
+         "world_model": extracted.get("World model", ""),
+         "goal_model": extracted.get("Goal model", ""),
+         "action_model": extracted.get("Action model", ""),
+@@ -298,6 +323,7 @@
+ 
+ def _empty_world_model() -> dict[str, str]:
+     return {
++        "hud_model": "",
+         "world_model": "",
+         "goal_model": "",
+         "action_model": "",
+@@ -351,6 +377,10 @@
+     prompt = "You are a coding agent solving a grid-based puzzle game."
+     prompt += GAME_OVERVIEW_ADDENDUM
+     prompt += STRUCTURED_RUNTIME_STATE_ADDENDUM
++    if os.environ.get("ARC3_STATE_GRAPH", "").strip().lower() in {"1", "on", "true", "yes"}:
++        prompt += STATE_GRAPH_ADDENDUM
++    if full_frame_enabled():
++        prompt += LAST_ANIMATION_ADDENDUM
+     if current_grid_image_enabled():
+         prompt += MULTIMODAL_CONTEXT_ADDENDUM
+     prompt += VISUAL_GAME_ADDENDUM
+@@ -951,6 +981,7 @@
+         self._session_total_tokens = 0
+         self._session_generated_tokens = 0
+         self._step_env_callback: Callable[[dict[str, Any]], dict[str, Any]] | None = None
++        self._graph_query_callback: Callable[[Any], dict[str, Any] | None] | None = None
+         self._current_valid_actions: list[str] = []
+         self._last_step_summary: dict[str, Any] | None = None
+         self._last_action_result: dict[str, Any] | None = None
+@@ -1039,7 +1070,11 @@
+             total_executed += max(1, parsed)
+             action_names = item.get("executed_actions")
+             if isinstance(action_names, list):
+-                executed_actions.extend(str(name).strip() for name in action_names if str(name).strip())
++                # Items are per-action dicts ({action, animation}); tolerate legacy strings.
++                names = (
++                    (n.get("action") if isinstance(n, dict) else n) for n in action_names
++                )
++                executed_actions.extend(str(name).strip() for name in names if str(name).strip())
+             else:
+                 fallback_action = str(item.get("action_display") or "").strip()
+                 if fallback_action:
+@@ -1220,7 +1255,8 @@
+             [
+                 state_line,
+                 f"Valid actions right now: {_format_valid_action_line(valid_actions)}.",
+-                "Only tool: `python`. It receives `current_frame`, `previous_frame`, `history`, `transitions`, `last_transition`, `valid_actions`, `last_action_result`, and `action(actions)`.",
++                "Only tool: `python`. It receives `current_frame`, `previous_frame`, `history`, `transitions`, `last_transition`, `valid_actions`, `last_action_result`, and `action(actions)`."
++                + (LAST_ANIMATION_TOOL_CLAUSE if full_frame_enabled() else ""),
+                 "Only letter-coded board views and lightweight metadata are exposed; raw numeric color IDs are not available.",
+                 "Keep tool output compact: use `current_frame.segmentation` as the primary view, and `current_frame.ascii` only for a small specific region; never print full boards.",
+                 "For the most recent change, compare `previous_frame` to `current_frame`, or `last_transition.before_frame` to `last_transition.after_frame`; `history[-1].frame` is the current frame, not the previous one.",
+@@ -1231,7 +1267,7 @@
+         )
+         lines.append(
+             "You may call `action(actions)` more than once in one Python snippet if your search or control loop needs it, "
+-            "but stop immediately if a result reports `game_over`, `run_complete`, `level_completed`, or `done`."
++            "but stop immediately if a result reports `game_over`, `level_completed`, or `done`."
+         )
+         lines.extend(self._summarized_knowledge_lines())
+         lines.append("end of world model. ")
+@@ -1423,17 +1459,25 @@
+             "state": payload.get("state"),
+             "valid_actions": payload.get("valid_actions", []),
+             "board_changed": bool(payload.get("board_changed")),
++            "gameplay_changed": bool(payload.get("gameplay_changed")),
++            "no_impact": bool(payload.get("no_impact")),
+             "done": bool(payload.get("done")),
+             "level_completed": bool(payload.get("level_completed")),
+             "game_over": bool(payload.get("game_over")),
+-            "run_complete": bool(payload.get("run_complete")),
+             "action_display": payload.get("action_display") or payload.get("action_name"),
+         }
+         executed_actions = payload.get("executed_actions")
+         if isinstance(executed_actions, list) and executed_actions:
+-            compact["executed_actions"] = [str(action).strip() for action in executed_actions if str(action).strip()]
++            if all(isinstance(a, dict) for a in executed_actions):
++                # Rich per-action records ({action, animation}) pass through verbatim so the
++                # model sees each action's separated animated objects and per-frame deltas.
++                compact["executed_actions"] = executed_actions
++            else:
++                compact["executed_actions"] = [str(a).strip() for a in executed_actions if str(a).strip()]
+         elif compact.get("action_display"):
+-            compact["executed_actions"] = [str(compact["action_display"]).strip()]
++            compact["executed_actions"] = [
++                {"action": str(compact["action_display"]).strip(), "animation": payload.get("animation")}
++            ]
+         batch_size = int(payload.get("requested_count") or payload.get("executed_count") or 1)
+         if batch_size > 1 or bool(payload.get("stopped_early")):
+             compact["requested_count"] = payload.get("requested_count", batch_size)
+@@ -1443,9 +1487,60 @@
+             compact["stop_reason"] = payload.get("stop_reason")
+         if payload.get("stop_detail"):
+             compact["stop_detail"] = payload.get("stop_detail")
++        if payload.get("hud_band"):
++            compact["hud_band"] = payload.get("hud_band")
++        for _k in ("no_impact_source", "hud_model", "hud_model_error"):
++            if payload.get(_k):
++                compact[_k] = payload.get(_k)
++        # State-graph signals -- surfaced every turn so the agent does NOT need to query the graph
++        # for its current position / frontier (that was the main overhead).
++        if payload.get("state_node_id") is not None:
++            compact["state_node_id"] = payload.get("state_node_id")
++            compact["state_turn"] = payload.get("state_turn")
++            compact["graph_nodes"] = payload.get("graph_nodes")
++            compact["edges_here"] = payload.get("edges_here")
++            compact["untried_here"] = payload.get("untried_here")
++        for _k in ("revisited_state", "nondeterministic_edge", "reexplore_unproductive"):
++            if payload.get(_k):
++                compact[_k] = True
++        if payload.get("known_action_rejected"):
++            compact["known_action_rejected"] = True
++            compact["rejected_plan"] = payload.get("rejected_plan")
++            compact["terminal_node"] = payload.get("terminal_node")
++        if payload.get("hud_model") == "stale":
++            compact["hud_model_note"] = (
++                "your registered HUD model mispredicted the bar (a refill / new level / rule change) -- "
++                "rewrite advance_hud in a `HUD model:` block to restore exact no-impact detection."
++            )
++        if compact.get("stop_reason") == "no_impact_action":
++            compact["note"] = (
++                "action had no impact on the game (only the predictable HUD/edge band changed) -- re-grounding."
++            )
++        elif compact.get("stop_reason") == "known_action_rejected":
++            compact["note"] = (
++                f"REJECTED (nothing executed): your whole planned sequence {payload.get('rejected_plan')} follows "
++                f"only already-tried edges from node {compact.get('state_node_id')} and ends back at visited node "
++                f"{payload.get('terminal_node')} -- it reaches NO new (state, action). Routing through known/"
++                "fully-explored states is fine, but the plan must END somewhere new: append an UNTRIED action so "
++                "the sequence reaches an unexplored (state, action). `edges_here`/`untried_here` show the local "
++                "frontier; for a route to a distant frontier call `state_graph.frontier()`, `state_graph.chains("
++                "depth=k)`, `state_graph.path(a,b)`, or `frame_from_state(id)` to inspect a state before going."
++            )
++        elif compact.get("stop_reason") == "reexplore_no_progress":
++            compact["note"] = (
++                "re-explore stopped: this action did not reach a new state. Plan a route via `state_graph` "
++                "(`.frontier()`, `.chains(depth=k)`, `.path(a,b)`) that ENDS on an unvisited frontier node."
++            )
++        elif payload.get("reexplore_unproductive"):
++            compact["note"] = (
++                "re-explore batch looped through known states without reaching a new one -- aim an action "
++                "(or a planned route via `state_graph`) at an unvisited frontier node."
++            )
+         for timing_key in ("run_elapsed_seconds", "time_remaining_seconds"):
+             if timing_key in payload:
+                 compact[timing_key] = payload.get(timing_key)
++        # Animation now lives entirely inside each executed action's `animation` record
++        # (see executed_actions above); the old flat animation_* keys are no longer surfaced.
+         if payload.get("error"):
+             compact["error"] = payload.get("error")
+         return compact
+@@ -1479,8 +1574,23 @@
+                 if isinstance(last_action_result, dict)
+                 else self._last_action_result
+             )
++            # Empty in last-frame mode (no last_animation persisted); the sandbox
++            # then leaves `last_animation` an inert empty list.
++            anim_total, anim_entries = load_last_animation(state_path)
+             return {
+                 "current_frame": current_frame_payload,
++                "last_animation": {
++                    "total_actions": anim_total,
++                    "entries": [
++                        {
++                            "action": entry_action,
++                            "frames": [_ascii_frame_view_payload(f) for f in entry_frames],
++                        }
++                        for entry_action, entry_frames in anim_entries
++                    ],
++                },
++                "frame_stats": load_frame_stats(state_path),
++                "state_graph": load_state_graph(state_path),
+                 "history": _ascii_history_view_payload(refreshed_history),
+                 "valid_actions": sanitized_actions,
+                 "last_action_result": (
+@@ -1492,7 +1602,7 @@
+ 
+         terminal_action_result: dict[str, Any] | None = None
+ 
+-        def _handle_action(actions: list[dict[str, Any]]) -> dict[str, Any]:
++        def _handle_action(actions: list[dict[str, Any]], intent: str | None = None) -> dict[str, Any]:
+             nonlocal terminal_action_result
+             if self._step_env_callback is None:
+                 raise RuntimeError("action(actions) is not available in this session.")
+@@ -1526,7 +1636,11 @@
+                         last_action_result=compact_payload,
+                     ),
+                 }
+-            raw_payload = self._step_env_callback({"actions": normalized_actions})
++            raw_payload = self._step_env_callback({
++                "actions": normalized_actions,
++                "intent": intent or "explore",
++                "hud_model": self._summarized_knowledge.get("hud_model", ""),
++            })
+             if not isinstance(raw_payload, dict):
+                 raise RuntimeError("action(actions) did not return a JSON-like payload.")
+             compact_payload = self._compact_action_result(raw_payload)
+@@ -1544,11 +1658,23 @@
+                 ),
+             }
+ 
++        def _handle_frame_from_state(node_ref: Any) -> dict[str, Any] | None:
++            cb = getattr(self, "_graph_query_callback", None)
++            return cb(node_ref) if cb is not None else None
++
++        def _handle_graph_query(request: dict[str, Any]) -> Any:
++            # On-demand deeper graph queries (chains/neighbors/distance/path/frontier). Same host
++            # callback as frame_from_state; the request dict carries an `op` the session dispatches.
++            cb = getattr(self, "_graph_query_callback", None)
++            return cb(request) if cb is not None else None
++
+         sandbox_result = run_sandboxed_python(
+             code=code,
+             timeout_seconds=self._python_timeout,
+             initial_state=_serialized_runtime_state(),
+             action_handler=_handle_action,
++            frame_handler=_handle_frame_from_state,
++            graph_handler=_handle_graph_query,
+         )
+ 
+         action_results = [
+@@ -1714,11 +1840,13 @@
+         transcript_updated: Callable[[str], None] | None = None,
+         request_timeout_seconds: float | None = None,
+         should_stop: Callable[[], bool] | None = None,
++        graph_query: Callable[[Any], dict[str, Any] | None] | None = None,
+     ) -> AnalyzerTurnResult | None:
+         if not state_path.exists():
+             return None
+         self._ensure_session(state_path)
+         self._step_env_callback = step_env
++        self._graph_query_callback = graph_query
+         self._current_valid_actions = _normalize_valid_actions(valid_actions)
+ 
+         analyzer_log = transcript_path or (state_path.parent / f"{state_path.stem}_analyzer.txt")
+@@ -2018,6 +2146,7 @@
+             else:
+                 self._history_messages = previous_history_messages
+             self._step_env_callback = None
++            self._graph_query_callback = None
+             self._current_valid_actions = []
+ 
+         if step_executed:
+diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
+--- a/inference/framework/solver.py	2026-07-19 13:52:50.800037769 -0400
++++ b/inference/framework/solver.py	2026-07-19 13:52:50.810043613 -0400
+@@ -28,6 +28,7 @@
+     to_model_action,
+     to_model_actions,
+ )
++from inference.agent.frame_mode import full_frame_enabled
+ from inference.agent.runtime_state import (
+     Frame,
+     HistoryEntry,
+@@ -98,6 +99,684 @@
+     return tuple(tuple(int(cell) for cell in row) for row in rows)
+ 
+ 
++def _grid_from_frame(frame) -> tuple[tuple[int, ...], ...]:
++    data = getattr(frame, "data", frame)
++    rows = data.tolist() if hasattr(data, "tolist") else data
++    try:
++        return tuple(tuple(int(cell) for cell in row) for row in rows)
++    except (TypeError, ValueError):
++        return ()
++
++
++def _grid_diff_count(a, b, cells=None) -> int:
++    """Cells that differ between two grids. Restricted to `cells` (an iterable of
++    (r, c)) when given, else the full grid."""
++    if cells is not None:
++        n = 0
++        for r, c in cells:
++            av = a[r][c] if r < len(a) and c < len(a[r]) else None
++            bv = b[r][c] if r < len(b) and c < len(b[r]) else None
++            if av != bv:
++                n += 1
++        return n
++    n = 0
++    for r in range(max(len(a), len(b))):
++        ar = a[r] if r < len(a) else ()
++        br = b[r] if r < len(b) else ()
++        for c in range(max(len(ar), len(br))):
++            if (ar[c] if c < len(ar) else None) != (br[c] if c < len(br) else None):
++                n += 1
++    return n
++
++
++def _animated_objects(grids, gap: int = 1) -> list[dict[str, Any]]:
++    """Separate an animation into distinct 'animated objects'. A cell is animated if
++    its value varies across the frames; animated cells that touch (8-connected, with
++    `gap` cells of slack for a shape moving a small step) are one object. Returns a
++    list of {pos:[row,col], size:[rows,cols], cells:int, _cells:frozenset}, largest
++    first -- so two things animating at once (e.g. a growing box and a blinking light)
++    each get their own tight bounding box instead of one huge merged one."""
++    if not grids:
++        return []
++    nrows = max(len(g) for g in grids)
++    ncols = max((len(g[0]) if g else 0) for g in grids)
++    active: set[tuple[int, int]] = set()
++    for r in range(nrows):
++        for c in range(ncols):
++            seen_vals = set()
++            for g in grids:
++                seen_vals.add(g[r][c] if r < len(g) and c < len(g[r]) else None)
++                if len(seen_vals) > 1:
++                    active.add((r, c))
++                    break
++    visited: set[tuple[int, int]] = set()
++    objects: list[dict[str, Any]] = []
++    for start in active:
++        if start in visited:
++            continue
++        stack = [start]
++        visited.add(start)
++        comp: list[tuple[int, int]] = []
++        while stack:
++            r, c = stack.pop()
++            comp.append((r, c))
++            for dr in range(-gap, gap + 1):
++                for dc in range(-gap, gap + 1):
++                    nb = (r + dr, c + dc)
++                    if nb in active and nb not in visited:
++                        visited.add(nb)
++                        stack.append(nb)
++        rs = [p[0] for p in comp]
++        cs = [p[1] for p in comp]
++        objects.append({
++            "pos": [min(rs), min(cs)],
++            "size": [max(rs) - min(rs) + 1, max(cs) - min(cs) + 1],
++            "cells": len(comp),
++            "_cells": frozenset(comp),
++        })
++    objects.sort(key=lambda o: (-o["cells"], o["pos"]))
++    return objects
++
++
++def _changed_axes(a, b, band_rows, band_cols, model_bar=None):
++    """Rows and cols that differ between grids a and b, plus whether any differing cell lies
++    OUTSIDE the housekeeping mask. The mask is the band (band_rows/band_cols) UNION the model's
++    predicted bar cells (`model_bar`, a set of (r, c) or None). Single pass over the grid."""
++    changed_rows: set[int] = set()
++    changed_cols: set[int] = set()
++    outside = False
++    n = max(len(a), len(b))
++    for r in range(n):
++        ar = a[r] if r < len(a) else ()
++        br = b[r] if r < len(b) else ()
++        m = max(len(ar), len(br))
++        for c in range(m):
++            if (ar[c] if c < len(ar) else None) != (br[c] if c < len(br) else None):
++                changed_rows.add(r)
++                changed_cols.add(c)
++                if (r not in band_rows and c not in band_cols
++                        and (model_bar is None or (r, c) not in model_bar)):
++                    outside = True
++    return changed_rows, changed_cols, outside
++
++
++def _band_desc(rows, cols):
++    parts = []
++    if rows:
++        parts.append(f"rows {min(rows)}-{max(rows)}")
++    if cols:
++        parts.append(f"cols {min(cols)}-{max(cols)}")
++    return ", ".join(parts) or None
++
++
++class _HousekeepingBand:
++    """Learns the deterministic 'housekeeping' band -- a HUD moves/timer bar or edge strip --
++    online, per level. A bar is invisible to per-CELL change frequency (each cell changes once
++    as the frontier passes) but at the ROW/COL level its rows (or cols) change on nearly every
++    action; so a row/col that changed on >= `threshold` of a rolling window of the last
++    `window` actions is housekeeping. Reset on level change (the bar may move). An empty band
++    means no HUD, so a no-impact action is simply an unchanged board."""
++
++    def __init__(self, window: int = 20, threshold: float = 0.9, warmup: int = 8):
++        self.window = window
++        self.threshold = threshold
++        self.warmup = warmup
++        self._hist: list[tuple[set[int], set[int]]] = []
++
++    def reset(self) -> None:
++        self._hist = []
++
++    def band(self) -> tuple[set[int], set[int]]:
++        n = len(self._hist)
++        if n < self.warmup:
++            return set(), set()
++        rc: dict[int, int] = {}
++        cc: dict[int, int] = {}
++        for rows, cols in self._hist:
++            for r in rows:
++                rc[r] = rc.get(r, 0) + 1
++            for c in cols:
++                cc[c] = cc.get(c, 0) + 1
++        thr = self.threshold * n
++        return ({r for r, k in rc.items() if k >= thr}, {c for c, k in cc.items() if k >= thr})
++
++    def observe(self, changed_rows: set[int], changed_cols: set[int]) -> None:
++        self._hist.append((set(changed_rows), set(changed_cols)))
++        if len(self._hist) > self.window:
++            self._hist.pop(0)
++
++
++_ARC_COLOR_CHARS = "WwgGcBMPRbSYOrNp"
++
++
++def _grid_to_rows(grid):
++    """int grid -> list of letter-coded row strings (the `frame` format advance_hud sees)."""
++    return ["".join(_ARC_COLOR_CHARS[max(0, min(15, int(v)))] for v in row) for row in grid]
++
++
++def _verify_hud_model(prev_rows, actual_rows, pred_rows):
++    """prev/actual/pred are letter-row lists. Returns (model_ok, bar_cells): bar_cells = the cells
++    the model changed vs prev (its claimed housekeeping); model_ok = the real board matches the
++    prediction on every one of them. The caller unions bar_cells into the housekeeping mask (it
++    never subtracts, so a partial model can't cause a false no-impact miss)."""
++    model_ok = True
++    bar_cells = set()
++    n = max(len(prev_rows), len(actual_rows), len(pred_rows))
++    for r in range(n):
++        p = prev_rows[r] if r < len(prev_rows) else ""
++        a = actual_rows[r] if r < len(actual_rows) else ""
++        d = pred_rows[r] if r < len(pred_rows) else ""
++        m = max(len(p), len(a), len(d))
++        for c in range(m):
++            pc = p[c] if c < len(p) else None
++            ac = a[c] if c < len(a) else None
++            dc = d[c] if c < len(d) else None
++            if dc != pc:              # model claims the bar changes this cell
++                bar_cells.add((r, c))
++                if ac != dc:
++                    model_ok = False
++    return model_ok, bar_cells
++
++
++class _HudCodeModel:
++    """An LLM-authored `advance_hud(frame, action) -> frame` predictor, verified by replay.
++    `frame` and the return are newline-joined letter grids (same as current_frame.ascii). While
++    its bar prediction keeps matching reality it drives no-impact detection; a misprediction
++    marks it stale (the agent is asked to rewrite); after MAX_FAILS it is dropped and the caller
++    falls back to the statistical band. Runs under a hard wall-clock cap so a bad model can't
++    hang the run."""
++
++    MAX_FAILS = 2
++    SAFE_BUILTINS = ("range", "len", "min", "max", "abs", "enumerate", "list", "tuple", "str",
++                     "int", "float", "bool", "zip", "sorted", "any", "all", "sum", "map",
++                     "filter", "reversed", "set", "dict", "ord", "chr", "isinstance")
++
++    def __init__(self):
++        self.source = None
++        self.fn = None
++        self.fails = 0
++        self.stale = False
++        self.error = None
++
++    @property
++    def active(self):
++        return self.fn is not None and not self.stale
++
++    def register(self, code):
++        code = str(code or "").strip()
++        if code.startswith("```"):                       # tolerate a fenced block
++            code = code.split("\n", 1)[-1].rsplit("```", 1)[0]
++        if code == self.source and self.fn is not None:
++            return None                                  # unchanged -> keep validity state
++        import builtins as _b
++        ns = {"__builtins__": {k: getattr(_b, k) for k in self.SAFE_BUILTINS if hasattr(_b, k)}}
++        try:
++            exec(code, ns)
++        except Exception as exc:
++            self.error = f"{type(exc).__name__}: {exc}"
++            return self.error
++        fn = ns.get("advance_hud")
++        if not callable(fn):
++            self.error = "code must define advance_hud(frame, action)"
++            return self.error
++        self.source, self.fn, self.fails, self.stale, self.error = code, fn, 0, False, None
++        return None
++
++    def predict(self, frame_ascii, action_display, timeout=0.75):
++        if self.fn is None:
++            return None
++        import signal
++        armed = old = None
++        try:
++            def _to(signum, frame):
++                raise TimeoutError("advance_hud timed out")
++            old = signal.signal(signal.SIGALRM, _to)
++            signal.setitimer(signal.ITIMER_REAL, timeout)
++            armed = True
++        except (ValueError, AttributeError, OSError):
++            armed = False                                # not main thread: run uncapped
++        try:
++            out = self.fn(frame_ascii, action_display)
++            return out if isinstance(out, str) else None
++        except Exception:
++            return None
++        finally:
++            if armed:
++                signal.setitimer(signal.ITIMER_REAL, 0)
++                signal.signal(signal.SIGALRM, old)
++
++    def record(self, model_ok):
++        if model_ok:
++            self.fails = 0
++        else:
++            self.fails += 1
++            if self.fails >= self.MAX_FAILS:
++                self.stale = True
++
++
++class _StateGraph:
++    """Per-level graph of CANONICAL game states (HUD/housekeeping excluded) and the actions
++    between them. Nodes = canonical boards; edges = (state, action_display) -> next_state.
++
++    The canonical key masks the deterministic HUD/edge band (band rows/cols) and any verified
++    `advance_hud` bar cells with an out-of-band sentinel char (`.`, not in the 16-colour palette,
++    so it never collides with a real colour -- masking to colour 0 WOULD collide). The mask is the
++    MONOTONIC union of all housekeeping seen this level; when it grows, every stored node/edge is
++    re-canonicalised (masked cells only increase, so keys can only merge). Reset per level.
++    """
++
++    MASK = "."
++
++    def __init__(self):
++        self.reset()
++
++    def reset(self):
++        self.nodes = {}                 # key -> {grid, node_id, first_seen_step, last_seen_step, visit_count, self_loop_count}
++        self.id_of = {}                 # key -> int id
++        self.key_of = {}                # int id -> key
++        self.next_id = 0
++        self.edges = {}                 # src_key -> {action_display -> {dst_key: count}}
++        self.current_key = None
++        self.mask_rows = set()
++        self.mask_cols = set()
++        self.mask_cells = set()
++
++    def canonical(self, grid):
++        rows = _grid_to_rows(grid)
++        mr, mc, mcells = self.mask_rows, self.mask_cols, self.mask_cells
++        out = []
++        for r, row in enumerate(rows):
++            if r in mr:
++                out.append(self.MASK * len(row))
++            elif mc or mcells:
++                out.append("".join(self.MASK if (c in mc or (r, c) in mcells) else ch
++                                   for c, ch in enumerate(row)))
++            else:
++                out.append(row)
++        return "\n".join(out)
++
++    def set_mask(self, band_rows, band_cols, model_bar):
++        """Canonical mask = the CURRENT rolling housekeeping band (rows/cols) UNION verified
++        `advance_hud` cells (kept monotonically -- those are exact). Deliberately NOT a monotonic
++        union of the band: that permanently masks TRANSIENT over-flags (e.g. a briefly-animating
++        element the band flags for a few actions), which coarsens the graph and risks false
++        revisits. With the rolling band, when the mask shrinks, re-canonicalisation makes those
++        states distinct again -- a MISSED revisit (safe) rather than an over-masked false one."""
++        new_cells = self.mask_cells | set(model_bar or ())
++        new_mr, new_mc = set(band_rows), set(band_cols)
++        if new_mr != self.mask_rows or new_mc != self.mask_cols or new_cells != self.mask_cells:
++            self.mask_rows, self.mask_cols, self.mask_cells = new_mr, new_mc, new_cells
++            if self.nodes:
++                self._recanonicalize()
++
++    def _recanonicalize(self):
++        old_nodes, old_edges, old_current = self.nodes, self.edges, self.current_key
++        self.nodes, self.edges, self.id_of, self.key_of = {}, {}, {}, {}
++        remap = {}
++        for old_key, node in old_nodes.items():
++            nk = self.canonical(node["grid"])
++            remap[old_key] = nk
++            ex = self.nodes.get(nk)
++            if ex is None:
++                self.nodes[nk] = node
++            else:  # two old states collapse into one under the wider mask -> merge
++                ex["visit_count"] += node["visit_count"]
++                ex["self_loop_count"] += node["self_loop_count"]
++                ex["first_seen_step"] = min(ex["first_seen_step"], node["first_seen_step"])
++                ex["last_seen_step"] = max(ex["last_seen_step"], node["last_seen_step"])
++                ex["node_id"] = min(ex["node_id"], node["node_id"])  # lowest id survives
++        for nk, node in self.nodes.items():
++            self.id_of[nk] = node["node_id"]
++            self.key_of[node["node_id"]] = nk
++        for src, amap in old_edges.items():
++            ns = remap[src]
++            for action, dmap in amap.items():
++                for dst, cnt in dmap.items():
++                    nd = remap[dst]
++                    d = self.edges.setdefault(ns, {}).setdefault(action, {})
++                    d[nd] = d.get(nd, 0) + cnt
++        self.current_key = remap.get(old_current) if old_current is not None else None
++
++    def plan_terminal_if_all_known(self, action_sequence):
++        """If EVERY action in the sequence follows a KNOWN deterministic edge from the current node
++        (single recorded destination), return the node id the plan ends at -- the whole plan stays
++        in already-explored territory and reaches no new (state, action), so it is pure re-treading.
++        Return None as soon as an action is untried or non-deterministic (the plan reaches new ground
++        there -> allowed). Self-loops are not stored as edges, so a self-loop action returns None here
++        and is caught per-action by the no_impact stop instead."""
++        cur = self.current_key
++        if cur is None or not action_sequence:
++            return None
++        for act in action_sequence:
++            dmap = self.edges.get(cur, {}).get(act)
++            if not dmap or len(dmap) != 1:
++                return None
++            cur = next(iter(dmap))
++        return self.id_of.get(cur)
++
++    def tried_actions(self, node_id):
++        """Action labels already tried from a node -> the agent computes the frontier as
++        valid_actions minus these (an unexplored (state, action) is where exploration should aim)."""
++        key = self.key_of.get(node_id)
++        return sorted((self.edges.get(key) or {}).keys()) if key is not None else []
++
++    def observe(self, new_grid, action_display, step, band_rows, band_cols, model_bar,
++                valid_actions=None):
++        self.set_mask(band_rows, band_cols, model_bar)
++        prev_key = self.current_key
++        new_key = self.canonical(new_grid)
++        seen_before = new_key in self.nodes
++        self_loop = prev_key is not None and new_key == prev_key
++        va = list(valid_actions or ())
++        if not seen_before:
++            nid = self.next_id
++            self.next_id += 1
++            self.nodes[new_key] = {"grid": new_grid, "node_id": nid, "first_seen_step": step,
++                                   "last_seen_step": step, "visit_count": 1, "self_loop_count": 0,
++                                   "valid_actions": va}
++            self.id_of[new_key] = nid
++            self.key_of[nid] = new_key
++        else:
++            n = self.nodes[new_key]
++            n["visit_count"] += 1
++            n["last_seen_step"] = step
++            if va:
++                n["valid_actions"] = va  # keep the latest valid-action set for this state
++        nondeterministic = False
++        if prev_key is not None and not self_loop:
++            dmap = self.edges.setdefault(prev_key, {}).setdefault(action_display, {})
++            if dmap and new_key not in dmap:
++                nondeterministic = True  # this (state,action) previously led elsewhere
++            dmap[new_key] = dmap.get(new_key, 0) + 1
++        elif self_loop:
++            self.nodes[prev_key]["self_loop_count"] += 1
++        self.current_key = new_key
++        return {
++            "is_new_state": not seen_before,
++            "self_loop": self_loop,
++            "revisited_state": seen_before and not self_loop,
++            "nondeterministic_edge": nondeterministic,
++            "state_node_id": self.id_of[new_key],
++            "graph_nodes": len(self.nodes),
++        }
++
++    def node_grid(self, ref):
++        node = self.nodes.get(self._key_of_ref(ref))
++        return node["grid"] if node else None
++
++    # --- turn co-identity -------------------------------------------------------------------
++    def _turn(self, node_id):
++        """The TURN (step) a node was first discovered -- its human-facing co-identity, so the agent
++        can map a graph node back to a point in its own history ('node 7 = where I was at turn 12')."""
++        key = self.key_of.get(node_id)
++        node = self.nodes.get(key) if key is not None else None
++        return node["first_seen_step"] if node else None
++
++    def id_at_turn(self, turn):
++        """Resolve the node first discovered at TURN -> its node id (None if no node opened then).
++        Lets the agent reference a state by the turn it first appeared, not only by node id."""
++        for key, node in self.nodes.items():
++            if node["first_seen_step"] == turn:
++                return node["node_id"]
++        return None
++
++    def _key_of_ref(self, ref):
++        """A node reference may be a canonical key, a node id (int), or {'turn': N}."""
++        if isinstance(ref, str):
++            return ref
++        if isinstance(ref, dict) and "turn" in ref:
++            return self.key_of.get(self.id_at_turn(ref["turn"]))
++        return self.key_of.get(ref)
++
++    def _node_ref(self, node_id):
++        """Uniform {id, turn} descriptor used everywhere a node is surfaced."""
++        return {"id": node_id, "turn": self._turn(node_id)}
++
++    # --- immediate edges (shipped every turn, tiny) -----------------------------------------
++    def immediate_edges(self, node_id=None):
++        """The current node's immediate edge map: each valid action -> its known destination
++        ({to, turn}, or a list under `to` if non-deterministic) or the string 'unexplored' (an
++        untried action == the local frontier). MOUSE stays 'unexplored' -- its coordinates are an
++        open continuum, so a generic MOUSE is always a new (state, action)."""
++        key = self.current_key if node_id is None else self.key_of.get(node_id)
++        node = self.nodes.get(key) if key is not None else None
++        if node is None:
++            return {}
++        amap = self.edges.get(key, {})
++        out = {}
++        for name in node.get("valid_actions") or []:
++            dmap = amap.get(name)
++            if not dmap:
++                out[name] = "unexplored"
++            elif len(dmap) == 1:
++                dst_id = self.id_of.get(next(iter(dmap)))
++                rec = {"to": dst_id, "turn": self._turn(dst_id)}
++                if dst_id == node["node_id"]:
++                    rec["self"] = True
++                out[name] = rec
++            else:
++                out[name] = {"to": [self.id_of.get(d) for d in dmap], "nondet": True}
++        return out
++
++    # --- deeper explored chains (on-demand, agent-chosen depth) ------------------------------
++    def chains(self, depth=3, node_id=None, cap=400):
++        """Enumerate action chains from a node (default current) up to `depth` actions, each ending
++        in a known node ({to, turn}) or the string 'unexplored' (the chain hits an untried action ->
++        the frontier) or a list under `to` (non-deterministic). Follows only deterministic edges when
++        extending; stops a branch early at an unexplored / non-deterministic action. The agent picks
++        `depth` -- deeper = more of the explored tree, at more tokens."""
++        depth = max(1, min(int(depth), 8))
++        start = self.current_key if node_id is None else self.key_of.get(node_id)
++        out = []
++        truncated = [False]
++
++        def walk(key, acc):
++            if len(out) >= cap:
++                truncated[0] = True
++                return
++            node = self.nodes.get(key)
++            names = (node.get("valid_actions") if node else None) or []
++            amap = self.edges.get(key, {})
++            for name in names:
++                if len(out) >= cap:
++                    truncated[0] = True
++                    return
++                dmap = amap.get(name)
++                if not dmap:  # untried action -> frontier
++                    out.append({"actions": acc + [name], "to": "unexplored"})
++                elif len(dmap) == 1:
++                    dst_key = next(iter(dmap))
++                    dst_id = self.id_of.get(dst_key)
++                    if len(acc) + 1 >= depth:
++                        out.append({"actions": acc + [name], "to": dst_id,
++                                    "turn": self._turn(dst_id)})
++                    else:
++                        walk(dst_key, acc + [name])
++                else:  # non-deterministic edge -> stop, report the alternatives
++                    out.append({"actions": acc + [name], "nondet": True,
++                                "to": [self.id_of.get(d) for d in dmap]})
++
++        if start is not None:
++            walk(start, [])
++        return {"from": self.id_of.get(start), "depth": depth, "chains": out,
++                "truncated": truncated[0]}
++
++    # --- route planning (on-demand, host-computed) ------------------------------------------
++    def _adjacency(self):
++        adj = {}
++        for src, amap in self.edges.items():
++            sid = self.id_of.get(src)
++            for action, dmap in amap.items():
++                for dst in dmap:
++                    adj.setdefault(sid, []).append((self.id_of.get(dst), action))
++        return adj
++
++    def neighbors(self, node_id):
++        """Outgoing edges from a node: [{action, to, turn}] over every recorded edge (individual
++        MOUSE clicks included)."""
++        key = self.key_of.get(node_id)
++        amap = self.edges.get(key, {}) if key is not None else {}
++        out = []
++        for action, dmap in amap.items():
++            for dst in dmap:
++                did = self.id_of.get(dst)
++                out.append({"action": action, "to": did, "turn": self._turn(did)})
++        return out
++
++    def distance(self, a, b):
++        """Fewest known edges from node a to node b (BFS over recorded edges), or None if b is not
++        reachable through explored edges."""
++        if a == b:
++            return 0
++        adj = self._adjacency()
++        seen, frontier, dist = {a}, [a], 0
++        while frontier:
++            dist += 1
++            nxt = []
++            for u in frontier:
++                for v, _ in adj.get(u, ()):
++                    if v == b:
++                        return dist
++                    if v not in seen:
++                        seen.add(v)
++                        nxt.append(v)
++            frontier = nxt
++        return None
++
++    def path(self, a, b):
++        """A shortest action sequence from node a to node b over known edges, or None."""
++        if a == b:
++            return []
++        adj = self._adjacency()
++        seen, frontier = {a}, [(a, [])]
++        while frontier:
++            nxt = []
++            for u, acts in frontier:
++                for v, action in adj.get(u, ()):
++                    if v == b:
++                        return acts + [action]
++                    if v not in seen:
++                        seen.add(v)
++                        nxt.append((v, acts + [action]))
++            frontier = nxt
++        return None
++
++    def frontier(self, cap=100):
++        """Every node that still has an untried valid action (an unexplored (state, action)):
++        [{id, turn, untried:[actions]}], most-recent first -- the open exploration frontier."""
++        out = []
++        for node in sorted(self.nodes.values(), key=lambda n: n["last_seen_step"], reverse=True):
++            key = self.key_of.get(node["node_id"])
++            tried = set((self.edges.get(key) or {}).keys())
++            untried = [a for a in (node.get("valid_actions") or []) if a not in tried]
++            if untried:
++                out.append({"id": node["node_id"], "turn": node["first_seen_step"],
++                            "untried": untried})
++            if len(out) >= cap:
++                break
++        return out
++
++    def minimal_view(self):
++        """The ONLY graph data shipped to the sandbox each turn (small): the current node's id + turn,
++        the total node count, and its immediate edge map. The full graph is NOT shipped -- deeper
++        structure is fetched on demand via the host-computed methods (chains/neighbors/distance/path/
++        frontier/frame_from_state), so the graph costs tokens only when the agent actually queries."""
++        cid = self.id_of.get(self.current_key)
++        return {"current": cid, "current_turn": self._turn(cid) if cid is not None else None,
++                "graph_nodes": len(self.nodes), "edges": self.immediate_edges()}
++
++    def query(self, op, **kw):
++        """Host-side dispatch for the sandbox `state_graph` proxy (one round-trip per call)."""
++        if op == "chains":
++            return self.chains(depth=kw.get("depth", 3), node_id=kw.get("node"))
++        if op == "neighbors":
++            return self.neighbors(kw.get("node"))
++        if op == "distance":
++            return self.distance(kw.get("a"), kw.get("b"))
++        if op == "path":
++            return self.path(kw.get("a"), kw.get("b"))
++        if op == "frontier":
++            return self.frontier(cap=kw.get("cap", 100))
++        if op == "immediate_edges":
++            return self.immediate_edges(node_id=kw.get("node"))
++        return None
++
++
++def _state_graph_enabled() -> bool:
++    """Opt-IN switch for the per-level state graph. Default OFF: the 2026-07-19 lean A/B showed the
++    graph net-negative even after the input-side tax was removed (mean Kaggle 1.53 with vs 2.06
++    without, on a 7-game graph-heavy subset) -- its per-turn reasoning cost trades depth for
++    efficiency, and the score rewards depth. Kept behind the flag for future improvement: set
++    ARC3_STATE_GRAPH to one of {1,on,true,yes} to re-enable (no graph built/surfaced otherwise)."""
++    return os.environ.get("ARC3_STATE_GRAPH", "").strip().lower() in {"1", "on", "true", "yes"}
++
++
++def _reexplore_strict() -> bool:
++    """A/B toggle: with ARC3_REEXPLORE_STRICT set, `intent='re-explore'` hard-stops the batch the
++    moment an action fails to reach a NEW state; otherwise (soft, default) it only flags an
++    unproductive batch afterwards."""
++    return os.environ.get("ARC3_REEXPLORE_STRICT", "").strip().lower() in {"1", "true", "yes"}
++
++
++def _animation_summary(new_state, previous_grid, board_changed) -> dict[str, Any]:
++    """Compact metadata about the intermediate animation frames, added to every action
++    result so the model always sees it -- no opt-in. `animation_only_changed` flags an
++    action that flashed a real transient change but left the same final board. The
++    nested `animation` dict carries the per-action detail (per-frame change magnitudes
++    with hold-frames dropped, plus each separated animated object) that step_env folds
++    into `executed_actions`; `show_animation(...)` renders those objects."""
++    frames = list(getattr(new_state, "all_frames", ()) or ())
++    grids = [g for g in (_grid_from_frame(f) for f in frames) if g]
++    changed: set[tuple[int, int]] = set()
++    for g in grids:
++        for r in range(max(len(previous_grid), len(g))):
++            pr = previous_grid[r] if r < len(previous_grid) else ()
++            gr = g[r] if r < len(g) else ()
++            for c in range(max(len(pr), len(gr))):
++                pv = pr[c] if c < len(pr) else None
++                gv = gr[c] if c < len(gr) else None
++                if pv != gv:
++                    changed.add((r, c))
++    if changed:
++        rows = [x[0] for x in changed]
++        cols = [x[1] for x in changed]
++        bbox = [min(rows), min(cols), max(rows), max(cols)]
++    else:
++        bbox = None
++    # Per-frame change magnitude over [pre-action, f0, f1, ...]; 0 == a hold/dwell frame
++    # (kept -- a run of 0s tells the agent how long a state was held).
++    seq = [previous_grid, *grids]
++    per_frame = [_grid_diff_count(seq[i], seq[i + 1]) for i in range(len(seq) - 1)]
++    objects = []
++    for obj in _animated_objects(grids):
++        obj_per_frame = [_grid_diff_count(seq[i], seq[i + 1], obj["_cells"]) for i in range(len(seq) - 1)]
++        objects.append(
++            f"top-left ({obj['pos'][0]},{obj['pos'][1]}) {obj['size'][0]}x{obj['size'][1]},"
++            f" {obj['cells']} cells, per-frame {obj_per_frame}"
++        )
++    # Compact, self-describing per-action animation record: scalars + one string per
++    # animated object. The per-frame lists are stringified so the result renderer keeps
++    # each on one line. The flat animation_* keys below stay in the payload (the viewer
++    # reads them) but are dropped from the model-facing compact result -- it all lives here.
++    animation = {
++        "num_frames": len(frames),
++        "changed": bool(changed),
++        "only_changed": bool(changed and not board_changed),
++        "total_cells_changed": len(changed),
++        "cells_changed_per_frame": str(per_frame),
++        "objects": objects,
++    }
++    return {
++        "animation_frame_count": len(frames),
++        "animation_changed": bool(changed),
++        "animation_only_changed": bool(changed and not board_changed),
++        "animation_changed_cell_count": len(changed),
++        "animation_changed_bbox": bbox,
++        "animation_transition_count": sum(1 for n in per_frame if n),
++        "animation": animation,
++    }
++
++
+ def _level_number(game: taaf.game.Game) -> int:
+     state = game.current_state
+     completed = int(state.levels_completed)
+@@ -196,8 +875,44 @@
+             self.state_path,
+             current_frame=self.current_frame(),
+             history=self.history_entries,
++            # None in last-frame mode -> the keys are omitted; only full-frame mode
++            # populates these (see _execute_action).
++            last_animation=getattr(self, "last_batch_animations", None),
++            frame_stats=getattr(self, "frame_stats", None),
++            state_graph=getattr(self, "_state_graph_light", None),
+         )
+ 
++    def graph_query(self, request):
++        """Host-side handler for on-demand sandbox `state_graph` queries (one round-trip per call).
++        `request` is either a bare node ref (legacy frame request) or a dict {'op': ...}: op='frame'
++        rebuilds a node's frame payload (for `frame_from_state`); op in
++        {chains,neighbors,distance,path,frontier,immediate_edges} runs the matching host-computed
++        graph method. The full graph never ships to the sandbox -- it is queried through here."""
++        graph = getattr(self, "_state_graph", None)
++        if graph is None:
++            return None
++        op = "frame"
++        node_ref = request
++        if isinstance(request, dict) and "op" in request:
++            op = request["op"]
++            if op != "frame":
++                return graph.query(op, **{k: v for k, v in request.items() if k != "op"})
++            node_ref = request.get("node")
++        key = graph._key_of_ref(node_ref)
++        node = graph.nodes.get(key)
++        if node is None:
++            return None
++        grid = node["grid"]
++        frame = Frame(grid=grid, step=int(node.get("first_seen_step", 0)),
++                      level=_level_number(self.game))
++        return {
++            "ascii": frame.ascii,
++            "step": frame.step,
++            "level": frame.level,
++            "shape": list(frame.shape),
++            "grid": [list(r) for r in grid],
++        }
++
+     def seed_initial_history(self) -> None:
+         if not self.history_entries:
+             self.history_entries.append(
+@@ -299,6 +1014,7 @@
+                         analysis_step=analysis_step,
+                         request_timeout_seconds=self.request_timeout_seconds(),
+                         should_stop=self.should_stop,
++                        graph_query=self.graph_query,
+                     )
+                 finally:
+                     transcript_delta = self._transcript_delta_since(transcript_before)
+@@ -549,6 +1265,24 @@
+             **self.timing_payload(),
+         }
+ 
++    def _rejected_payload(self, plan: list[str], terminal_node: int) -> dict[str, Any]:
++        graph = getattr(self, "_state_graph", None)
++        cur = graph.id_of.get(graph.current_key) if graph and graph.current_key is not None else None
++        edges_here = graph.immediate_edges(cur) if graph and cur is not None else {}
++        return {
++            "executed": False,
++            "known_action_rejected": True,
++            "rejected_plan": list(plan),
++            "terminal_node": terminal_node,
++            "state_node_id": cur,
++            "state_turn": graph._turn(cur) if graph and cur is not None else None,
++            "edges_here": edges_here,
++            "untried_here": [a for a, v in edges_here.items() if v == "unexplored"],
++            "stop_reason": "known_action_rejected",
++            "valid_actions": to_model_actions(_engine_action_names(self.game)),
++            **self.timing_payload(),
++        }
++
+     def _terminal_payload(
+         self, requested_actions: list[arcengine.ActionInput]
+     ) -> dict[str, Any]:
+@@ -596,11 +1330,31 @@
+         total_reward = 0.0
+         stop_reason: str | None = None
+         batch_size = len(requested_actions)
++        intent = str(arguments.get("intent", "explore")).strip().lower()
++        hud_code = arguments.get("hud_model")
++        hud_model_error = None
++        if hud_code:
++            model = getattr(self, "_hud_model", None)
++            if model is None:
++                model = self._hud_model = _HudCodeModel()
++            hud_model_error = model.register(hud_code)
+         requested_displays = [
+             _format_action_display(action.id.name, dict(action.data))
+             for action in requested_actions
+         ]
+ 
++        # Sequence-level predict-and-block (explore): reject a whole PLAN that stays entirely on
++        # already-tried deterministic edges -- it reaches no new (state, action), so it is pure
++        # re-treading. A plan with ANY untried / non-deterministic action is allowed (that is where
++        # it reaches new ground), so the agent may route THROUGH known/fully-explored states as long
++        # as the plan knowingly ends up somewhere new. Self-loops aren't edges -> the per-action
++        # no_impact stop handles those during execution.
++        graph = getattr(self, "_state_graph", None)
++        if intent == "explore" and graph is not None:
++            terminal = graph.plan_terminal_if_all_known(requested_displays)
++            if terminal is not None:
++                return self._rejected_payload(requested_displays, terminal)
++
+         for batch_index, action in enumerate(requested_actions, start=1):
+             if self.should_stop():
+                 stop_reason = "stopped"
+@@ -636,6 +1390,13 @@
+             if payload.get("level_completed"):
+                 stop_reason = "level_completed"
+                 break
++            if intent == "explore" and payload.get("no_impact"):
++                stop_reason = "no_impact_action"
++                break
++            if (intent == "re-explore" and _reexplore_strict()
++                    and not payload.get("is_new_state")):
++                stop_reason = "reexplore_no_progress"
++                break
+ 
+         if not executed_payloads:
+             return self._error_payload("No action was executed.")
+@@ -648,12 +1409,44 @@
+         final_payload["executed_count"] = len(executed_payloads)
+         final_payload["requested_actions"] = requested_displays
+         final_payload["executed_actions"] = [
+-            str(item.get("action_display") or item.get("action_name") or "")
++            {
++                "action": str(item.get("action_display") or item.get("action_name") or ""),
++                "animation": item.get("animation"),
++            }
+             for item in executed_payloads
+         ]
+         final_payload["board_changed"] = any(
+             bool(item.get("board_changed")) for item in executed_payloads
+         )
++        final_payload["gameplay_changed"] = any(
++            bool(item.get("gameplay_changed")) for item in executed_payloads
++        )
++        final_payload["intent"] = intent
++        if intent == "re-explore":
++            # Soft verification (default): flag a re-explore batch that never reached a NEW state.
++            # Strict mode (ARC3_REEXPLORE_STRICT) instead hard-stops mid-batch, above.
++            final_payload["reexplore_unproductive"] = not any(
++                bool(it.get("is_new_state")) for it in executed_payloads)
++        if hud_model_error:
++            final_payload["hud_model_error"] = hud_model_error
++        # Merge animation metadata across the batch.
++        final_payload["animation_frame_count"] = sum(
++            int(it.get("animation_frame_count", 0) or 0) for it in executed_payloads)
++        final_payload["animation_changed"] = any(
++            bool(it.get("animation_changed")) for it in executed_payloads)
++        final_payload["animation_only_changed"] = bool(
++            final_payload["animation_changed"] and not final_payload["board_changed"])
++        final_payload["animation_changed_cell_count"] = max(
++            (int(it.get("animation_changed_cell_count", 0) or 0) for it in executed_payloads),
++            default=0)
++        final_payload["animation_transition_count"] = sum(
++            int(it.get("animation_transition_count", 0) or 0) for it in executed_payloads)
++        _boxes = [it.get("animation_changed_bbox") for it in executed_payloads
++                  if isinstance(it.get("animation_changed_bbox"), list)
++                  and len(it.get("animation_changed_bbox")) == 4]
++        final_payload["animation_changed_bbox"] = ([
++            min(b[0] for b in _boxes), min(b[1] for b in _boxes),
++            max(b[2] for b in _boxes), max(b[3] for b in _boxes)] if _boxes else None)
+         final_payload["stopped_early"] = len(executed_payloads) < batch_size
+         if stop_reason is not None:
+             final_payload["stop_reason"] = stop_reason
+@@ -690,6 +1483,58 @@
+             step=self.action_count,
+             level=_level_number(self.game),
+         )
++        # Full-frame mode: keep every frame the engine produced for THIS single
++        # action (intermediate animation frames + final), one entry per action in
++        # execution order, so the agent can step through per-move motion via the
++        # `last_animation` global. Last-frame mode skips this -- current_frame is
++        # already the settled frame the stock harness always used.
++        if full_frame_enabled():
++            frames_payload = [{
++                "grid": [list(row) for row in current_frame.grid],
++                "step": current_frame.step,
++                "level": current_frame.level,
++            }]
++            try:
++                raw_frames = list(new_state.all_frames)
++                if len(raw_frames) > 1:
++                    level_now = _level_number(self.game)
++                    frames_payload = [
++                        {
++                            "grid": [[int(cell) for cell in row] for row in raw.data],
++                            "step": self.action_count,
++                            "level": level_now,
++                        }
++                        for raw in raw_frames
++                    ]
++            except Exception:
++                pass
++            if batch_index == 1 or not isinstance(getattr(self, "last_batch_animations", None), dict):
++                self.last_batch_animations = {"total_actions": 0, "entries": []}
++            self.last_batch_animations["total_actions"] += 1
++            self.last_batch_animations["entries"].append(
++                {"action": action_display, "frames": frames_payload}
++            )
++            if len(self.last_batch_animations["entries"]) > 16:
++                self.last_batch_animations["entries"] = self.last_batch_animations["entries"][-16:]
++
++            # Running per-action animation gauge for the WHOLE game so far, so the
++            # agent can judge whether this game animates before deciding to spend
++            # tokens reading last_animation. Never reset (unlike last_batch_animations).
++            n_frames = len(frames_payload)
++            fs = getattr(self, "frame_stats", None)
++            if not isinstance(fs, dict):
++                fs = {"actions": 0, "animated_actions": 0, "total_frames": 0,
++                      "max_frames": 0, "recent_frame_counts": []}
++                self.frame_stats = fs
++            fs["actions"] += 1
++            fs["total_frames"] += n_frames
++            if n_frames > 1:
++                fs["animated_actions"] += 1
++            fs["max_frames"] = max(fs["max_frames"], n_frames)
++            fs["recent_frame_counts"].append(n_frames)
++            if len(fs["recent_frame_counts"]) > 16:
++                fs["recent_frame_counts"] = fs["recent_frame_counts"][-16:]
++            fs["mean_frames_per_action"] = round(fs["total_frames"] / fs["actions"], 2)
+         self.history_entries.append(
+             HistoryEntry(action=action_display, frame=current_frame)
+         )
+@@ -700,7 +1545,77 @@
+             1.0, float(self.game.number_of_levels)
+         )
+         raw_state = new_state.raw.state
+-        board_changed = previous_grid != _grid_from_state(new_state)
++        new_grid = _grid_from_state(new_state)
++        board_changed = previous_grid != new_grid
++        # No-impact detection: did this action change GAMEPLAY, or only the deterministic
++        # HUD/edge band (a moves bar, timer, counter)? Learn the band online per level.
++        band = getattr(self, "_hud_band", None)
++        if band is None:
++            band = self._hud_band = _HousekeepingBand()
++        # The state graph is opt-out (ARC3_STATE_GRAPH=off): many games have no map/route structure,
++        # so we A/B whether even the lean graph earns its keep. When off, no graph is built and none
++        # of the graph fields are surfaced -- identical to the pre-graph (ffa7gn) behaviour.
++        graph = None
++        if _state_graph_enabled():
++            graph = getattr(self, "_state_graph", None)
++            if graph is None:
++                graph = self._state_graph = _StateGraph()
++        if completed > previous_completed:  # new level: the HUD may have moved; states reset too
++            band.reset()
++            if graph is not None:
++                graph.reset()
++        band_rows, band_cols = band.band()
++        # A verified LLM `advance_hud` model contributes exactly-predicted bar cells that OVERLAY
++        # the coarse statistical band (union, never subtract, so a partial model can't regress).
++        # CEGIS: verify each action, re-ask on failure; dropped after repeated misses -> pure band.
++        model = getattr(self, "_hud_model", None)
++        model_bar = None
++        hud_model_state = None
++        if model is not None and model.active:
++            prev_rows = _grid_to_rows(previous_grid)
++            pred = model.predict("\n".join(prev_rows), action_display)
++            if pred is None:
++                model.record(False)
++            else:
++                model_ok, bar_cells = _verify_hud_model(
++                    prev_rows, _grid_to_rows(new_grid), pred.split("\n"))
++                model.record(model_ok)
++                if model_ok:
++                    model_bar = bar_cells
++            hud_model_state = ("stale" if model.stale
++                               else "active" if model_bar is not None else "checking")
++        changed_rows, changed_cols, outside = _changed_axes(
++            previous_grid, new_grid, band_rows, band_cols, model_bar)
++        has_mask = bool(band_rows or band_cols or model_bar)
++        # gameplay = a change outside the housekeeping mask; with no mask (warm-up / no HUD) only a
++        # truly unchanged board is a no-impact action.
++        gameplay_changed = outside if has_mask else bool(board_changed)
++        band.observe(changed_rows, changed_cols)
++        no_impact_source = ("model+band" if model_bar is not None and (band_rows or band_cols)
++                            else "model" if model_bar is not None
++                            else "band" if (band_rows or band_cols) else "exact")
++        no_impact = not gameplay_changed
++        # State graph: canonical (HUD-excluded) board. observe() records the edge from the current
++        # node and moves the pointer; the redundant-edge REJECTION happens pre-execution in step_env
++        # (an already-tried edge never reaches here in explore mode). Skipped entirely when the graph
++        # is disabled (ARC3_STATE_GRAPH=off) -- then no graph fields are surfaced.
++        gflags = None
++        edges_here = {}
++        untried_here = []
++        if graph is not None:
++            _valid_names = to_model_actions(_engine_action_names(self.game))
++            gflags = graph.observe(new_grid, action_display, self.action_count,
++                                   band_rows, band_cols, model_bar, valid_actions=_valid_names)
++            # Ship ONLY the minimal view each turn (current node id+turn, count, immediate edge map)
++            # -- NOT the whole graph. Deeper structure is fetched on demand via state_graph.chains().
++            self._state_graph_light = graph.minimal_view()
++            self.write_runtime_state()  # re-write so the sandbox post-action refresh sees the graph
++            # Surface the CURRENT node's immediate edges directly: `edges_here` maps each valid action
++            # to its known destination ({id,turn}) or 'unexplored' (the local frontier); `untried_here`
++            # is the flat list of those unexplored actions. Both tiny -> no tool-call turn needed to
++            # see the frontier (mouse stays 'unexplored' -- its coordinates are always new).
++            edges_here = graph.immediate_edges(gflags["state_node_id"])
++            untried_here = [a for a, v in edges_here.items() if v == "unexplored"]
+         level_completed = bool(
+             new_state.just_won_level and raw_state != arcengine.GameState.WIN
+         )
+@@ -713,6 +1628,11 @@
+             "state": raw_state.name,
+             "valid_actions": to_model_actions(_engine_action_names(self.game)),
+             "board_changed": board_changed,
++            "gameplay_changed": gameplay_changed,
++            "no_impact": no_impact,
++            "no_impact_source": no_impact_source,
++            "hud_band": _band_desc(band_rows, band_cols),
++            "hud_model": hud_model_state,
+             "done": raw_state == arcengine.GameState.WIN,
+             "level_completed": level_completed,
+             "game_over": raw_state == arcengine.GameState.GAME_OVER,
+@@ -728,6 +1648,18 @@
+             "batch_size": batch_size,
+             **self.timing_payload(),
+         }
++        if gflags is not None:  # graph enabled -> surface the current node + its immediate frontier
++            payload.update({
++                "revisited_state": gflags["revisited_state"],
++                "is_new_state": gflags["is_new_state"],
++                "state_node_id": gflags["state_node_id"],
++                "state_turn": graph._turn(gflags["state_node_id"]),
++                "graph_nodes": gflags["graph_nodes"],
++                "edges_here": edges_here,
++                "untried_here": untried_here,
++                "nondeterministic_edge": gflags["nondeterministic_edge"],
++            })
++        payload.update(_animation_summary(new_state, previous_grid, board_changed))
+         self._append_action_viewer_event(payload, current_frame)
+         if flush_viewer_payload:
+             self.write_viewer_payload()

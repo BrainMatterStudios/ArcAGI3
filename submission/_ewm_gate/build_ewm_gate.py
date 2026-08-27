@@ -79,8 +79,11 @@ vlog = open("/kaggle/working/vllm.log", "w")
 vproc = subprocess.Popen(
     [PY, "-m", "vllm.entrypoints.openai.api_server", "--model", MODEL,
      "--served-model-name", "qwen", "--host", "127.0.0.1", "--port", str(QWEN_PORT),
-     "--max-model-len", "32768", "--gpu-memory-utilization", "0.92", "--enforce-eager",
-     "--tensor-parallel-size", os.environ.get("EWM_TP", "4")],  # L4x4 -> 4 GPUs / 96GB for 27B-FP8
+     "--max-model-len", "65536", "--gpu-memory-utilization", "0.92",
+     # RTX Pro 6000 = ONE 97GB GPU -> TP=1 (copied from the duck's PROVEN setup_commands.json,
+     # which scored 0.92 live). TP=4 was for the old nvidiaL4x4 plan and CANNOT serve here.
+     # --enforce-eager dropped: it throttles generation, and this gate is a TOKENS-IN-1h test.
+     "--tensor-parallel-size", os.environ.get("EWM_TP", "1")],
     stdout=vlog, stderr=subprocess.STDOUT)
 print("[gate] serving Qwen (this can take several minutes to load FP8 weights)...", flush=True)
 if not wait_url(f"{BASE_URL}/models", 2400):
@@ -242,7 +245,10 @@ meta = {
                         "driessmit1/vrfai-qwen3-6-27b-fp8-hf-snapshot"],
     "competition_sources": ["arc-prize-2026-arc-agi-3"],
     "kernel_sources": [], "model_sources": [],
-    "machine_shape": "nvidiaL4x4",  # Ada L4x4: FP8-native (cap 8.9), 96GB across 4 GPUs (P100 default is cap 6.0 -> fails FP8)
+    # NOTE: machine_shape is INERT — the accelerator is set by the CLI flag at push time:
+    #   kaggle kernels push -p . --accelerator NvidiaRtxPro6000
+    # (verified 2026-07-18 by GPU probe: RTX PRO 6000 Blackwell, 97887 MiB)
+    "machine_shape": "NvidiaRtxPro6000",
 }
 (OUT / "kernel-metadata.json").write_text(json.dumps(meta, indent=2))
 print(f"wrote {OUT/'ewm-gate.ipynb'} ({(OUT/'ewm-gate.ipynb').stat().st_size//1024} KB, {len(BLOB)} embedded files)")
