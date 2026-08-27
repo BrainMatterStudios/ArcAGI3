@@ -221,7 +221,9 @@ def report(res: dict) -> int:
     print(f"\nPRE-REGISTERED VERDICT: {verdict}")
     if verdict == "KILL":
         print("  => the perception fix is NOT our binding constraint.")
-        print("     Only the actions-per-game lane survives step 1.")
+        print("     (2026-08-27: the actions-per-game lane did NOT survive either —")
+        print("      patch 21 bought 1.40x actions and cleared 25% FEWER levels.")
+        print("      See probe_budget.py and docs §9b.)")
     else:
         print("  => winframe/carryover binds for us; it earns its place in the bundle.")
 
