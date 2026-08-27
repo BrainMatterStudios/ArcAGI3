@@ -187,6 +187,59 @@ for _stem, _gid in DECLINE_PANEL.items():
     assert int(_rec.get("engagements", 0) or 0) == 0, (_gid, _rec)
     assert int(_xs["diag"].get("grinder_actions", 0) or 0) == 0, (_gid, _xs["diag"])
 
+# --- the engine-row capture, against a REAL GameAPI ------------------------
+# Smoke #3 burned a Kaggle push on an instrument that read never-started
+# deep-copy templates and an already-deleted scorecard, and printed a
+# confident "engine_score 0.0" for a game the grinder had cracked and banked.
+# Fakes cannot catch that class of bug, so drive a real GameAPI here: start
+# it, spend actions, finish it, and demand a real engine row.
+print("== engine-row capture against a REAL GameAPI ==")
+import arc_agi as _arc  # noqa: E402
+from arcengine import GameAction as _GA  # noqa: E402
+from taaf.game_api import ArcadeSpec as _Spec  # noqa: E402
+from taaf.game_api import GameAPI as _GameAPI  # noqa: E402
+
+import search_core as _sc  # noqa: E402
+
+_ENV_DIR = str(SUB.parent / "environment_files")
+_ENV_SPEC = _Spec(operation_mode=_arc.OperationMode.OFFLINE,
+                  environments_dir=_ENV_DIR)
+_DISCOVERED = _sc.discover_games(_ENV_DIR)
+# THREE games in one process — the case that was silently broken. Without the
+# ONLY_RESET_LEVELS repair only the FIRST registers a play, so games 2..N read
+# back "no runs" and any bar graded on them is a phantom zero.
+for _n, _stem in enumerate(("tu93", "vc33", "dc22")):
+    _real = _GameAPI(env_name=_DISCOVERED[_stem], arcade_spec=_ENV_SPEC)
+    _real.start_game()
+    assert _real._arcade is not None and _real._scorecard_id, "no scorecard opened"
+    # Step the RAW env, exactly as the grinder does — actions the framework
+    # mirror cannot see but the engine card must.
+    for _ in range(5):
+        _real.env.step(_GA.ACTION1)
+    if _n == 0:
+        # Offline, once the play is REGISTERED, the live card does carry the
+        # row — the empty reads that misled the first fix attempt were the
+        # missing new_play, not a read restriction. Assert it, so a regression
+        # in the reset repair shows up here and not on Kaggle.
+        _live = _real._arcade.get_scorecard(_real._scorecard_id)
+        assert _live is not None and _live.environments, (
+            "the ONLY_RESET_LEVELS repair regressed: no play registered, so "
+            "the engine card has no row for this game")
+        # We still capture at CLOSE, because competition mode refuses a live
+        # read (GET /api/scorecard/<id> is 403 while the run is open) and
+        # close_scorecard then deletes the card (scorecard.py:977).
+    _real.finish_game()
+    _real_row = ns["ENGINE_SCORES"].get(_real.game_id)
+    print(f"  [{_stem}] real row:", json.dumps(_real_row, default=str))
+    assert _real_row and "engine_score" in _real_row, (
+        f"{_stem}: the close_scorecard seam captured no engine row: {_real_row!r}")
+    assert _real_row["engine_plays"] >= 1, (_stem, _real_row)
+    assert _real_row["engine_actions"] >= 5, (_stem, _real_row)  # raw steps landed
+assert os.environ.get("ONLY_RESET_LEVELS") == "true", (
+    "the start seam must leave ONLY_RESET_LEVELS set for the solver")
+ns["ENGINE_SCORES"].clear()
+ns["_CARD_KEYS"].clear()
+
 # --- exercise the REPORT cell on this telemetry + synthetic game_runs ------
 print("\n== report cell (synthetic game_runs, real telemetry) ==")
 REPORT_CELL = cell_with("V8 SMOKE RESULTS")
@@ -199,14 +252,15 @@ def fake_run(gid, levels, n, score, apl, base):
         final_wallclock_seconds=3600.0, base_actions_per_level=base)
 
 
-# Fake engine scorecards so the report's AUTHORITATIVE read is exercised: the
-# real shape is card.find_environment(gid) -> env row with .score (max over
-# plays), .levels_completed, .actions, .resets, .runs[].score, .completed.
+# Fake engine scorecards so the AUTHORITATIVE read is exercised: the real
+# shape is card.find_environment(gid) -> EnvironmentScoreList with .score
+# (max over runs), .levels_completed, .actions, .runs[].score, .completed.
 def fake_env_row(score, levels, actions, plays, level_count):
     return types.SimpleNamespace(
         score=score, levels_completed=levels, actions=actions, resets=12,
         completed=levels == level_count, level_count=level_count,
-        runs=[types.SimpleNamespace(score=p) for p in plays])
+        runs=[types.SimpleNamespace(score=p, levels_completed=levels)
+              for p in plays])
 
 
 _ENGINE_ROWS = {
@@ -236,6 +290,18 @@ def fake_game(gid):
         env=types.SimpleNamespace(
             environment_info=types.SimpleNamespace(game_id=gid)))
 
+
+# Feed the panel's rows through the SAME resolver the run uses, so the report
+# grades on exactly the structure the kernel will produce.
+assert getattr(__import__("taaf.game_api", fromlist=["GameAPI"]).GameAPI._finish_game,
+               "_v8_tel", False), "the _finish_game capture seam must be installed"
+for _i, _gid in enumerate(_ENGINE_ROWS):
+    ns["_CARD_KEYS"][_gid] = (f"sc-{_i}", _gid)
+    ns["_CLOSED_CARDS"][f"sc-{_i}"] = _FakeCard()
+ns["_resolve_engine_rows"]()
+assert set(ns["ENGINE_SCORES"]) == set(_ENGINE_ROWS), ns["ENGINE_SCORES"]
+assert ns["ENGINE_SCORES"]["ft09-0d8bbf25"]["engine_score"] == 100.0, ns["ENGINE_SCORES"]
+print("engine-row resolve:", json.dumps(ns["ENGINE_SCORES"], indent=1)[:400])
 
 ns["bm"] = types.SimpleNamespace(games=[fake_game(g) for g in _ENGINE_ROWS], game_runs=[
     fake_run("ft09-0d8bbf25", 0, 6, 0.0, [3, 0, 0, 0, 0, 0],

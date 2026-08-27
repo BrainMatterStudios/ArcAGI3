@@ -401,6 +401,10 @@ def _snapshot_dict():
             "caps": CAPS,
             "observed": _tel_json.loads(_tel_json.dumps(OBS)),
             "games": _tel_json.loads(_tel_json.dumps(GAMES)),
+            # captured by the _finish_game seam below; empty until the first
+            # game ends (globals() so this stays defined-order independent)
+            "engine_scores": _tel_json.loads(
+                _tel_json.dumps(globals().get("ENGINE_SCORES", {}), default=str)),
             "events": list(EVENTS[-200:]),
         }
 
@@ -713,6 +717,148 @@ def _tel_engage(session, xs, level, genv, raw_env, game_id, *args, **kwargs):
 
 _v8m._engage = _tel_engage
 
+# --- (f) ENGINE SCORECARD capture — the SCORED quantity, taken before the
+# engine throws it away.
+#
+# WHY THIS SEAM (measured, smoke #3, kernel arc3-v8-smoke v3): the report used
+# to walk ``bm.games``. That read is wrong TWICE.
+#   1. benchmark.run() rebinds self.games to deep copies (benchmark.py:135)
+#      and then plays yet another per-pass copy (benchmark.py:151). The
+#      objects left in bm.games were never started, so _arcade is None and the
+#      report's `_card is None` branch skipped every game, silently.
+#   2. Even the right object is too late: GameAPI._finish_game closes the
+#      scorecard (game_api.py:274) and Arcade.close_scorecard DELETES it from
+#      the store (scorecard.py:979, `del self.scorecards[card_id]`), so
+#      get_scorecard afterwards returns None.
+# Smoke #3 printed "ENGINE SCORECARD ... {}" and misgraded ft09 — a game the
+# grinder had cracked 6/6 and banked in 75 actions — as engine_score 0.0.
+# The fix: snapshot the environment row on the PLAYED object, inside
+# _finish_game, while the card is still open. EnvironmentScoreList.score is
+# max-over-runs (scorecard.py:241) — exactly the competition quantity.
+# A LIVE CARD CANNOT BE READ. Measured both ways: in COMPETITION mode
+# `GET /api/scorecard/<id>` is 403 while the run is open (you cannot poll your
+# own score mid-competition — test_competition_scoring.engine_score says so),
+# and OFFLINE the manager's Scorecard carries `cards == {}` until it is
+# closed, so get_scorecard on a live card returns an EnvironmentScorecard with
+# ZERO environments. The card materialises only as the RETURN VALUE of
+# close_scorecard. So capture there: Arcade.close_scorecard is the single seam
+# both modes funnel through (offline: game_api.py:274 direct; competition:
+# game_api.py:86 via _CompetitionScorecard.finish_run).
+import arc_agi as _arcagi
+import taaf.game_api as _gapi
+
+ENGINE_SCORES = {}
+_CLOSED_CARDS = {}      # scorecard_id -> EnvironmentScorecard, as it closed
+_CARD_KEYS = {}         # taaf game_id -> (scorecard_id, engine game_id)
+
+_inner_close = _arcagi.Arcade.close_scorecard
+
+
+def _tel_close(self, scorecard_id=None):
+    card = _inner_close(self, scorecard_id)
+    try:
+        if scorecard_id is not None and card is not None:
+            with _tel_lock:
+                _CLOSED_CARDS[scorecard_id] = card
+    except Exception:  # noqa: BLE001
+        pass
+    return card
+
+
+if not getattr(_arcagi.Arcade.close_scorecard, "_v8_tel", False):
+    _tel_close._v8_tel = True
+    _arcagi.Arcade.close_scorecard = _tel_close
+
+
+def _resolve_engine_rows():
+    """Fill ENGINE_SCORES from whatever cards have closed so far. Idempotent;
+    safe to call repeatedly (the competition lane shares ONE card that closes
+    at teardown, after every _finish_game)."""
+    for gid, (sid, eid) in list(_CARD_KEYS.items()):
+        if "engine_score" in (ENGINE_SCORES.get(gid) or {}):
+            continue
+        card = _CLOSED_CARDS.get(sid)
+        if card is None:
+            ENGINE_SCORES[gid] = {"engine_note": f"card {sid} not closed yet"}
+            continue
+        try:
+            row = card.find_environment(eid)
+        except Exception as exc:  # noqa: BLE001
+            ENGINE_SCORES[gid] = {"engine_note": f"find_environment failed: {exc!r}"}
+            continue
+        if row is None or not row.runs:
+            ENGINE_SCORES[gid] = {"engine_note": f"no runs for engine id {eid!r}"}
+            continue
+        ENGINE_SCORES[gid] = {
+            "engine_score": row.score,
+            "engine_levels": row.levels_completed,
+            "engine_actions": row.actions,
+            "engine_plays": len(row.runs),
+            "engine_play_scores": [round(r.score, 3) for r in row.runs],
+            "engine_play_levels": [r.levels_completed for r in row.runs],
+            "engine_completed": row.completed,
+        }
+        _event(f"{gid}: ENGINE ROW score={row.score} levels={row.levels_completed} "
+               f"plays={len(row.runs)} play_scores={[round(r.score, 3) for r in row.runs]}")
+
+
+# ... and a card only gets a ROW on a FULL reset. Scorecard.update_scorecard
+# creates cards[game_id] exclusively via new_play (scorecard.py:839-841), which
+# needs action RESET with full_reset=True; take_action/set_levels_completed are
+# no-ops until then (`if game_id in self.cards`). GameAPI._start_game knows
+# this — it sets ONLY_RESET_LEVELS *after* arcade.make precisely "so the
+# make-time RESET still full-resets and registers via new_play (which R11.12
+# reconciliation needs)". But the variable is process-wide and NEVER cleared,
+# so from the SECOND game on the make-time RESET is a level-reset and the game
+# never registers at all. MEASURED here, three games in one process:
+#     tu93 -> [('tu93-…', actions 4, runs 1)]      vc33 -> []      ft09 -> []
+# So restore taaf's own intent for every game: clear the flag across
+# arcade.make, and let _start_game set it back to "true" itself, before any
+# solver action. On a FRESH env a full reset and a level reset leave identical
+# observable state — the only difference is whether the play is counted.
+# SMOKE-ONLY: the scored arm carries no telemetry cell.
+_inner_start = _gapi.GameAPI._start_game
+
+
+def _tel_start(self, session):
+    prev = os.environ.pop("ONLY_RESET_LEVELS", None)
+    try:
+        return _inner_start(self, session)
+    finally:
+        if prev is not None and "ONLY_RESET_LEVELS" not in os.environ:
+            os.environ["ONLY_RESET_LEVELS"] = prev
+
+
+if not getattr(_gapi.GameAPI._start_game, "_v8_tel", False):
+    _tel_start._v8_tel = True
+    _gapi.GameAPI._start_game = _tel_start
+
+
+_inner_finish = _gapi.GameAPI._finish_game
+
+
+def _tel_finish(self):
+    gid = getattr(self, "game_id", "?")
+    try:
+        eid = self.env.environment_info.game_id if self.env is not None else gid
+        with _tel_lock:
+            _CARD_KEYS[gid] = (getattr(self, "_scorecard_id", None), eid)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        return _inner_finish(self)
+    finally:
+        try:
+            _resolve_engine_rows()
+            _v8_snapshot()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+if not getattr(_gapi.GameAPI._finish_game, "_v8_tel", False):
+    _tel_finish._v8_tel = True
+    _gapi.GameAPI._finish_game = _tel_finish
+
 print("[v8-tel] counters installed; caps =", CAPS, flush=True)
 '''
 
@@ -736,46 +882,25 @@ COMPARATORS = {
              "note": "0 levels in the effort + carryover smokes"},
 }
 
-# THE SCORED QUANTITY. GameRun counts only actions executed through
-# Game.execute_action (taaf/game.py:497-573); the grinder steps game.env
-# directly, so a grinder win is INVISIBLE to GameRun. The arc_agi scorecard
-# attached to that same env by GameAPI._start_game (taaf/game_api.py:204,
-# arcade.make(..., scorecard_id=...)) sees everything and takes the MAX over
-# plays — that is what the competition gateway scores. Smoke #2 read the
-# framework mirror and reported "ft09 score=0.00" for a game the engine
-# scored 100.00 (its own R11.12 reconciliation said so in the log).
-ENGINE_SCORES = {}
-try:
-    for _g in list(getattr(bm, "games", []) or []):
-        _card = None
-        try:
-            if getattr(_g, "_competition_scorecard", None) is not None:
-                _card = _g._competition_scorecard.finish_run()
-            elif getattr(_g, "_arcade", None) is not None and getattr(_g, "_scorecard_id", None):
-                _card = _g._arcade.get_scorecard(_g._scorecard_id)
-        except Exception as _exc:  # noqa: BLE001
-            print(f"[engine-score] {getattr(_g, 'game_id', '?')}: {_exc!r}")
-        if _card is None:
-            continue
-        try:
-            _eid = _g.env.environment_info.game_id
-            _env_row = _card.find_environment(_eid)
-            if _env_row is not None:
-                ENGINE_SCORES[_g.game_id] = {
-                    "engine_score": _env_row.score,
-                    "engine_levels": _env_row.levels_completed,
-                    "engine_actions": _env_row.actions,
-                    "engine_resets": _env_row.resets,
-                    "engine_plays": len(_env_row.runs or []),
-                    "engine_play_scores": [round(r.score, 3) for r in (_env_row.runs or [])],
-                    "engine_completed": _env_row.completed,
-                }
-        except Exception as _exc:  # noqa: BLE001
-            print(f"[engine-score] {getattr(_g, 'game_id', '?')} read failed: {_exc!r}")
-except Exception as _exc:  # noqa: BLE001
-    print(f"[engine-score] unavailable: {_exc!r}")
-print("ENGINE SCORECARD (authoritative, max over plays):",
-      json.dumps(ENGINE_SCORES, indent=1, default=str))
+# THE SCORED QUANTITY, captured by the telemetry cell's _finish_game seam.
+# GameRun counts only actions executed through Game.execute_action
+# (taaf/game.py:497-573); the grinder steps game.env directly, so a grinder
+# win is INVISIBLE to GameRun. The arc_agi scorecard attached to that same env
+# by GameAPI._start_game (taaf/game_api.py:204) sees everything and takes the
+# MAX over plays — that is what the competition gateway scores.
+#
+# It must be read from the PLAYED object, DURING _finish_game. Smoke #2 read
+# the framework mirror ("ft09 score=0.00" for a game the engine scored
+# 100.00). Smoke #3 read bm.games — never-started deep-copy templates whose
+# _arcade is None (benchmark.py:135/151) — and, even had it found them, the
+# card is deleted by close_scorecard (scorecard.py:979) before this cell runs.
+# Both reads printed a confident zero. This one is taken while the card lives.
+_resolve_engine_rows()   # a shared competition card closes at teardown
+print("ENGINE SCORECARD (authoritative, max over plays; captured as the card "
+      "closed):", json.dumps(ENGINE_SCORES, indent=1, default=str))
+if not any("engine_score" in v for v in ENGINE_SCORES.values()):
+    print("ENGINE SCORECARD EMPTY — the instrument, not the arm, failed; "
+          "every bar graded on it is UNREADABLE, not FAILED.")
 
 games_out = []
 for game_run in list(V8_ALL_RUNS) + list(bm.game_runs):
