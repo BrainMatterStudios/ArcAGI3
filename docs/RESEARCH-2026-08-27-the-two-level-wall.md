@@ -168,20 +168,54 @@ live series mean 1.38 = **1.8×**).
 |---|---|---|---|
 | observed (12/11/5 of 28 clear 0/1/2) | 2.72 | 1.00 | 1.38 |
 | +1 level everywhere @ 2× baseline actions | 4.56 | 1.67 | 2.31 |
-| **+1 level everywhere @ 1.4× baseline** | **6.22** | **2.29** | **3.15** |
+| +1 level everywhere @ 1.4× baseline | 6.22 | 2.29 | 3.15 |
 | +1 level everywhere @ baseline pace | 8.94 | 3.29 | 4.53 |
 | +2 levels everywhere @ 2× | 6.99 | 2.57 | 3.55 |
 | +2 levels everywhere @ 1.4× | 11.28 | 4.14 | 5.72 |
 
-**One more level per game, played at ≤1.4× baseline, is the whole of a 3+
-score.** Nothing else in the queue is in this class. It is also, by the CV≈0.20
-law, comfortably a slot-testable effect (≫0.55).
+### 5b. Efficiency is NOT a lever — it is already saturated
 
-Note how hard efficiency bites: the same extra level is worth 2.31 sloppy and
-4.53 clean, because the term is squared. Extra actions spent flailing are not
-free — which is exactly the failure mode already observed in the pack recipe on
-our rig ("sk48 390 actions never clearing L1, blind identical 26–28-action
-batches").
+Realized pace on all 21 levels the wave actually cleared (actions ÷ human
+baseline):
+
+- **median 0.86×, mean 1.13×** — we clear levels *faster than the human baseline*
+- 12/21 at or better than baseline; 16/21 within 1.4×; only 1 worse than 2× (tu93 L1, 3.63×)
+- 9 of 21 cleared levels already hit the 115-point per-level cap
+
+So the "@1.4×" row above is pessimistic. Re-running the ladder by sampling from
+our **own measured efficiency distribution** gives the honest counterfactual —
+what happens if the agent simply keeps playing at the pace it already plays:
+
+| scenario | dev LB | → live est. | actions/game needed |
+|---|---|---|---|
+| observed today | 2.72 | 1.38 | 45 |
+| **+1 level everywhere, our own pace** | **7.78** | **3.95** | **~115** |
+| **+2 levels everywhere, our own pace** | **15.88** | **8.05** | **~178** |
+| +3 levels everywhere, our own pace | 27.06 | 13.72 | ~282 |
+
+**The entire gap is depth, and depth reduces to one number: actions per game.**
+At a fixed ~60,900-token session:
+
+| actions/game | tokens/action | vs today |
+|---|---|---|
+| 45 (today) | 1,353 | — |
+| 115 (+1 level) | 530 | 2.6× cheaper |
+| 178 (+2 levels) | 342 | 4.0× cheaper |
+
+Model quality, sampling, serving, recipe parity and efficiency are all off the
+critical path. The one thing that is on it is **how many actions the agent gets
+to take before the clock ends the game.**
+
+Caveat: the cleared levels are selection-biased — the agent clears the ones it
+can crack fast. Cutting the other way, deeper levels carry larger baselines
+(tu93 `[19,16,34,42,123,80,…]`), so they give proportionally *more* room, and
+the 1.8× dev→live discount is already applied to every figure above.
+
+Extra actions are only worth this much if they are *aimed*: the same extra
+level is worth 2.31 played sloppily and 4.53 played clean, because the term is
+squared. The pack recipe's failure mode on our rig — "sk48 390 actions never
+clearing L1, blind identical 26–28-action batches" — is what unaimed actions
+buy.
 
 ---
 
@@ -212,9 +246,9 @@ authors cap at 1.9–2.4.
    winframe/carryover is a real lever for *us* or only for thtennant's archive.
    Falsifier: if <30% of post-win turns show boundary confusion, the perception
    fix is not our binding constraint and only §7.2 survives.
-2. **Price the action budget honestly.** Actions/game must go 45 → ~150 to
-   afford one more level. At a fixed ~60k tokens/session that is ~400
-   tokens/action. The only lever class that gets there without cutting thinking
+2. **Buy actions per game — this is the whole programme.** 45 → ~115 for a 3+
+   score, → ~178 for a 5+ score, i.e. 530 and 342 tokens/action against today's
+   1,353. The only lever class that gets there without cutting thinking
    quality is **more actions per deliberation** — our own struct plan-channel
    already measured 2.01 actions/LLM-turn (34% multi-step plans, first-ever
    target unlock on g50t) and was shelved uncertified when Qwen3.8 landed.
