@@ -21,18 +21,12 @@ Offline provenance being tested live (docs/ENVELOPE-2026-08-26-v8.md §4):
         in 187 actions
 48 offline tests pass (submission/_explorer_v8/test_graft_explorer_v8.py).
 
-GEOMETRY — TWO PHASES inside ONE vLLM boot (one bm.run per phase; teardown
-runs once, after both):
-  PHASE A  ft09-0d8bbf25 alone, 3600 s box.  ft09 is THE read (the specialist
-           crack target).  Running it alone guarantees it wins the run-wide
-           grind semaphore (BoundedSemaphore(1)) — in a shared phase a
-           competing game's 600-1500 s engagement can hold the gate and
-           starve the primary read, and the 2700 s cumulative budget could be
-           spent before ft09 ever engages.
-  PHASE B  dc22-fdcac232 + vc33-5430563c + sk48-d8078629, 3600 s box — the
-           regression read vs the v12 comparators AND the contended-gate /
-           cumulative-budget envelope read (3 games sharing one semaphore).
-  Global soft end 12600 s (3.5 h) => whole kernel <= 4 h.
+GEOMETRY (smoke #2+): ONE panel phase inside one vLLM boot —
+ft09 (specialist target) + dc22 and sk48 (trigger-reachable: 0 levels in the
+v12 corpus) + vc33 (level/score comparator), 3600 s per-game box, global soft
+end 12600 s => whole kernel <= 4 h. The run cell still loops over
+SMOKE_PHASES and resets bm.game_runs per phase, because benchmark.run()
+raises ValueError("duplicate game_ids") on every phase after the first.
 
 DIAGNOSTICS (the read; printed AND persisted to v8_smoke_results.json /
 v8_smoke_telemetry.json):
@@ -44,7 +38,12 @@ v8_smoke_telemetry.json):
   (d) EVERY envelope guard's OBSERVED maximum vs its cap: cumulative grind
       wall, per-engagement wall (generic 600 s / owned 1500 s), per-engagement
       engine actions, absolute run ceiling, bank-replay cap
-  (e) per-game levels + score vs the v12 comparators
+  (e) per-game levels + score vs the v12 comparators — reported from the
+      ENGINE SCORECARD (arc_agi, max over plays: the scored quantity) with
+      the framework GameRun mirror shown beside it. The mirror counts only
+      LLM-executed actions, so a grinder win is invisible to it; smoke #2 was
+      misgraded on the mirror (ft09 "score=0.00" for a game the engine scored
+      100.00 — its own R11.12 reconciliation said so in the log).
 
 PRE-REGISTERED PASS BARS:
   1. specialist fires on ft09
@@ -691,6 +690,47 @@ COMPARATORS = {
              "note": "0 levels in the effort + carryover smokes"},
 }
 
+# THE SCORED QUANTITY. GameRun counts only actions executed through
+# Game.execute_action (taaf/game.py:497-573); the grinder steps game.env
+# directly, so a grinder win is INVISIBLE to GameRun. The arc_agi scorecard
+# attached to that same env by GameAPI._start_game (taaf/game_api.py:204,
+# arcade.make(..., scorecard_id=...)) sees everything and takes the MAX over
+# plays — that is what the competition gateway scores. Smoke #2 read the
+# framework mirror and reported "ft09 score=0.00" for a game the engine
+# scored 100.00 (its own R11.12 reconciliation said so in the log).
+ENGINE_SCORES = {}
+try:
+    for _g in list(getattr(bm, "games", []) or []):
+        _card = None
+        try:
+            if getattr(_g, "_competition_scorecard", None) is not None:
+                _card = _g._competition_scorecard.finish_run()
+            elif getattr(_g, "_arcade", None) is not None and getattr(_g, "_scorecard_id", None):
+                _card = _g._arcade.get_scorecard(_g._scorecard_id)
+        except Exception as _exc:  # noqa: BLE001
+            print(f"[engine-score] {getattr(_g, 'game_id', '?')}: {_exc!r}")
+        if _card is None:
+            continue
+        try:
+            _eid = _g.env.environment_info.game_id
+            _env_row = _card.find_environment(_eid)
+            if _env_row is not None:
+                ENGINE_SCORES[_g.game_id] = {
+                    "engine_score": _env_row.score,
+                    "engine_levels": _env_row.levels_completed,
+                    "engine_actions": _env_row.actions,
+                    "engine_resets": _env_row.resets,
+                    "engine_plays": len(_env_row.runs or []),
+                    "engine_play_scores": [round(r.score, 3) for r in (_env_row.runs or [])],
+                    "engine_completed": _env_row.completed,
+                }
+        except Exception as _exc:  # noqa: BLE001
+            print(f"[engine-score] {getattr(_g, 'game_id', '?')} read failed: {_exc!r}")
+except Exception as _exc:  # noqa: BLE001
+    print(f"[engine-score] unavailable: {_exc!r}")
+print("ENGINE SCORECARD (authoritative, max over plays):",
+      json.dumps(ENGINE_SCORES, indent=1, default=str))
+
 games_out = []
 for game_run in list(V8_ALL_RUNS) + list(bm.game_runs):
     actions = sum(game_run.actions_per_level) if game_run.actions_per_level else len(game_run.history)
@@ -708,13 +748,16 @@ for game_run in list(V8_ALL_RUNS) + list(bm.game_runs):
         "base_actions_per_level": list(game_run.base_actions_per_level or []),
         "comparator": COMPARATORS.get(stem),
     }
+    row.update(ENGINE_SCORES.get(game_run.game_id, {}))
     games_out.append(row)
     comp = COMPARATORS.get(stem) or {}
-    print(f"GAME {row['game_id']}: state={row['state']} "
+    print(f"GAME {row['game_id']}: ENGINE score={row.get('engine_score')} "
+          f"levels={row.get('engine_levels')} plays={row.get('engine_plays')} "
+          f"play_scores={row.get('engine_play_scores')} "
+          f"| framework-mirror score={row['final_score']} "
           f"levels={row['levels_completed']}/{row['number_of_levels']} "
-          f"score={row['final_score']} llm_actions={row['llm_actions']} "
-          f"wall={row['wallclock_s']}s | v12 comparator levels={comp.get('levels')} "
-          f"score={comp.get('score')}")
+          f"llm_actions={row['llm_actions']} wall={row['wallclock_s']}s "
+          f"| v12 comparator levels={comp.get('levels')} score={comp.get('score')}")
 
 snap = _snapshot_dict()
 tel_games = snap["games"]
@@ -748,9 +791,14 @@ for row in games_out:
           f"| level-1 baseline={base1}")
 
 print("-" * 78)
-print("PROBE TAX, PROJECTED TO THE LIVE LANE — the offline harness scores only "
-      "LLM-executed actions, but the SERVER card bills every engine action to "
-      "the level it lands on, so this is the cost the probe would really carry")
+print("PROBE TAX. MEASURED on the competition server (the authoritative "
+      "harness): a declined 89-action probe on ft09 cost 3.77 points "
+      "(4.7619 -> 0.9965, one play, exactly the billed-together prediction), "
+      "and 1000 grind actions cost 4.75 (-> 0.0087). NOTE the offline arcade "
+      "does NOT reproduce this: without the competition guard a reset at "
+      "action_count==0 opens a fresh play, so offline max-over-plays hides "
+      "the tax. The projection below therefore models the LIVE cost, and the "
+      "offline engine score above cannot be used to check it.")
 
 
 def _score_from(apl, baselines, levels_completed, n_levels):
@@ -833,8 +881,13 @@ print(f"  engagements={obs['engagements']} total grinder engine actions={obs['en
 ft09_rec = next((r for g, r in tel_games.items() if g.startswith("ft09")), None)
 ft09_row = next((r for r in games_out if r["stem"] == "ft09"), None)
 ft09_grind_levels = int(ft09_rec["levels_unlocked_by_grinder"]) if ft09_rec else 0
-ft09_levels_any = max(ft09_grind_levels,
-                      int(ft09_row["levels_completed"]) if ft09_row else 0)
+# GRADE ON THE SCORED QUANTITY: the engine scorecard (max over plays), never
+# the framework mirror and never the grinder's own counter. Smoke #2 was
+# misgraded because the report showed the mirror (ft09 0.00) for a game the
+# engine scored 100.00.
+ft09_engine_levels = int((ft09_row or {}).get("engine_levels") or 0)
+ft09_engine_score = float((ft09_row or {}).get("engine_score") or 0.0)
+ft09_levels_any = max(ft09_engine_levels, ft09_grind_levels)
 ft09_spec = (ft09_rec.get("specialist") or ft09_rec.get("early_detect")) if ft09_rec else None
 bar1 = bool(ft09_spec)
 bar2 = ft09_levels_any >= 3
@@ -857,9 +910,15 @@ BARS = [
       f"{ft09_rec.get('early_outcome')!r} in "
       f"{ft09_rec.get('early_probe_actions')} probe actions")
      if ft09_rec else "no ft09 telemetry at all"),
-    ("2. ft09 completes >= 3 levels", bar2,
-     f"grinder_levels={ft09_grind_levels} harness_levels="
+    ("2. ft09 completes >= 3 levels (SCORED: engine scorecard)", bar2,
+     f"engine_levels={ft09_engine_levels} engine_score={ft09_engine_score} "
+     f"grinder_levels={ft09_grind_levels} framework_mirror_levels="
      f"{ft09_row['levels_completed'] if ft09_row else 'n/a'}"),
+    ("2b. the ft09 win CONVERTS TO SCORE (engine score > 0)",
+     ft09_engine_score > 0.0,
+     f"engine_score={ft09_engine_score} "
+     f"plays={(ft09_row or {}).get('engine_plays')} "
+     f"play_scores={(ft09_row or {}).get('engine_play_scores')}"),
     ("3. no envelope guard exceeded", bar3,
      "all observed maxima <= caps" if bar3 else "see ENVELOPE table"),
     ("4. no crash", bar4, f"crashed={crashed} phase_errors={V8_PHASE_ERRORS}"),

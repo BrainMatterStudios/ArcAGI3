@@ -30,9 +30,12 @@ detection reverts to stall-gated (EXPLORER_V8_EARLY=0, ENVELOPE §A3) and
 only the stall-gated specialist ships.
 
 Three L estimates are reported, because they answer different questions:
-  L_obs   observed: mean(final_score - score_if_probe_billed) over the
-          non-matching games actually played. Games that completed no level
-          contribute 0 — true, but it is a floor, not the risk case.
+  L_proj  PROJECTED, not observed: mean(final_score - score_if_probe_billed)
+          over the non-matching games played. An OFFLINE smoke cannot observe
+          this at all — without the competition guard a reset at
+          action_count == 0 opens a fresh play, so offline max-over-plays
+          hides the tax entirely. Treat this as a model check, and take
+          L_measured (competition server) as the evidence.
   L_cond  the same mean restricted to games that completed >= 1 level.
   L_worst the coordinator's risk case, per game: assume the LLM completes
           level 1 at exactly its baseline (the best case the probe can
@@ -57,6 +60,12 @@ HERE = Path(__file__).parent
 DEFAULT = HERE / "results" / "v8_smoke_results.json"
 
 GAIN = 85.7          # ft09: 100.0 banked-crack projection - 14.29 live (v1)
+# MEASURED on the authoritative competition server, 2026-08-27
+# (test_competition_scoring.py::test_J_probe_tax_measured_on_the_competition_server):
+# a declined 89-action probe on ft09 followed by its minimal 4-action level-1
+# plan scored 0.9965 against a no-probe control of 4.7619 => 3.77 points, one
+# play, matching the billed-together prediction to 2%.
+MEASURED_TAX = 4.761904761904762 - 0.9964646791265169
 KILL_P = 0.15        # pre-registered: break-even above this => revert
 COMPARATORS = {"vc33": {"v12": 10.71, "effort_smoke": 4.73}}
 
@@ -189,9 +198,10 @@ def main() -> None:
     for gid, n, bound in bounds:
         print(f"      {gid}: {n} levels -> W={n * (n + 1) // 2}, "
               f"max possible loss {bound:.2f} pts")
-    for label, xs in (("L_obs   (all non-matching games played)", losses_obs),
-                      ("L_cond  (non-matching, >=1 level completed)", losses_cond),
-                      ("L_worst (LLM finishes L1 at baseline)", losses_worst)):
+    for label, xs in (("L_measured (COMPETITION SERVER, ft09 A/B)", [MEASURED_TAX]),
+                      ("L_proj  (projection over non-matching games played)", losses_obs),
+                      ("L_cond  (projection, >=1 level completed)", losses_cond),
+                      ("L_worst (projection, LLM finishes L1 at baseline)", losses_worst)):
         L = mean(xs)
         p = pstar(L)
         verdict = "CLEARS" if p <= KILL_P else "FAILS"
@@ -228,7 +238,7 @@ def main() -> None:
           f"p*={100 * corpus_p:.1f}% "
           f"[{'CLEARS' if corpus_p <= KILL_P else 'FAILS'} the kill line]")
 
-    L_decisive = max(mean(losses_cond), mean(losses_worst),
+    L_decisive = max(MEASURED_TAX, mean(losses_cond), mean(losses_worst),
                      mean(corpus_losses_max))
     p_decisive = pstar(L_decisive)
     kill = p_decisive > KILL_P
@@ -242,7 +252,8 @@ def main() -> None:
     out = {
         "gain_per_matched_game": GAIN,
         "kill_p": KILL_P,
-        "L_obs": mean(losses_obs),
+        "L_measured_competition_server": MEASURED_TAX,
+        "L_proj": mean(losses_obs),
         "L_cond": mean(losses_cond),
         "L_worst": mean(losses_worst),
         "L_corpus_worst": mean(corpus_losses_max),

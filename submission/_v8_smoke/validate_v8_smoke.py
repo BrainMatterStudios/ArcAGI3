@@ -171,7 +171,45 @@ def fake_run(gid, levels, n, score, apl, base):
         final_wallclock_seconds=3600.0, base_actions_per_level=base)
 
 
-ns["bm"] = types.SimpleNamespace(game_runs=[
+# Fake engine scorecards so the report's AUTHORITATIVE read is exercised: the
+# real shape is card.find_environment(gid) -> env row with .score (max over
+# plays), .levels_completed, .actions, .resets, .runs[].score, .completed.
+def fake_env_row(score, levels, actions, plays, level_count):
+    return types.SimpleNamespace(
+        score=score, levels_completed=levels, actions=actions, resets=12,
+        completed=levels == level_count, level_count=level_count,
+        runs=[types.SimpleNamespace(score=p) for p in plays])
+
+
+_ENGINE_ROWS = {
+    "ft09-0d8bbf25": fake_env_row(100.0, 6, 1308, [3.512, 100.0], 6),
+    "dc22-fdcac232": fake_env_row(2.1, 1, 150, [2.1], 5),
+    "vc33-5430563c": fake_env_row(10.71, 2, 100, [10.71], 6),
+    "sk48-d8078629": fake_env_row(0.0, 0, 200, [0.0], 4),
+}
+
+
+class _FakeCard:
+    @staticmethod
+    def find_environment(gid):
+        return _ENGINE_ROWS.get(gid)
+
+
+class _FakeArcade:
+    @staticmethod
+    def get_scorecard(_sid):
+        return _FakeCard()
+
+
+def fake_game(gid):
+    return types.SimpleNamespace(
+        game_id=gid, _competition_scorecard=None, _arcade=_FakeArcade(),
+        _scorecard_id="sc-1",
+        env=types.SimpleNamespace(
+            environment_info=types.SimpleNamespace(game_id=gid)))
+
+
+ns["bm"] = types.SimpleNamespace(games=[fake_game(g) for g in _ENGINE_ROWS], game_runs=[
     fake_run("ft09-0d8bbf25", 0, 6, 0.0, [3, 0, 0, 0, 0, 0],
              [43, 12, 23, 28, 65, 37]),
     fake_run("dc22-fdcac232", 1, 5, 2.1, [120, 30, 0, 0, 0], [50] * 5),
