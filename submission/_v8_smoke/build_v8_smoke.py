@@ -65,13 +65,15 @@ SUB = HERE.parent
 BASE_NB = SUB / "_duck38_v12" / "arc3-duck38-v12.ipynb"
 KERNEL_SLUG = "arc3-v8-smoke"
 
-# The five files the v8 bundle needs flat in one directory (envelope doc §9).
+# The six files the v8 bundle needs flat in one directory (envelope doc §9;
+# prescreen.py added by v8.3 — the zero-action frame-0 screen).
 BUNDLE_FILES = {
     "graft_explorer_v8.py": SUB / "_explorer_v8" / "graft_explorer_v8.py",
     "graft_explorer.py": SUB / "_explorer_floor" / "graft_explorer.py",
     "graft_bank.py": SUB / "_duck38_v12_bank" / "graft_bank.py",
     "search_core.py": SUB / "_search_core" / "search_core.py",
     "specialists.py": SUB / "_search_core" / "specialists.py",
+    "prescreen.py": SUB / "_search_core" / "prescreen.py",
 }
 
 MARK_IMPORTS = "NOTEBOOK_START_EPOCH = time.time()"
@@ -1001,11 +1003,11 @@ def main() -> None:
     run_src = run_src.replace(RUN_BLOCK_OLD, RUN_BLOCK_NEW)
     nb["cells"][run_idx]["source"] = run_src.splitlines(keepends=True)
 
-    # 4+5. Graft install (5-file flat bundle) + telemetry, immediately before
+    # 4+5. Graft install (6-file flat bundle) + telemetry, immediately before
     #      the run cell.
     bundle_lines = ["_V8_BUNDLE = {\n"]
     for name in ("graft_explorer.py", "graft_bank.py", "search_core.py",
-                 "specialists.py", "graft_explorer_v8.py"):
+                 "prescreen.py", "specialists.py", "graft_explorer_v8.py"):
         bundle_lines.append(f"    {name!r}: {sources[name]!r},\n")
     bundle_lines.append("}\n")
     graft_cell_text = GRAFT_CELL_HEAD + "".join(bundle_lines) + GRAFT_CELL_TAIL

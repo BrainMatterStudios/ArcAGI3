@@ -592,6 +592,58 @@ def _early_probe_caps() -> dict[str, Any]:
             "time_cap_s": wall, "owned_time_cap_s": wall}
 
 
+# --------------------------------------------------------------------------
+# v8.3 ZERO-ACTION PRE-SCREEN — the cheap probe
+#
+# WHY (Addendum 3 §C4): the crack-or-nothing config's EV is
+# ``p*85.7 - (1-p)*C_probe`` with p ~= 4 % and C_probe = 2.7-3.8 points, i.e.
+# 0 +- 1 — not flight-eligible. The probe tax is the dominant term and it is
+# paid on the ~96 % of games that never crack. It cannot be isolated into its
+# own play (that reset is swallowed by the competition guard, api.py:316-334),
+# so the fix is to SPEND FEWER ACTIONS: decide from frame 0 — the observation
+# the harness already holds at game start — whether the game is even plausibly
+# of a class worth probing. Validated on all 25 dev fixtures
+# (submission/_search_core/test_prescreen.py): 1 true positive (ft09), 0 false
+# negatives, 0 false positives, 0 engine actions, ~3 ms/game.
+# --------------------------------------------------------------------------
+
+def _prescreen_classes() -> str:
+    """Which classes the screen must admit for. Defaults to the ENGAGE
+    whitelist: pre-screening for a class we would decline anyway would be
+    incoherent, and a whitelist entry with no registered screen makes the
+    screen unscreenable (= admit)."""
+    raw = os.environ.get("EXPLORER_V8_PRESCREEN_CLASSES", "").strip()
+    if raw:
+        return raw
+    return os.environ.get("EXPLORER_V8_ENGAGE_SPECIALISTS", CRACKING_SPECIALISTS)
+
+
+def _frame0(game: Any) -> Any:
+    """The current observation, WITHOUT an engine call.
+
+    ``taaf.Game.current_state`` is set by ``start_game`` and refreshed by
+    ``execute_action``; reading it costs nothing. It carries both the frame
+    and ``available_actions``. None when the harness does not expose it —
+    which fails the screen OPEN."""
+    return getattr(game, "current_state", None)
+
+
+def _prescreen(game: Any) -> tuple[bool, str]:
+    """(admit, note). Zero engine actions; never raises; fails open."""
+    if not _flag("EXPLORER_V8_PRESCREEN", "1"):
+        return True, "off"
+    try:
+        import prescreen as _ps
+
+        state = _frame0(game)
+        if state is None:
+            return True, "no_current_state"
+        admit, note = _ps.screen(state, state, _prescreen_classes())
+        return bool(admit), note
+    except Exception as exc:  # noqa: BLE001 — fail-open, always
+        return True, f"error:{type(exc).__name__}"
+
+
 def early_specialist_probe(session: Any) -> str:
     """Run ``specialists.detect`` ONCE per game, right after warmup, with no
     stall precondition; engage immediately on a hit.
@@ -607,9 +659,14 @@ def early_specialist_probe(session: Any) -> str:
 
     Cost and blast radius, stated honestly: the probe's engine actions are
     billed to the CURRENT level, so on a game with no specialist they are a
-    tax on level 1's ``(b/a)^2``.  The probe therefore runs only while the
-    level is still untouched (``EXPLORER_V8_EARLY_MAX_ACTIONS``, default 24
-    scored actions — wide enough to survive gate contention at t=0) and only
+    tax on level 1's ``(b/a)^2`` — measured at 2.7-3.8 points, which is what
+    made the crack-or-nothing EV ``0 +- 1`` at p = 4 %.  v8.3 puts a
+    ZERO-ACTION frame-0 pre-screen in front of everything here
+    (``_prescreen``): a game that cannot be of an engageable class pays 0
+    actions and never reaches warmup or detection.  On top of that the probe
+    runs only while the level is still untouched
+    (``EXPLORER_V8_EARLY_MAX_ACTIONS``, default 24 scored actions — wide
+    enough to survive gate contention at t=0) and only
     while the LLM has completed NO level (past that, a crack could not be
     banked from level 1 anyway, so the upside is gone while the tax remains).
 
@@ -675,6 +732,14 @@ def early_specialist_probe(session: Any) -> str:
         return _early_done(xs, "run_cutoff")
     if spent_wall >= _env_int("EXPLORER_RUN_GRIND_BUDGET_S", 2700):
         return _early_done(xs, "run_grind_budget")
+
+    # --- the zero-action pre-screen, BEFORE anything can spend an action ---
+    admit, note = _prescreen(game)
+    xs["diag"]["v8_prescreen"] = note
+    if not admit:
+        print(f"[explorer-v8] {game_id}: pre-screen DECLINED ({note}) — "
+              f"0 engine actions", flush=True)
+        return _early_done(xs, f"prescreen_declined({note})")
 
     try:
         search_core, specialists = _import_core()
@@ -1008,6 +1073,18 @@ def _install_early(note: str) -> str:
         _maybe_grind_v8._v8_early = True    # type: ignore[attr-defined]
         v7._maybe_grind = _maybe_grind_v8
     out = " | early: OK (stall-independent specialist probe)"
+    if _flag("EXPLORER_V8_PRESCREEN", "1"):
+        try:
+            import prescreen as _ps
+
+            wanted = {c.strip() for c in _prescreen_classes().split(",") if c.strip()}
+            screened = sorted(wanted & set(_ps.SCREENS))
+            out += (f" | prescreen: OK ({','.join(screened)})" if screened
+                    else " | prescreen: OPEN (no screen for the whitelist)")
+        except Exception as exc:  # noqa: BLE001 — never blocks the install
+            out += f" | prescreen: OPEN ({type(exc).__name__})"
+    else:
+        out += " | prescreen: OFF"
     try:
         from inference.framework import solver
 

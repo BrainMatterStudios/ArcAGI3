@@ -68,17 +68,40 @@ class FakeRun:
     state = "playing"
 
 
+class FakeFrame:
+    """taaf.Frame: a 2-D grid behind ``.data``."""
+
+    def __init__(self, data):
+        self.data = data
+
+
+class FakeState:
+    """taaf.GameState as the pre-screen sees it — the observation the harness
+    already holds at game start. Reading it costs NO engine action."""
+
+    def __init__(self, obs):
+        import numpy as np
+
+        a = np.asarray(obs.frame)
+        self.frame = FakeFrame(a[-1] if a.ndim == 3 else a)
+        self.available_actions = [int(x) for x in (obs.available_actions or [])]
+
+
 class FakeGame:
-    def __init__(self, env):
+    def __init__(self, env, current_state=None):
         self.env = env
         self.game_run = FakeRun()
+        # taaf.Game.current_state is set by start_game(); the graft's
+        # pre-screen reads it and never calls the engine for it.
+        self.current_state = current_state
 
 
 class FakeSession:
     """The subset of _HarnessGameSession that the graft actually touches."""
 
-    def __init__(self, env, *, soft=None, max_actions=None, runtime_done=False):
-        self.game = FakeGame(env)
+    def __init__(self, env, *, soft=None, max_actions=None, runtime_done=False,
+                 current_state=None):
+        self.game = FakeGame(env, current_state=current_state)
         self.solver = FakeSolver(soft, max_actions)
         self.stop_event = threading.Event()
         self.action_count = 0
@@ -771,9 +794,13 @@ def test_H_report(capsys):
 # consulted, 14.29 banked where a crack projects ~100.
 # ==========================================================================
 
-def early_session(stem="ft09", **kw):
+def early_session(stem="ft09", *, with_state=True, **kw):
+    """A pristine session on `stem`, exactly as the harness hands one over:
+    the game has already been started, so ``game.current_state`` holds frame 0
+    and the zero-action pre-screen has something real to read."""
     env = make_env(stem)
-    session = FakeSession(env, **kw)
+    state = FakeState(env.reset()) if with_state else None
+    session = FakeSession(env, current_state=state, **kw)
     xs = v7._session_state(session)
     v7._RUN_T0 = time.monotonic()
     os.environ["EXPLORER"] = "1"
@@ -931,8 +958,13 @@ def test_I_flags_off_parity():
 @pytest.mark.parametrize("stem", ["ft09", "cn04", "vc33", "sk48", "dc22"])
 def test_I_probe_cost_is_bounded_and_measured(stem):
     """The tax, measured per game: probe actions are billed to the CURRENT
-    level, so this is what a non-matching game pays for the chance."""
+    level, so this is what a non-matching game pays for the chance.
+
+    This is the BEFORE number — the pre-screen is off on purpose, so the same
+    measurement stays comparable to Addendum 2/3. The AFTER number is
+    test_L_prescreen_drives_the_probe_tax_to_zero."""
     env, session, xs = early_session(stem)
+    os.environ["EXPLORER_V8_PRESCREEN"] = "0"
     os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"
     t0 = time.time()
     out = v8.early_specialist_probe(session)
@@ -1064,3 +1096,260 @@ def test_K_flight_config_end_to_end():
     assert xs["diag"]["games_banked_by_grinder"] == 1
     assert xs["v8_stop_game"] is True
     assert xs["diag"]["grinder_actions"] == 1233
+
+
+# ==========================================================================
+# L. v8.3 ZERO-ACTION PRE-SCREEN — the cheap probe
+#
+# The probe tax is the dominant term in the crack-or-nothing EV
+# (p*85.7 - (1-p)*C_probe, p ~= 4 %, C_probe = 2.7-3.8 -> EV = 0 +- 1) and it
+# is paid on the ~96 % of games that never crack. It cannot be isolated into
+# its own play (that reset is swallowed by the competition guard,
+# api.py:316-334), so the fix is to spend fewer actions: decide from frame 0,
+# which the harness already holds at game start.
+#
+# Screen validation on all 25 dev fixtures lives in
+# submission/_search_core/test_prescreen.py (1 TP / 0 FN / 0 FP / 24 TN).
+# These tests cover the SEAM: cost, ordering, defaults, parity, fail-open.
+# ==========================================================================
+
+def test_L_prescreen_runs_at_game_start_and_costs_zero_actions():
+    """A game the screen rejects spends NO engine action at all — the whole
+    point of the build."""
+    env, session, xs = early_session("cn04")
+    out = v8.early_specialist_probe(session)
+    assert out.startswith("prescreen_declined("), out
+    assert xs["diag"]["grinder_actions"] == 0, xs["diag"]
+    assert "v8_early_probe_actions" not in xs["diag"]
+    assert xs["diag"]["v8_prescreen"].startswith("ft09_gf2:")
+
+
+def test_L_rejected_game_never_reaches_warmup_or_detect(monkeypatch):
+    """The screen short-circuits BEFORE _warm_and_detect can be entered."""
+    env, session, xs = early_session("vc33")
+
+    def _boom(*a, **k):
+        raise AssertionError("warmup/detect must not run on a rejected game")
+
+    monkeypatch.setattr(v8, "_warm_and_detect", _boom)
+    monkeypatch.setattr(specialists, "detect", _boom)
+    out = v8.early_specialist_probe(session)
+    assert out.startswith("prescreen_declined("), out
+    assert xs["diag"]["grinder_actions"] == 0
+    assert xs["diag"]["v8_specialist"] is None if "v8_specialist" in xs["diag"] \
+        else True
+
+
+def test_L_ft09_always_passes_the_screen():
+    """REQUIRED: a false negative on ft09 destroys the entire value case."""
+    env, session, xs = early_session("ft09")
+    os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"
+    out = v8.early_specialist_probe(session)
+    assert out == "detected(ft09_gf2)_engage_off", out
+    assert xs["diag"]["v8_prescreen"].startswith("ft09_gf2:strict_lattice"), \
+        xs["diag"]["v8_prescreen"]
+    assert xs["diag"]["v8_early_detect"] == "ft09_gf2"
+
+
+def test_L_screen_still_lets_the_flight_config_crack_and_bank_ft09():
+    """End-to-end with the screen ON: nothing about the crack path changes."""
+    env, session, xs = early_session("ft09")
+    os.environ.update({
+        "EXPLORER_V8_PRESCREEN": "1",
+        "EXPLORER_V8_ENGAGE_SPECIALISTS": "ft09_gf2",
+        "EXPLORER_V8_STALL_GRIND": "0",
+        "EXPLORER_GRIND_TIME_S": "100000", "EXPLORER_OWNED_TIME_S": "100000",
+    })
+    out = v8.early_specialist_probe(session)
+    assert out.startswith("engaged(ft09_gf2):game_won"), out
+    assert len(xs["grind_unlocked_levels"]) == 6
+    assert xs["diag"]["games_banked_by_grinder"] == 1
+    assert xs["diag"]["grinder_actions"] == 1233     # unchanged by the screen
+
+
+@pytest.mark.parametrize("stem", ["ft09", "cn04", "vc33", "sk48", "dc22"])
+def test_L_prescreen_drives_the_probe_tax_to_zero(stem):
+    """The AFTER number for C_probe: engine actions spent by a NON-cracking
+    game between game start and the probe verdict."""
+    env, session, xs = early_session(stem)
+    os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"
+    out = v8.early_specialist_probe(session)
+    spent = xs["diag"]["grinder_actions"]
+    print(f"    screened {stem}: {spent} engine actions -> {out}")
+    if stem == "ft09":
+        assert out == "detected(ft09_gf2)_engage_off", out
+        assert spent > 0                     # the one game that pays, and cracks
+    else:
+        assert out.startswith("prescreen_declined("), out
+        assert spent == 0, (stem, spent)
+
+
+def test_L_flags_off_parity_restores_the_v8_2_probe():
+    """EXPLORER_V8_PRESCREEN=0 is byte-for-byte the v8.2 behaviour: the probe
+    runs on a game the screen would have rejected."""
+    env, session, xs = early_session("vc33")
+    os.environ["EXPLORER_V8_PRESCREEN"] = "0"
+    os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"
+    out = v8.early_specialist_probe(session)
+    assert out == "no_specialist", out
+    assert xs["diag"]["v8_early_probe_actions"] > 0
+    assert xs["diag"]["v8_prescreen"] == "off"
+
+
+def test_L_wildcard_whitelist_is_unscreenable_and_admits():
+    """Engaging every detection means we cannot pre-screen: admit, as v8.1."""
+    env, session, xs = early_session("vc33")
+    os.environ["EXPLORER_V8_ENGAGE_SPECIALISTS"] = "*"
+    os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"
+    out = v8.early_specialist_probe(session)
+    assert out == "no_specialist", out
+    assert xs["diag"]["v8_prescreen"] == "unscreenable(*)"
+
+
+def test_L_unscreenable_class_in_the_whitelist_admits():
+    env, session, xs = early_session("vc33")
+    os.environ["EXPLORER_V8_ENGAGE_SPECIALISTS"] = "ft09_gf2,tn36_program"
+    os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"
+    out = v8.early_specialist_probe(session)
+    assert out == "no_specialist", out
+    assert xs["diag"]["v8_prescreen"] == "unscreenable(tn36_program)"
+
+
+def test_L_prescreen_classes_knob_overrides_the_engage_whitelist():
+    env, session, xs = early_session("vc33")
+    os.environ["EXPLORER_V8_ENGAGE_SPECIALISTS"] = "*"
+    os.environ["EXPLORER_V8_PRESCREEN_CLASSES"] = "ft09_gf2"
+    out = v8.early_specialist_probe(session)
+    assert out.startswith("prescreen_declined("), out
+    assert xs["diag"]["grinder_actions"] == 0
+
+
+def test_L_fail_open_when_the_screen_raises(monkeypatch):
+    """A broken screen must never cost us a crack — fall back to v8.2."""
+    import prescreen as ps
+
+    env, session, xs = early_session("vc33")
+    os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"
+
+    def _raise(*a, **k):
+        raise RuntimeError("screen exploded")
+
+    monkeypatch.setattr(ps, "screen", _raise)
+    out = v8.early_specialist_probe(session)
+    assert out == "no_specialist", out               # the probe ran anyway
+    assert xs["diag"]["v8_prescreen"] == "error:RuntimeError"
+    assert xs["diag"]["v8_early_probe_actions"] > 0
+
+
+def test_L_fail_open_when_the_harness_holds_no_frame():
+    """No current_state (a harness that does not expose it) -> admit."""
+    env, session, xs = early_session("vc33", with_state=False)
+    os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"
+    out = v8.early_specialist_probe(session)
+    assert out == "no_specialist", out
+    assert xs["diag"]["v8_prescreen"] == "no_current_state"
+
+
+def test_L_fail_open_when_prescreen_is_unimportable(monkeypatch):
+    env, session, xs = early_session("vc33")
+    os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"
+    real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) \
+        else __builtins__.__import__
+
+    def _blocked(name, *a, **k):
+        if name == "prescreen":
+            raise ImportError("no prescreen in this bundle")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setitem(__import__("builtins").__dict__, "__import__", _blocked)
+    try:
+        out = v8.early_specialist_probe(session)
+    finally:
+        monkeypatch.undo()
+    assert out == "no_specialist", out
+    assert xs["diag"]["v8_prescreen"] == "error:ImportError"
+
+
+def test_L_screen_verdict_is_recorded_once_per_game():
+    env, session, xs = early_session("cn04")
+    first = v8.early_specialist_probe(session)
+    second = v8.early_specialist_probe(session)
+    assert second == first
+    assert xs["diag"]["grinder_actions"] == 0
+
+
+def test_L_install_reports_the_screen():
+    env, session, xs = early_session("ft09")
+    note = v8.install()
+    assert "prescreen: OK (ft09_gf2)" in note, note
+    os.environ["EXPLORER_V8_PRESCREEN"] = "0"
+    v8.uninstall()
+    assert "prescreen: OFF" in v8.install()
+
+
+def test_L_screen_matches_the_25_fixture_matrix():
+    """The seam agrees with the offline validation: ft09 in, the rest out."""
+    import prescreen as ps
+
+    for stem, expect in (("ft09", True), ("cn04", False), ("vc33", False),
+                         ("sk48", False), ("dc22", False), ("tn36", False),
+                         ("wa30", False), ("sc25", False)):
+        obs = make_env(stem).reset()
+        admit, note = ps.screen(obs, obs, "ft09_gf2")
+        assert admit is expect, (stem, note)
+
+
+def _corpus_stems():
+    """The 25 dev fixtures run_falsifier.py uses."""
+    stems = set()
+    for d in (os.path.join(ROOT, "submission/_explorer_floor/fixtures"),
+              os.path.join(ROOT, "scratchpad/testing_20260822/human_fixtures")):
+        if os.path.isdir(d):
+            stems.update(f[:-5] for f in os.listdir(d) if f.endswith(".json")
+                         and not f.startswith("_"))
+    return sorted(stems & set(os.listdir(ENV_DIR)))
+
+
+def _probe_actions(stem, screen):
+    env = make_env(stem)
+    session = FakeSession(env, current_state=FakeState(env.reset()))
+    xs = v7._session_state(session)
+    v7._RUN_T0 = time.monotonic()
+    v7._GRIND_WALL_SPENT[0] = 0.0
+    os.environ.update({"EXPLORER": "1", "EXPLORER_V8": "1",
+                       "EXPLORER_V8_EARLY_ENGAGE": "0",
+                       "EXPLORER_V8_PRESCREEN": "1" if screen else "0"})
+    out = v8.early_specialist_probe(session)
+    return xs["diag"]["grinder_actions"], out
+
+
+def test_L_c_probe_over_the_whole_25_fixture_corpus(capsys):
+    """C_probe, measured through the real seam on every dev fixture.
+
+    Cost model (Addendum 3 §C1, competition server): wasted probe actions
+    landing on level 1 cost -1.19 points, on level 3 -12.14. The screen runs
+    at GAME START, so a declined game is always the level-1 row — and it
+    spends ZERO actions, so it pays 0."""
+    stems = _corpus_stems()
+    assert len(stems) == 25, stems
+    rows = []
+    for stem in stems:
+        off, o_off = _probe_actions(stem, False)
+        on, o_on = _probe_actions(stem, True)
+        rows.append((stem, off, on, o_off, o_on))
+    with capsys.disabled():
+        print(f"\n    {'game':6} {'screen OFF':>10} {'screen ON':>10}  verdict")
+        for stem, off, on, _o, o_on in rows:
+            print(f"    {stem:6} {off:10} {on:10}  {o_on[:52]}")
+        n = len(rows)
+        m_off = sum(r[1] for r in rows) / n
+        m_on = sum(r[2] for r in rows) / n
+        payers = [r[0] for r in rows if r[2] > 0]
+        print(f"    mean probe actions/game: OFF {m_off:.1f}  ON {m_on:.1f}   "
+              f"(games paying with the screen ON: {payers})")
+    # only the class that CRACKS pays anything
+    assert [r[0] for r in rows if r[2] > 0] == ["ft09"], rows
+    # every other game reaches its probe verdict for zero engine actions
+    assert all(r[2] == 0 for r in rows if r[0] != "ft09")
+    # and the screen never made a game more expensive
+    assert all(r[2] <= r[1] for r in rows)
