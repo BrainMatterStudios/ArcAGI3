@@ -569,6 +569,20 @@ def early_enabled() -> bool:
     return v8_enabled() and _flag("EXPLORER_V8_EARLY", "1")
 
 
+# Specialist classes MEASURED to crack their game. Detection alone is not a
+# crack predictor (see the comment at the whitelist check), and a detection
+# that engages and fails is charged into the LLM's play, so the default
+# engages only the class with a measured crack. Set to "*" to engage every
+# detection (the v8.1 behaviour), or to a comma-separated class list.
+CRACKING_SPECIALISTS = "ft09_gf2"
+
+
+def _engage_whitelisted(name: str) -> bool:
+    raw = os.environ.get("EXPLORER_V8_ENGAGE_SPECIALISTS", CRACKING_SPECIALISTS)
+    allowed = {p.strip() for p in raw.split(",") if p.strip()}
+    return "*" in allowed or name in allowed
+
+
 def _early_probe_caps() -> dict[str, Any]:
     """Caps for the PROBE phase (warmup + detect) — far tighter than an
     engagement's. Measured cost across all 25 fixtures: 40-111 warmup + 4-114
@@ -690,6 +704,18 @@ def early_specialist_probe(session: Any) -> str:
             outcome = f"no_solver_for({specialist})"
         elif not _flag("EXPLORER_V8_EARLY_ENGAGE", "1"):
             outcome = f"detected({specialist})_engage_off"
+        elif not _engage_whitelisted(specialist):
+            # DETECTION IS NOT A CRACK PREDICTOR (measured 2026-08-25,
+            # results/falsifier_specialist_20260825_220501.json): of the four
+            # detectors only ft09_gf2 cracks its game (373 snapshot / 1233
+            # reset-replay actions). tn36_program, sc25_glyph and wa30_grabdrag
+            # each detect, unlock ~2 levels, then spend 344 848 / 878 559 /
+            # 765 657 actions and still fail. A failed engagement cannot open a
+            # fresh play, so those actions are billed into the play the LLM
+            # keeps using — measured at -1.19 points when they land on level 1
+            # and -12.14 when the search has climbed to level 3. Engage only
+            # classes measured to CRACK; record the rest.
+            outcome = f"detected({specialist})_not_whitelisted"
         elif not v7._GRIND_GATE.acquire(blocking=False):
             # another game is grinding; keep the detection but do NOT close
             # the probe — retry the ENGAGEMENT on a later poll, while the
@@ -707,7 +733,18 @@ def early_specialist_probe(session: Any) -> str:
                 # at the probe's start, so the probe's wall counts against the
                 # engagement (conservative, never the other way round)
                 caps = _engagement_caps()
-                genv._action_cap = caps["action_cap"]
+                # TIGHT SPECIALIST ABORT. The generic ceiling (292 500) is far
+                # too loose for a specialist lane: ft09's crack needs 1233
+                # engine actions END TO END, while a specialist that is going
+                # to fail spends hundreds of thousands. The cap cannot undo the
+                # damage of a failure (the score cost saturates by ~2000
+                # actions — measured identical at 2k and 292k), but it bounds
+                # how far up the LEVEL LADDER a doomed search climbs, and that
+                # is the 10x term: failing on level 1 costs -1.19, failing on
+                # level 3 costs -12.14.
+                spec_cap = _env_int("EXPLORER_V8_SPECIALIST_MAX_ACTIONS", 4000)
+                genv._action_cap = min(caps["action_cap"],
+                                       genv.actions + max(1, spec_cap))
                 genv._time_cap_s = caps["time_cap_s"]
                 genv._owned_time_cap_s = caps["owned_time_cap_s"]
                 stop_reason = _engage(session, xs, level, genv, raw_env, game_id,
@@ -754,6 +791,14 @@ def _maybe_grind_v8(session: Any) -> None:
         early_specialist_probe(session)
     except Exception:  # noqa: BLE001 — never break the poll
         pass
+    if not _flag("EXPLORER_V8_STALL_GRIND", "1"):
+        # CRACK-OR-NOTHING. The generic stall grind cracked nothing in smoke #2
+        # (dc22 and sk48 spent 292 687 / 292 635 engine actions for 2 and 0
+        # unlocks), and a non-cracking engagement cannot open a fresh play, so
+        # every one of those actions is billed into the play the LLM keeps
+        # using. With this off, only a specialist class measured to CRACK may
+        # spend engine actions beyond the probe.
+        return
     v7._maybe_grind_v7(session)
 
 

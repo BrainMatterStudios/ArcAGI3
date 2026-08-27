@@ -941,3 +941,126 @@ def test_I_probe_cost_is_bounded_and_measured(stem):
           f"({spent / GATEWAY:.1f}s live) -> {out}")
     assert spent <= 800, (stem, spent)
     assert time.time() - t0 < 120.0
+
+
+# ==========================================================================
+# K. v8.2 CRACK-OR-NOTHING config — the flight knobs
+#
+# Grounded in two measurements:
+#  * results/falsifier_specialist_20260825_220501.json — of the four
+#    detectors only ft09_gf2 CRACKS (373 snapshot / 1233 reset-replay
+#    actions); tn36_program / sc25_glyph / wa30_grabdrag detect, unlock ~2
+#    levels, then spend 344 848 / 878 559 / 765 657 actions and fail.
+#  * measure_failed_engagement.py on the competition server — a failed
+#    engagement's cost is a STEP function of where it lands, not of how big
+#    it is: -1.19 points on level 1 and -12.14 on level 3, identical at
+#    N=2 000 and N=292 500.
+# ==========================================================================
+
+def test_K_specialist_whitelist_blocks_a_non_cracking_class(monkeypatch):
+    """A detected class with no measured crack is RECORDED, never engaged."""
+    env, session, xs = early_session("ft09")
+    monkeypatch.setattr(specialists, "detect", lambda core: "wa30_grabdrag")
+    out = v8.early_specialist_probe(session)
+    assert out == "detected(wa30_grabdrag)_not_whitelisted", out
+    assert xs["diag"]["v8_early_detect"] == "wa30_grabdrag"   # recorded anyway
+    assert xs["diag"]["levels_unlocked_by_grinder"] == 0      # never engaged
+    assert xs["diag"].get("v8_early_engagements") is None
+
+
+def test_K_whitelist_default_engages_the_measured_cracker():
+    env, session, xs = early_session("ft09")
+    os.environ["EXPLORER_GRIND_TIME_S"] = "100000"
+    os.environ["EXPLORER_OWNED_TIME_S"] = "100000"
+    assert v8._engage_whitelisted("ft09_gf2") is True
+    assert v8._engage_whitelisted("tn36_program") is False
+    out = v8.early_specialist_probe(session)
+    assert out.startswith("engaged(ft09_gf2):game_won"), out
+
+
+def test_K_whitelist_star_restores_engage_everything():
+    os.environ["EXPLORER_V8_ENGAGE_SPECIALISTS"] = "*"
+    assert v8._engage_whitelisted("tn36_program") is True
+    assert v8._engage_whitelisted("anything_at_all") is True
+
+
+def test_K_specialist_action_cap_aborts_and_restores_stock_play():
+    """A solver that runs past the cap must abort, leave the engine at the
+    level start for the LLM, and not corrupt the play."""
+    env, session, xs = early_session("ft09")
+    os.environ["EXPLORER_V8_SPECIALIST_MAX_ACTIONS"] = "200"   # ft09 needs 1233
+    os.environ["EXPLORER_GRIND_TIME_S"] = "100000"
+    os.environ["EXPLORER_OWNED_TIME_S"] = "100000"
+    out = v8.early_specialist_probe(session)
+    assert "engaged(ft09_gf2)" in out and out.endswith(":budget"), out
+    assert xs["diag"]["games_won_by_grinder"] == 0 if "games_won_by_grinder" in xs["diag"] else True
+    # bounded: probe + cap, never the generic 292 500 ceiling
+    assert xs["diag"]["grinder_actions"] <= 89 + 200 + 2, xs["diag"]["grinder_actions"]
+    assert xs["grinding"] is False
+    # stock play restored: the engine is alive, resettable, and left at the
+    # start of whatever level the search reached. NOTE it reached level 2 on
+    # only 200 actions — the cap bounds SPEND, it does NOT stop the search
+    # climbing the level ladder, which is the term that costs 10x when an
+    # engagement fails high (-12.14 on L3 vs -1.19 on L1).
+    resp = env.step(arcengine.GameAction.RESET, data={})
+    assert resp is not None and resp.frame
+    assert resp.state != arcengine.GameState.GAME_OVER
+    # The engine may sit AHEAD of the graft's own record: an abort inside a
+    # lane can land after the engine advanced but before _run_search books the
+    # unlock. Harmless for play (the level really is completed, at the search's
+    # action cost), but it means grind_unlocked_levels is a lower bound.
+    assert int(resp.levels_completed) >= len(xs["grind_unlocked_levels"])
+
+
+def test_K_specialist_cap_default_preserves_the_measured_ft09_crack():
+    """4000 is chosen so the one measured crack (1233 actions end to end)
+    survives with 3x margin."""
+    env, session, xs = early_session("ft09")
+    os.environ["EXPLORER_GRIND_TIME_S"] = "100000"
+    os.environ["EXPLORER_OWNED_TIME_S"] = "100000"
+    assert v8._env_int("EXPLORER_V8_SPECIALIST_MAX_ACTIONS", 4000) == 4000
+    out = v8.early_specialist_probe(session)
+    assert out.startswith("engaged(ft09_gf2):game_won"), out
+    assert xs["diag"]["grinder_actions"] == 1233, xs["diag"]["grinder_actions"]
+    assert xs["diag"].get("games_banked_by_grinder") == 1
+
+
+def test_K_stall_grind_off_is_crack_or_nothing():
+    """EXPLORER_V8_STALL_GRIND=0 removes the generic path entirely: the probe
+    still runs, v7's stall trigger never does."""
+    env, session, xs = early_session("ft09")      # sets EXPLORER_V8=1 first
+    v8.install()
+    os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "0"
+    os.environ["EXPLORER_V8_STALL_GRIND"] = "0"
+    seen = []
+    v7._maybe_grind_v7 = lambda s: seen.append("v7-poll")
+    v7._maybe_grind(session)
+    assert seen == [], "the generic stall path must not run"
+    assert xs["diag"]["v8_early_detect"] == "ft09_gf2"   # the probe still ran
+
+    os.environ["EXPLORER_V8_STALL_GRIND"] = "1"
+    env2, session2, xs2 = early_session("ft09")
+    v7._maybe_grind(session2)
+    assert seen == ["v7-poll"], seen
+
+
+def test_K_flight_config_end_to_end():
+    """The proposed flight config, exactly as it would ship."""
+    env, session, xs = early_session("ft09")
+    os.environ.update({
+        "EXPLORER": "1", "EXPLORER_V8": "1",
+        "EXPLORER_V8_EARLY": "1", "EXPLORER_V8_EARLY_ENGAGE": "1",
+        "EXPLORER_V8_ENGAGE_SPECIALISTS": "ft09_gf2",
+        "EXPLORER_V8_SPECIALIST_MAX_ACTIONS": "4000",
+        "EXPLORER_V8_STALL_GRIND": "0",
+        "EXPLORER_V8_BANK": "1", "EXPLORER_V8_STOP_AFTER_CRACK": "1",
+        "EXPLORER_GRIND_TIME_S": "600", "EXPLORER_OWNED_TIME_S": "1500",
+    })
+    note = v8.install()
+    assert "v8: OK" in note and "early: OK" in note, note
+    out = v8.early_specialist_probe(session)
+    assert out.startswith("engaged(ft09_gf2):game_won"), out
+    assert len(xs["grind_unlocked_levels"]) == 6
+    assert xs["diag"]["games_banked_by_grinder"] == 1
+    assert xs["v8_stop_game"] is True
+    assert xs["diag"]["grinder_actions"] == 1233
