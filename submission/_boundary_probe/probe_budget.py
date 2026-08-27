@@ -45,14 +45,85 @@ TRANSCRIPT_GLOBS = [
 
 TURN_RE = re.compile(r"^--- analysis_step=(\d+) \| action=(\d+) \|", re.M)
 RESULT_RE = re.compile(r"^\[TOOL RESULT: python\]", re.M)
-EXECUTED_RE = re.compile(r"^executed: (true|false)\s*$", re.M)
-EXEC_COUNT_RE = re.compile(r"^executed_count: (\d+)\s*$", re.M)
-REQ_COUNT_RE = re.compile(r"^requested_count: (\d+)\s*$", re.M)
-ACTION_NUM_RE = re.compile(r"^action_num: (\d+)\s*$", re.M)
-STOPPED_RE = re.compile(r"^stopped_early: (true|false)\s*$", re.M)
-STOPREASON_RE = re.compile(r"^stop_reason: (\S+)\s*$", re.M)
-LEVELUP_RE = re.compile(r"^level_completed: true\s*$", re.M)
-THINK_RE = re.compile(r"^\[THINKING\]?$", re.M)
+ACTION_NUM_RE = re.compile(r"(?:^action_num: |'action_num': )(\d+)", re.M)
+
+# Two result schemas exist in the corpus and they must BOTH parse or any
+# cross-arm comparison is an artifact:
+#   BLOCK  (stock harness) multi-line YAML-ish:      executed_count: 5
+#   INLINE (patch-21 plan channel) one-line dict:   Result: {... 'executed_count': 5 ...}
+# A single turn can contain SEVERAL result blocks (an inspection call and then
+# an action call); every one of them counts.
+_PairsBlock = {
+    "executed": re.compile(r"^executed: (true|false)\s*$", re.M),
+    "executed_count": re.compile(r"^executed_count: (\d+)\s*$", re.M),
+    "requested_count": re.compile(r"^requested_count: (\d+)\s*$", re.M),
+    "stopped_early": re.compile(r"^stopped_early: (true|false)\s*$", re.M),
+    "stop_reason": re.compile(r"^stop_reason: (\S+)\s*$", re.M),
+    "level_completed": re.compile(r"^level_completed: true\s*$", re.M),
+}
+_PairsInline = {
+    "executed": re.compile(r"'executed': (True|False)"),
+    "executed_count": re.compile(r"'executed_count': (\d+)"),
+    "requested_count": re.compile(r"'requested_count': (\d+)"),
+    "stopped_early": re.compile(r"'stopped_early': (True|False)"),
+    "stop_reason": re.compile(r"'stop_reason': '([^']+)'"),
+    "level_completed": re.compile(r"'level_completed': True"),
+}
+# executed_actions is the most trustworthy count when present (both schemas).
+EXEC_ACTIONS_BLOCK = re.compile(r"^executed_actions:\n((?:  - .*\n)+)", re.M)
+EXEC_ACTIONS_INLINE = re.compile(r"'executed_actions': \[([^\]]*)\]")
+LEVELUP_RE = re.compile(r"^level_completed: true\s*$|'level_completed': True", re.M)
+
+
+def result_blocks(turn: str) -> list[str]:
+    """Every [TOOL RESULT: python] payload in this turn, in order."""
+    starts = [m.start() for m in RESULT_RE.finditer(turn)]
+    if not starts:
+        return []
+    bounds = starts + [len(turn)]
+    return [turn[bounds[i]:bounds[i + 1]] for i in range(len(starts))]
+
+
+def parse_result(block: str) -> dict:
+    """Schema-agnostic read of one result payload."""
+    inline = "Result: {" in block
+    pats = _PairsInline if inline else _PairsBlock
+    out: dict = {}
+    for key, pat in pats.items():
+        m = pat.search(block)
+        if not m:
+            continue
+        if key == "level_completed":
+            out[key] = True
+        elif key == "stop_reason":
+            out[key] = m.group(1)
+        elif key in ("executed", "stopped_early"):
+            out[key] = m.group(1).lower() == "true"
+        else:
+            out[key] = int(m.group(1))
+    m = (EXEC_ACTIONS_INLINE if inline else EXEC_ACTIONS_BLOCK).search(block)
+    if m:
+        body = m.group(1)
+        if inline:
+            # entries look like 'MOUSE(row=36, col=36)' — the commas INSIDE the
+            # parens make a naive split double-count, so count quoted items.
+            n = len(re.findall(r"'[^']*'", body))
+        else:
+            n = len([ln for ln in body.splitlines() if ln.strip().startswith("- ")])
+        out["executed_actions_n"] = n
+    return out
+
+
+def actions_in(block: str) -> int:
+    """Actions this result payload actually executed. Most trustworthy first."""
+    r = parse_result(block)
+    if "executed_actions_n" in r:
+        return r["executed_actions_n"]
+    if "executed_count" in r:
+        return r["executed_count"]
+    if r.get("executed"):
+        return 1
+    return 0
 SECTION_RE = re.compile(r"^\[(THINKING|TOOL CALL|MODEL RESPONSE META|TOOL RESULT|"
                         r"USER PROMPT|SYSTEM PROMPT|ANALYZER STATUS)\]?", re.M)
 
@@ -86,32 +157,36 @@ def scan(paths):
         turns = split_turns(text)
         if not turns:
             continue
-        rec = {"file": os.path.relpath(path, ROOT), "turns": [], "levelups": 0}
-        for step, act, turn in turns:
-            body = turn[RESULT_RE.search(turn).start():] if RESULT_RE.search(turn) else ""
-            ex = EXEC_COUNT_RE.search(body)
-            executed = EXECUTED_RE.search(body)
-            n_act = int(ex.group(1)) if ex else (
-                1 if (executed and executed.group(1) == "true") else 0)
-            req = REQ_COUNT_RE.search(body)
-            stopped = STOPPED_RE.search(body)
+        rec = {"file": os.path.relpath(path, ROOT), "turns": [], "levelups": 0,
+               "schema": "inline" if "Result: {" in text else "block"}
+        # ACTION ACCOUNTING — validated 16/16 against the wave result JSONs.
+        # The turn header carries the harness's own cumulative action counter
+        # ("--- analysis_step=N | action=M |"), so actions taken DURING a turn
+        # are the delta to the next header. Schema-independent, and it survives
+        # transcript truncation; counting `executed_count` inside result blocks
+        # does NOT — on the struct arm that agreed with ground truth in only
+        # 1/8 transcripts, because results go missing when history trims.
+        heads = [a for _, a, _ in turns]
+        for i, (step, act, turn) in enumerate(turns):
+            blocks = result_blocks(turn)
+            parsed = [parse_result(b) for b in blocks]
+            n_act = (heads[i + 1] - heads[i]) if i + 1 < len(turns) else None
             if LEVELUP_RE.search(turn):
                 rec["levelups"] += 1
             rec["turns"].append({
                 "step": step,
-                "actions": n_act,
-                "requested": int(req.group(1)) if req else None,
-                "stopped_early": bool(stopped and stopped.group(1) == "true"),
-                "stop_reason": (STOPREASON_RE.search(body).group(1)
-                                if STOPREASON_RE.search(body) else None),
+                "actions": n_act,          # None on the final turn (no delta)
+                "requested": sum(p.get("requested_count", 0) for p in parsed) or None,
+                "stopped_early": any(p.get("stopped_early") for p in parsed),
+                "stop_reason": next((p["stop_reason"] for p in parsed
+                                     if p.get("stop_reason")), None),
                 "model_chars": model_chars(turn),
                 "after_levelup": False,
             })
         for i, t in enumerate(rec["turns"][:-1]):
             if LEVELUP_RE.search(turns[i][2]):
                 rec["turns"][i + 1]["after_levelup"] = True
-        an = [int(m.group(1)) for m in ACTION_NUM_RE.finditer(text)]
-        rec["actions_total"] = max(an) if an else sum(t["actions"] for t in rec["turns"])
+        rec["actions_total"] = (max(heads) - 1) if heads else 0
         games.append(rec)
     return games
 
@@ -122,6 +197,8 @@ def report(games):
     if not n:
         print("no turns parsed")
         return 1
+    turns = [t for t in turns if t["actions"] is not None]
+    n = len(turns)
     acts = [t["actions"] for t in turns]
     total_actions = sum(acts)
 
@@ -151,9 +228,9 @@ def report(games):
         share = sum(zc) / (sum(zc) + sum(ac))
         print(f"  => zero-action turns consume {100*share:.1f}% of all model output")
 
-    post = [t for t in turns if t["after_levelup"]]
+    post = [t for t in turns if t["after_levelup"] and t["actions"] is not None]
     if post:
-        pa = [t["actions"] for t in post]
+        pa = [t["actions"] for t in post if t["actions"] is not None]
         print("\n--- the level boundary ---")
         print(f"  post-win turns              : {len(post)}")
         print(f"  actions on a post-win turn  : mean {statistics.mean(pa):.2f} vs {total_actions/n:.2f} overall")
@@ -171,19 +248,19 @@ def report(games):
     # --- what batching alone can reach ---
     apt = total_actions / n
     apg = statistics.median(g["actions_total"] for g in games)
-    print("\n--- ceiling from batching alone (turns/game held fixed) ---")
-    print(f"{'actions/turn':>13} {'actions/game':>13}   verdict")
-    for target in (apt, 2.0, 3.0, 4.0, 6.0):
-        proj = apg * target / apt
-        tag = "  <- today" if abs(target - apt) < 1e-9 else (
-            "  3+ bar cleared" if proj >= 115 and proj < 178 else
-            "  5+ bar cleared" if proj >= 178 else "")
-        print(f"{target:>13.2f} {proj:>13.0f}{tag}")
-    print(f"\n  bars: ~115 actions/game = 3+ ; ~178 = 5+")
-    need3 = apt * 115 / apg
-    need5 = apt * 178 / apg
-    print(f"  actions/turn required: {need3:.2f} for 3+ , {need5:.2f} for 5+")
-    print(f"  (struct plan-channel already measured 2.01 actions/turn live)")
+    # Relative headroom only. These transcripts are smokes and ablations with
+    # their own box geometry, so their absolute actions/game does NOT compare
+    # to the live 45; only the RATIOS transfer.
+    zshare = sum(zc) / (sum(zc) + sum(ac)) if (zc and ac) else 0.0
+    print("\n--- relative headroom (ratios only — do not read absolutes here) ---")
+    print(f"  zero-action turns hold {100*zshare:.1f}% of the model's output.")
+    print(f"  recovering ALL of it is a x{1/(1-zshare):.2f} ceiling on actions.")
+    print(f"  live bars need x{115/45:.2f} (3+) and x{178/45:.2f} (5+) on 45 actions/game,")
+    print("  so removing zero-action turns is NECESSARY BUT NOT SUFFICIENT — the")
+    print("  rest has to come from actions per acting turn, or a non-LLM executor.")
+    print("\n  !! ACTIONS ARE NOT LEVELS. The one controlled test of that conversion")
+    print("     (patch 21, ft09 28v28) bought 1.40x actions/game and cleared 25%")
+    print("     FEWER levels. Never read this instrument without level counts.")
     return 0
 
 

@@ -313,58 +313,89 @@ carries regardless is architectural, not game-specific: the boundary is
 ## 9. STEP-2 RESULT — 86% of the model's output produces no action at all
 
 Instrument: `submission/_boundary_probe/probe_budget.py`, same 120 transcripts,
-**12,814 LLM turns, 7,877 actions**.
+**12,694 LLM turns, 10,745 actions**.
+
+> **CORRECTION.** The first run of this instrument reported 73% zero-action
+> turns holding 86% of output. That was an artifact: it counted `executed_count`
+> inside `[TOOL RESULT]` blocks, and those blocks go missing when the harness
+> trims history. Against the wave result JSONs that estimator agreed with ground
+> truth in only **1/8** struct transcripts. The turn header carries the
+> harness's own cumulative action counter (`--- analysis_step=N | action=M |`),
+> so actions-per-turn is the delta to the next header — schema-independent, and
+> it matches ground truth **16/16**. All figures below use the header delta.
 
 | | share of turns | share of model output |
 |---|---|---|
-| **zero-action turns** | **73.1%** | **85.9%** |
-| single-action turns | 18.7% | — |
-| batched turns (≥2 actions) | 8.2% | — |
+| **zero-action turns** | **38.0%** | **42.8%** |
+| single-action turns | 31.1% | — |
+| batched turns (≥2 actions) | 27.9% | — |
 
-- When the agent *does* act it already averages **2.28 actions per turn** (median batch 4, max 36) — batching is partly working already.
-- Zero-action turns are not empty: median **3,516 chars** of model output each, against 1,805 on an acting turn.
-- 34% of them are "long" (>5,000 chars) and eat **66% of the entire zero-action budget** — 3,149 deliberations that thought hard and touched nothing.
-- Only 594 turns (6.3%) are genuine dead decodes, and they cost ~0% of output. The dead-decode class is a rounding error; the *long silent deliberation* is the whale.
-- Overall cost: **7,237 chars of model output per environment action.**
+- Acting turns average **1.37 actions each**; overall 0.85 actions/turn.
+- Zero-action turns are not empty: median **3,516 chars** against 3,152 on an acting turn.
 
-**This replaces "batching" as the framing of the lever.** The target is not
-"more actions per deliberation" — it is *deliberations that end in an action*.
-Holding acting-turn productivity fixed, actions scale as `1 − z` where `z` is
-the zero-action share of the token budget:
+**The headroom is real but bounded.** Recovering *all* of the zero-action
+budget is a **×1.75** ceiling on actions. The live bars need **×2.56** (3+) and
+**×3.96** (5+) on 45 actions/game. So removing zero-action turns is **necessary
+but not sufficient** — the rest must come from actions per acting turn, or from
+a non-LLM executor.
 
-| zero-action share of budget | actions/game | |
-|---|---|---|
-| **0.86 (today)** | **45** | |
-| 0.70 | 96 | |
-| 0.65 | 112 | |
-| **0.60** | **128** | **3+ cleared** |
-| 0.50 | 160 | |
-| **0.44** | **179** | **5+ cleared** |
+### 9b. THE DECISIVE TEST — actions are NOT levels
 
-**86% → 60% buys a 3+ score. 86% → 44% buys a 5+ score.**
+Patch 21 (`TAAF_STRUCT=1`, the mandatory plan-list channel) already exists in
+`submission/_duck_patched/duck_patches.py`, and both arms of a 28-vs-28 A/B are
+on disk. Re-run on the corrected instrument:
 
-The campaign already wrote down the correct intervention a month ago and never
-built it (`RESULTS-2026-08-08`): *"advertised = performative; ENFORCED =
-adopted. Next iteration: make batching STRUCTURAL (mandatory plan-list action
-channel), not optional."* The structural form is a **mandatory action channel**
-— every turn either executes at least one action or spends from a small,
-explicit, capped inspection budget.
+| | base (patch 21 OFF) | struct (patch 21 ON) | |
+|---|---|---|---|
+| zero-action share of turns | 34.3% | **18.4%** | −15.9 pts |
+| zero-action share of tokens | 36.3% | **18.4%** | −17.8 pts |
+| actions per acting turn | 3.06 | **4.03** | ×1.32 |
+| actions per turn | 2.01 | **3.29** | ×1.64 |
+| median actions/game | 86 | **120** | ×1.40 |
+| **total levels cleared (28 plays)** | **36** | **27** | **−25%** |
 
-Two honest constraints on this lever:
+**The mechanism works perfectly and the score goes down.** Every process metric
+moves the way the thesis wants; levels move the opposite way.
 
-1. **Do not simply make thinking cheaper.** `effort_medium` did exactly that and
-   cost −0.43; the campaign's own reading was that xhigh "dead decode" was
-   partly load-bearing deliberation. The intervention must redirect
-   deliberation into actions, not shorten it.
-2. **The freed budget must stay aimed.** The projection assumes recovered
-   turns act at today's productivity. Unaimed actions are worthless — sk48,
-   390 actions in blind 26-action batches, level 1 never cleared.
+Cross-checked on the 25-game fixture (`scratchpad/banked_waves_20260809`, no
+transcripts but level counts are in the JSONs): STRUCT waves cleared 18 / 14 /
+13 levels (mean 15.0) against base 13 / 15 (mean 14.0) — a +1 difference on
+~15, with both replications at or below base. That reproduces the campaign's own
+08-09 verdict: *"adoption replicates, level spike does not."*
 
-Modelling note: the ratios (86%, 2.28 actions/acting turn) come from 12,814
-turns of smoke and ablation transcripts; the 45 actions/game baseline comes
-from the shipped-config wave. Combining them assumes the ratio transfers to the
-live geometry — which the throughput law (~60k tokens/session regardless of box
-length) supports but does not prove.
+⇒ **§5's counterfactual assumed extra actions convert into extra levels at our
+observed efficiency. The one controlled test of that assumption refutes it.**
+The ladder in §5 remains correct arithmetic about what clearing more levels
+would be worth; it is not a prediction that buying actions will clear them.
+
+The binding question is not *how many* actions but whether they are **aimed**.
+Two prior results say the same thing and were not connected until now: sk48
+burned 390 actions in blind 26-action batches without clearing level 1, and
+`effort_medium` cut deliberation and lost 0.43. Deliberation that ends in an
+action is only valuable if the deliberation was what made the action right.
+
+⇒ **No action-buying lever flies until it demonstrates levels held or raised.**
+`probe_budget.py` must never be read without level counts beside it; the tool
+now prints that warning itself.
+
+## 9c. TONIGHT'S SLOT (2026-08-28) — no new lever qualifies
+
+Asked whether any new lever should ride tonight's submission. Answer: **no**,
+and the reason is measured rather than procedural.
+
+- **Patch 21 / mandatory action channel** — the only action-buying lever that is
+  already built, tested and shippable. It is the one thing we could physically
+  arm in time, and §9b is a direct 28-vs-28 experiment showing it clears 25%
+  fewer levels. Flying it would be flying a measured negative.
+- **winframe / carryover bundle** — killed in §8 (0/52 boundary confusion).
+- **Anything new** — cannot be built, audited, GPU-smoked, attested and re-armed
+  in the remaining window, and the `effort_medium` lesson stands: a perfect
+  50-minute smoke certified an arm that then cost −0.43 live.
+
+The v8 crack-or-nothing arm flies as armed. Its outcome distribution is lumpy
+because a banked crack is worth a flat +1.82 per hidden game: 0 cracks ≈ 1.4
+(base band, floor measured at 0.00), 1 ≈ 3.2, 2 ≈ 5.0, 3 ≈ 6.8. It is the only
+thing on the pad with a 5-tail, and it is already smoke-verified 5/5.
 
 ## 10. Open questions this pass did not close
 
