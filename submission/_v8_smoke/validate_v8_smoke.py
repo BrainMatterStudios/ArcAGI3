@@ -159,6 +159,34 @@ if fails:
         print("FAIL:", f)
     sys.exit(1)
 
+# --- drive the three NON-ft09 panel games through the same wrapped poll ----
+# Bar 1 of the flight-config smoke: the zero-action pre-screen must DECLINE
+# them, so each spends exactly 0 probe actions and takes 0 engagements. Frame
+# 0 is fetched with env.reset() here because offline we have to ask the engine
+# once; live it is game.current_state, already held, and costs nothing.
+DECLINE_PANEL = {"vc33": "vc33-5430563c", "dc22": "dc22-fdcac232",
+                 "sk48": "sk48-d8078629"}
+print("== driving vc33/dc22/sk48 through the wrapped POLL (pre-screen) ==")
+for _stem, _gid in DECLINE_PANEL.items():
+    _env = T.make_env(_stem)
+    _obs = _env.reset()
+    _sess = T.FakeSession(_env)
+    _sess.game.game_run = types.SimpleNamespace(game_id=_gid, state="playing")
+    _sess.game.current_state = _obs
+    _sess.game.number_of_levels = 6
+    _xs = v7._session_state(_sess)
+    v7._maybe_grind(_sess)
+    _rec = ns["_snapshot_dict"]()["games"].get(_gid, {})
+    _out = str(_rec.get("early_outcome") or "")
+    print(f"  {_gid}: outcome={_out!r} prescreen={_rec.get('prescreen')!r} "
+          f"probe_actions={_rec.get('early_probe_actions')} "
+          f"engagements={_rec.get('engagements')} "
+          f"grinder_actions={_xs['diag'].get('grinder_actions', 0)}")
+    assert _out.startswith("prescreen_declined"), (_gid, _out)
+    assert int(_rec.get("early_probe_actions", 0) or 0) == 0, (_gid, _rec)
+    assert int(_rec.get("engagements", 0) or 0) == 0, (_gid, _rec)
+    assert int(_xs["diag"].get("grinder_actions", 0) or 0) == 0, (_gid, _xs["diag"])
+
 # --- exercise the REPORT cell on this telemetry + synthetic game_runs ------
 print("\n== report cell (synthetic game_runs, real telemetry) ==")
 REPORT_CELL = cell_with("V8 SMOKE RESULTS")

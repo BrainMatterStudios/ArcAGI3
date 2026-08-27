@@ -45,12 +45,16 @@ v8_smoke_telemetry.json):
       misgraded on the mirror (ft09 "score=0.00" for a game the engine scored
       100.00 — its own R11.12 reconciliation said so in the log).
 
-PRE-REGISTERED PASS BARS:
-  1. specialist fires on ft09
-  2. ft09 completes >= 3 levels (offline: 6)
-  3. no envelope guard exceeded
-  4. no crash
-  5. no regression > 1 level on vc33 / dc22 vs their v12 comparators
+PRE-REGISTERED PASS BARS (smoke #3, the FLIGHT CONFIG — graded on the ENGINE
+SCORECARD, never the framework mirror; the mirror cannot see a grinder win):
+  1. the zero-action pre-screen DECLINES vc33 / dc22 / sk48 at exactly 0 probe
+     actions (and 0 engagements, 0 grinder engine actions)
+  2. ft09 is ADMITTED, CRACKS and BANKS: engine score > 0 at levels 6/6
+  3. no envelope guard exceeded (observed maxima reported)
+  4. no regression on vc33 / dc22 / sk48 vs their v12 comparators beyond LLM
+     draw variance — they are untouched by construction, so any delta IS
+     variance; tolerance 1 level
+  5. no crash
 
 Usage:
   .venv/bin/python submission/_v8_smoke/build_v8_smoke.py
@@ -74,6 +78,21 @@ BUNDLE_FILES = {
     "search_core.py": SUB / "_search_core" / "search_core.py",
     "specialists.py": SUB / "_search_core" / "specialists.py",
     "prescreen.py": SUB / "_search_core" / "prescreen.py",
+}
+
+# THE FLIGHT CONFIG, in one place: the smoke and the scored arm must set
+# exactly these, and the build asserts every line rides the notebook.
+FLIGHT_CONFIG = {
+    "EXPLORER": "1",
+    "EXPLORER_V8": "1",
+    "EXPLORER_V8_EARLY": "1",
+    "EXPLORER_V8_EARLY_ENGAGE": "1",
+    "EXPLORER_V8_PRESCREEN": "1",
+    "EXPLORER_V8_ENGAGE_SPECIALISTS": "ft09_gf2",
+    "EXPLORER_V8_SPECIALIST_MAX_ACTIONS": "4000",
+    "EXPLORER_V8_STALL_GRIND": "0",
+    "EXPLORER_V8_BANK": "1",
+    "EXPLORER_V8_STOP_AFTER_CRACK": "1",
 }
 
 MARK_IMPORTS = "NOTEBOOK_START_EPOCH = time.time()"
@@ -216,16 +235,39 @@ GRAFT_CELL_HEAD = r'''# Graft install — ONE graft: explorer v8 (EXPLORER_V8=1,
 # The five-file flat bundle is written to WORKING_DIR/v8_bundle and resolved
 # through EXPLORER_V8_CORE_DIR — the exact layout the envelope doc §9 says
 # was verified end-to-end offline.
+#
+# THE EXACT FLIGHT CONFIG (v8 crack-or-nothing, commit 285aad4). Every flag is
+# set EXPLICITLY here even where it equals the code default, so the scored arm
+# and this smoke are byte-comparable and the run log states the whole config.
 os.environ["EXPLORER"] = "1"
 os.environ["EXPLORER_V8"] = "1"
-# v8.1 (built after smoke #1's null read): specialist DETECTION no longer waits
-# for v7's stall trigger. It runs once per game at game start, before the LLM's
-# first scored action, under its own bounded gate and its own probe caps; on a
-# hit the engagement is taken immediately under the SAME envelope guards.
-# Generic search stays gated behind the stall trigger, exactly as before.
+# v8.1: specialist DETECTION no longer waits for v7's stall trigger. It runs
+# once per game at game start, before the LLM's first scored action, under its
+# own bounded gate and its own probe caps; on a hit the engagement is taken
+# immediately under the SAME envelope guards.
 os.environ["EXPLORER_V8_EARLY"] = "1"
 os.environ["EXPLORER_V8_EARLY_ENGAGE"] = "1"
+# v8.3 CHEAP PROBE: the zero-action frame-0 pre-screen decides, from the
+# observation the harness already holds at game start, whether a game is even
+# plausibly of an engageable class. 25/25 dev fixtures: 1 TP (ft09), 0 FN,
+# 0 FP, 0 engine actions. A declined game pays ZERO probe actions.
+os.environ["EXPLORER_V8_PRESCREEN"] = "1"
+# CRACK-OR-NOTHING: engage ONLY the class MEASURED to crack its game.
+# Detection is not a crack predictor; a detection that engages and fails is
+# billed straight into the LLM's play.
+os.environ["EXPLORER_V8_ENGAGE_SPECIALISTS"] = "ft09_gf2"
+os.environ["EXPLORER_V8_SPECIALIST_MAX_ACTIONS"] = "4000"
+# Generic stall grind OFF. Smoke #2 measured it cracking NOTHING while
+# spending 292 687 / 292 635 engine actions on dc22 / sk48 — partial grinding
+# is net-negative, and a non-cracking engagement cannot open a fresh play.
+os.environ["EXPLORER_V8_STALL_GRIND"] = "0"
+# Banking: a crack only scores if it is replayed into a fresh play (the engine
+# takes the MAX over plays). Kill switch stays armed; stop-after-crack frees
+# the worker as soon as the banked play lands.
+os.environ["EXPLORER_V8_BANK"] = "1"
 os.environ["EXPLORER_V8_STOP_AFTER_CRACK"] = "1"
+# effort_medium is BANNED (reverted as harmful live, pooled 1.12 vs 1.55,
+# commit 6a8e11f). Purge it and the other stale grafts unconditionally.
 for _stale in ("EFFORT_MEDIUM", "EFFORT_DEAD_RETRY", "YIELD_CARRYOVER", "YIELD_SLICE_CAP"):
     os.environ.pop(_stale, None)
 
@@ -320,6 +362,7 @@ def _game_rec(game_id):
             "polls": 0,
             "max_analysis_step": 0,
             "max_action_count": 0,
+            "prescreen": None,      # v8.3: the zero-action frame-0 verdict
             "early_outcome": None,
             "early_detect": None,
             "early_probe_actions": 0,
@@ -565,6 +608,7 @@ def _tel_poll(session):
                 with _tel_lock:
                     rec = _game_rec(game_id)
                     rec["early_outcome"] = xs.get("v8_early_done")
+                    rec["prescreen"] = diag.get("v8_prescreen")
                     rec["early_detect"] = diag.get("v8_early_detect")
                     rec["early_probe_actions"] = int(diag.get("v8_early_probe_actions", 0) or 0)
                     rec["early_engagements"] = int(diag.get("v8_early_engagements", 0) or 0)
@@ -780,6 +824,19 @@ for row in games_out:
           f"levels={row['levels_completed']}")
 
 print("-" * 78)
+print("ZERO-ACTION PRE-SCREEN (v8.3 — the cheap probe; decided from frame 0, "
+      "no engine call). A DECLINED game must show 0 probe actions and 0 "
+      "engagements: it never reaches warmup, detection or engagement.")
+for row in games_out:
+    rec = tel_games.get(row["game_id"], {})
+    out = str(rec.get("early_outcome") or "")
+    print(f"  {row['game_id']}: prescreen={rec.get('prescreen')!r} "
+          f"verdict={'DECLINE' if out.startswith('prescreen_declined') else 'ADMIT'} "
+          f"probe_actions={int(rec.get('early_probe_actions', 0) or 0)} "
+          f"engagements={rec.get('engagements', 0)} "
+          f"grinder_engine_actions={rec.get('grinder_actions', 0)}")
+
+print("-" * 78)
 print("EARLY SPECIALIST PROBE (v8.1 — detection independent of the stall)")
 for row in games_out:
     rec = tel_games.get(row["game_id"], {})
@@ -879,53 +936,86 @@ for name, seen, cap, unit in ENVELOPE_ROWS:
 print(f"  abort reasons observed: {obs['abort_reasons']}")
 print(f"  engagements={obs['engagements']} total grinder engine actions={obs['engine_actions_total']}")
 
-# ---- pre-registered bars ----
+# ---- PRE-REGISTERED BARS (flight-config smoke, 2026-08-27) ----
+# Graded on the ENGINE SCORECARD (max over plays — the scored quantity), never
+# on the framework mirror: the mirror counts only LLM-executed actions, so a
+# grinder win is invisible to it (smoke #2's R11.12 mismatch).
 ft09_rec = next((r for g, r in tel_games.items() if g.startswith("ft09")), None)
 ft09_row = next((r for r in games_out if r["stem"] == "ft09"), None)
 ft09_grind_levels = int(ft09_rec["levels_unlocked_by_grinder"]) if ft09_rec else 0
-# GRADE ON THE SCORED QUANTITY: the engine scorecard (max over plays), never
-# the framework mirror and never the grinder's own counter. Smoke #2 was
-# misgraded because the report showed the mirror (ft09 0.00) for a game the
-# engine scored 100.00.
 ft09_engine_levels = int((ft09_row or {}).get("engine_levels") or 0)
 ft09_engine_score = float((ft09_row or {}).get("engine_score") or 0.0)
-ft09_levels_any = max(ft09_engine_levels, ft09_grind_levels)
+ft09_n_levels = int((ft09_row or {}).get("number_of_levels") or 0)
 ft09_spec = (ft09_rec.get("specialist") or ft09_rec.get("early_detect")) if ft09_rec else None
-bar1 = bool(ft09_spec)
-bar2 = ft09_levels_any >= 3
-bar3 = envelope_ok
-crashed = [r["game_id"] for r in games_out if r["state"] in ("crashed",)]
-bar4 = not crashed and not V8_PHASE_ERRORS
-regressions = []
-for stem in ("vc33", "dc22"):
+
+# BAR 1 — the pre-screen declines every non-ft09 game at EXACTLY 0 actions.
+DECLINE_STEMS = ("vc33", "dc22", "sk48")
+decline_detail = []
+bar1 = True
+for stem in DECLINE_STEMS:
     row = next((r for r in games_out if r["stem"] == stem), None)
-    comp = COMPARATORS[stem]["levels"]
+    rec = tel_games.get(row["game_id"], {}) if row else {}
+    out = str(rec.get("early_outcome") or "")
+    probe = int(rec.get("early_probe_actions", 0) or 0)
+    engs = int(rec.get("engagements", 0) or 0)
+    grind_acts = int(rec.get("grinder_actions", 0) or 0)
+    ok = (row is not None and out.startswith("prescreen_declined")
+          and probe == 0 and engs == 0 and grind_acts == 0)
+    bar1 = bar1 and ok
+    decline_detail.append(
+        f"{stem}: {'DECLINE' if out.startswith('prescreen_declined') else out or 'NOT RUN'}"
+        f" probe={probe} engagements={engs} grind_actions={grind_acts}")
+
+# BAR 2 — ft09 is ADMITTED, CRACKS, and BANKS: engine score > 0 at 6/6 levels.
+ft09_admitted = bool(ft09_rec) and not str(
+    ft09_rec.get("early_outcome") or "").startswith("prescreen_declined")
+ft09_banked = bool(ft09_rec and ft09_rec.get("bank_ok"))
+bar2 = bool(ft09_admitted and ft09_engine_score > 0.0
+            and ft09_n_levels and ft09_engine_levels >= ft09_n_levels)
+
+bar3 = envelope_ok
+
+# BAR 4 — the untouched games must show no regression vs their v12
+# comparators beyond LLM draw variance. They are untouched by construction
+# (bar 1), so any delta here IS draw variance; the tolerance is 1 level.
+regressions = []
+comp_rows = []
+for stem in DECLINE_STEMS:
+    row = next((r for r in games_out if r["stem"] == stem), None)
+    comp = COMPARATORS[stem]
     if row is None:
         regressions.append(f"{stem}: NOT RUN")
-    elif int(row["levels_completed"]) < comp - 1:
-        regressions.append(f"{stem}: {row['levels_completed']} < {comp}-1")
-bar5 = not regressions
+        continue
+    eng_lv = row.get("engine_levels")
+    seen = int(eng_lv if eng_lv is not None else row["levels_completed"])
+    comp_rows.append(f"{stem}: engine_levels={eng_lv} engine_score={row.get('engine_score')} "
+                     f"mirror={row['levels_completed']}/{row['final_score']} "
+                     f"vs v12 levels={comp['levels']} score={comp['score']}")
+    if seen < int(comp["levels"]) - 1:
+        regressions.append(f"{stem}: {seen} < {comp['levels']}-1")
+bar4 = not regressions
+
+crashed = [r["game_id"] for r in games_out if r["state"] in ("crashed",)]
+bar5 = not crashed and not V8_PHASE_ERRORS
 
 BARS = [
-    ("1. specialist fires on ft09", bar1,
-     (f"detected={ft09_spec!r} via early probe outcome "
-      f"{ft09_rec.get('early_outcome')!r} in "
-      f"{ft09_rec.get('early_probe_actions')} probe actions")
-     if ft09_rec else "no ft09 telemetry at all"),
-    ("2. ft09 completes >= 3 levels (SCORED: engine scorecard)", bar2,
-     f"engine_levels={ft09_engine_levels} engine_score={ft09_engine_score} "
+    ("1. pre-screen declines vc33/dc22/sk48 at EXACTLY 0 probe actions", bar1,
+     "; ".join(decline_detail)),
+    ("2. ft09 is admitted, CRACKS and BANKS (engine score > 0, levels 6/6)",
+     bar2,
+     f"admitted={ft09_admitted} specialist={ft09_spec!r} "
+     f"bank_ok={ft09_banked} bank_plan={ft09_rec.get('bank_plan_actions') if ft09_rec else None} "
+     f"engine_score={ft09_engine_score} engine_levels={ft09_engine_levels}/{ft09_n_levels} "
+     f"engine_plays={(ft09_row or {}).get('engine_plays')} "
+     f"play_scores={(ft09_row or {}).get('engine_play_scores')} "
      f"grinder_levels={ft09_grind_levels} framework_mirror_levels="
      f"{ft09_row['levels_completed'] if ft09_row else 'n/a'}"),
-    ("2b. the ft09 win CONVERTS TO SCORE (engine score > 0)",
-     ft09_engine_score > 0.0,
-     f"engine_score={ft09_engine_score} "
-     f"plays={(ft09_row or {}).get('engine_plays')} "
-     f"play_scores={(ft09_row or {}).get('engine_play_scores')}"),
     ("3. no envelope guard exceeded", bar3,
      "all observed maxima <= caps" if bar3 else "see ENVELOPE table"),
-    ("4. no crash", bar4, f"crashed={crashed} phase_errors={V8_PHASE_ERRORS}"),
-    ("5. no regression > 1 level on vc33/dc22", bar5,
-     "; ".join(regressions) if regressions else "within 1 level of comparators"),
+    ("4. no regression on vc33/dc22/sk48 vs v12 (untouched => variance)", bar4,
+     ("; ".join(regressions) if regressions
+      else "within 1 level of comparators | " + " | ".join(comp_rows))),
+    ("5. no crash", bar5, f"crashed={crashed} phase_errors={V8_PHASE_ERRORS}"),
 ]
 print("-" * 78)
 for name, ok, detail in BARS:
@@ -1029,6 +1119,11 @@ def main() -> None:
     assert joined.index("[v8-tel] counters installed") < joined.index(MARK_RUN)
     assert joined.index(MARK_RUN) < joined.index("V8 SMOKE RESULTS")
     assert "EFFORT_MEDIUM\"] = \"1\"" not in joined, "effort_medium must stay OFF"
+    # The EXACT flight config must ride the notebook, verbatim and explicit.
+    for flag, val in FLIGHT_CONFIG.items():
+        line = f'os.environ["{flag}"] = "{val}"'
+        assert joined.count(line) == 1, (flag, joined.count(line))
+        assert joined.index(line) < joined.index(MARK_RUN), flag
     for stem in ("ft09-0d8bbf25", "dc22-fdcac232", "vc33-5430563c", "sk48-d8078629"):
         assert joined.count(stem) == 1, stem
 
