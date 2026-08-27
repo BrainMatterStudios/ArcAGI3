@@ -378,6 +378,78 @@ action is only valuable if the deliberation was what made the action right.
 `probe_budget.py` must never be read without level counts beside it; the tool
 now prints that warning itself.
 
+## 9d. FORENSICS — the constraint is comprehension, not budget
+
+Three follow-up measurements on why patch 21's extra actions did not land.
+Instrument: `submission/_boundary_probe/probe_plans.py`.
+
+**(1) Where the extra actions went.** ft09, 28 clones per arm:
+
+| | base | struct | |
+|---|---|---|---|
+| actions total | 2,463 | 3,565 | +1,102 |
+| burned on the level it never cleared | 1,537 | 2,504 | +967 |
+| actions per level actually cleared | 68.4 | 132.0 | ×1.93 |
+
+**88% of every extra action the channel bought was spent on a level that was
+never cleared.** It did not buy progress; it bought deeper failure.
+
+**(2) The committed plans were fine.** The obvious mechanism — a plan of k
+actions chosen from one observation goes wrong after step 1 — is **refuted**.
+Controlling for plan length (the raw position curve is confounded, since a plan
+only reaches step 5 if it is ≥5 long):
+
+```
+ len 2 (n= 38):   87%  89%
+ len 3 (n= 27):   93%  93%  93%
+ len 4 (n= 29):   93%  93%  93%  97%
+ len 5 (n= 12):  100% 100% 100% 100% 100%
+ len 6 (n=  8):  100% 100% 100% 100% 100% 100%
+```
+
+Effectiveness is flat within a plan, and *longer* plans are effective
+throughout — the model commits to long plans when it is confident and it is
+right to. Immediate repeats are 0.6% of steps; direct reversals 0.0%. Only 3.1%
+of steps follow a plan's first no-op.
+Caveat: transcripts record 488 of the arm's 3,565 actions and the recorded
+sample skews short (plans of 8+ are 12% of real acting turns, 2% of the
+sample), so the long-plan tail is under-tested.
+
+**(3) The failing games are not starved.** On the live-representative 25-game
+Qwen3.8 wave, the 12 games that cleared nothing spent a median **0.93× the
+level-1 human baseline** in actions — 6 of 12 spent *more* than a human needs
+for level 1, none spent less than 0.53×, and their token spend (60.3k) matches
+the scoring games' (63.1k). On ft09 the zero-level clones burned 82 (base) and
+144 (struct) actions against a 43-action level-1 baseline — 1.9× and 3.3× the
+human budget — and every one ended `gave_up` having cleared nothing.
+
+Put together with §5b (levels we *do* clear come in at 0.86× human pace):
+
+> **On a game the agent understands, it plays better than a human and is not
+> budget-limited. On a game it does not understand, no amount of budget helps —
+> giving it 3.3× a human's actions produced exactly zero levels.**
+
+The binding constraint is **comprehension**, not budget. That closes the
+depth-via-actions lane: actions/game is a diagnostic, never an objective.
+
+### Correction to §6 — I inverted the priority on a thesis that is now refuted
+
+This morning's pass argued the handoff's priority should invert: that the
+systematic two-level wall should outrank "grow the crack inventory". That
+argument rested on extra levels being *purchasable* with budget. §9b and §9d
+refute that premise directly.
+
+**The handoff's original ordering was right.** The search/banking lane is the
+one route to a high score that does not depend on the agent comprehending
+anything: a cracked and banked game pays a flat **+1.82** whether or not the
+LLM ever understood it, and today's measurements do not touch it. This also
+fits the 08-22 read that cstl's edge is *additive and model-agnostic* — the
+leaders are most likely not comprehending more games than us, they are banking
+more of them.
+
+Depth is not dead as an *objective* — §5's arithmetic still says one more level
+everywhere is worth ×2–3 on the board. What is dead is buying it with actions.
+
 ## 9c. TONIGHT'S SLOT (2026-08-28) — no new lever qualifies
 
 Asked whether any new lever should ride tonight's submission. Answer: **no**,
