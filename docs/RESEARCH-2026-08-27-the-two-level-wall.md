@@ -548,10 +548,19 @@ speed.
 
 ### 11d. Census: the generic search cannot produce a live-affordable crack
 
-25 games, reset-replay (the live cost model), 900 s/game, portfolio algorithm:
+25 games, reset-replay (the live cost model), 900 s/game, portfolio algorithm.
+**48 levels, 2 cracks, 1 of them affordable:**
 
-- **cracks: 1** — ft09, and only via its specialist, at **1,231 actions**.
-- every other game: **0.4M–3.5M actions** for 0–3 levels and no crack.
+| game | levels | crack | actions | lane |
+|---|---|---|---|---|
+| tu93 | 9/9 | **yes** | 84,685 | nbfs_macros |
+| ft09 | 6/6 | **yes** | **1,231** | specialist |
+| vc33 | 4 | no | 1,441,051 | nbfs |
+| dc22 | 3 | no | 1,682,345 | nbfs_macros |
+| …21 more | 0–2 | no | 0.4M–3.5M | — |
+
+- every non-crack game: **0.4M–3.5M actions** for 0–3 levels.
+- **only ft09's whole search fits the live budget.**
 
 A full 1,500 s live engagement allows roughly **195,000 live actions**
 (~73,000 offline-equivalent at the measured ×2.66 guard tax). The generic
@@ -566,15 +575,52 @@ caps a specialist at 4,000 actions.
 So "grow the crack inventory" means **write more solvers**, not tune the search.
 The existing inventory and its blockers:
 
-| specialist | reaches | blocker |
-|---|---|---|
-| `ft09_gf2` | **6/6 — cracks** | none; 1,231 actions |
-| `sc25_glyph` | 1–2 of 6 | fails at L2 (`spec_failed`) |
-| `tn36_program` | 2 of 7 | enumeration does not reach L3 configs |
-| `wa30_grabdrag` | 2 of 9 | planner emits 169 moves for a 100-move level |
+| specialist | reaches | live cost so far | blocker |
+|---|---|---|---|
+| `ft09_gf2` | **6/6 — cracks** | 1,231 | none |
+| `wa30_grabdrag` | 2 of 9 | L1 **380**, L2 6,771, L3 burns 97,859 | plan length: 169 moves for a 100-move level |
+| `sc25_glyph` | 2 of 6 | L1 15,703, L2 46, L3 burns 278,741 | L3 cast is wrong — the maze BFS exhausts a fully-explored 1,795-state space |
+| `tn36_program` | 2 of 7 | 909,403 over the run | enumeration does not reach L3 configs |
 
-Each converted class adds ~`p × 85.7` with a floor of zero, where `p` is that
-class's frequency in the hidden half.
+### 11e. The design law the numbers point at
+
+Three solvers, three cost profiles, one pattern:
+
+- **ft09_gf2** — perceive → solve a linear system → execute. **1,231 actions, cracks.**
+- **wa30_grabdrag** — perceive → A* on a *model* → execute. **380 actions for a depth-26 level.** Affordable where the plan is good.
+- **sc25_glyph** — perceive → cast → **BFS on the real env**. 15,703 actions for level 1 alone, and 278,741 burned on level 3.
+
+> **A specialist that plans in a model is affordable. A specialist that searches
+> the environment is not.** Env-search inside a solver reintroduces exactly the
+> 11–17× replay tax of §11b. Every new solver must perceive → model → plan →
+> execute, and verify at most the final plan.
+
+### 11f. Deployability needs a DETECTOR, not just a crack
+
+tu93 is cracked (84,685 actions) and still not flightworthy, for two
+independent reasons:
+
+1. **16% over budget.** ~73,300 offline-equivalent actions fit a 1,500 s
+   engagement; tu93 needs 1,735 s. Three attempts to close that gap all came
+   back null: the depth bound (0 pruned), the path cache (9 actions of 58,522),
+   and skipping the portfolio racer's audition (**4 actions** — `nbfs_macros`
+   direct costs 84,681 vs portfolio's 84,685).
+2. **No detector.** tu93 is cracked by the *generic* lane, so there is nothing
+   to pre-screen on. Without a zero-action frame-0 screen the arm has to engage
+   blind, which is the v7 design that measured net-negative (law 6: partial
+   grinding shares its play and charges its actions to whatever the LLM later
+   completes).
+
+⇒ **The deployable crack inventory is 1 (ft09), not 2.** Growing it means
+shipping `(cheap frame-0 detector + model-based solver)` pairs. Each one adds
+~`p × 85.7` with a floor of zero, where `p` is that class's frequency in the
+hidden half.
+
+The nearest target is **wa30**: its detector already exists and fires, its
+solver is already model-based and affordable where it works (380 actions for
+level 1), and §11c proved a within-budget solution to level 3 must exist. The
+gap is a planning-quality problem — 169 moves against a 100-move budget —
+not a perception or cost problem.
 
 ## 10. Open questions this pass did not close
 
