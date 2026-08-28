@@ -113,6 +113,49 @@ UP/DOWN/LEFT/RIGHT by one cell; action 5 interacts with whatever you face.
 Work out the rules yourself from what you observe.
 """
 
+# THIRD ARM — added after the first pilot, to decompose an ambiguous negative.
+#
+# oracle 0/5 and control 0/5 with IDENTICAL end states told us the mechanics
+# text bought nothing, but not WHY. Three very different failures produce that
+# same result and they have opposite implications:
+#   comprehension — it cannot turn the rules into a goal
+#   planning      — it has the goal but cannot sequence a route to it
+#   execution     — it has the route and still cannot emit the right keys
+# This arm removes comprehension AND planning: every turn it is told, in plain
+# language, which block to take and exactly where to put it. What remains is
+# pure execution. If it fails HERE, the deficit is not knowledge of the game,
+# and that conclusion is far less sensitive to model size than the oracle arm's.
+GUIDED_WA30 = ORACLE_WA30 + """
+YOU DO NOT NEED TO PLAN. Each turn you are told exactly which block to move and
+exactly which cell to push it into. Just walk to the block, face it, press 5 to
+grab, drag it to the named cell, and press 5 to release.
+"""
+
+
+def next_goal_text(env, M) -> str:
+    """A plain-language instruction naming the block and the divider cell.
+
+    Derived from the same board model the planner uses, so it is correct by the
+    same construction the 82-move solution was verified under."""
+    g = M.game_of(env)
+    per = M.engine_percept(g, env.observation_space)
+    if per is None:
+        return ""
+    avatar, blocks, free_pads, walls, occupied = per
+    gaps = M.handoff_cells(walls, occupied, blocks)
+    if not blocks or not gaps:
+        return ""
+    # the block that still needs the avatar = the one not already in the divider
+    from collections import Counter
+    cols = Counter(x for (x, _y) in walls if 0 <= x < 64)
+    col = cols.most_common(1)[0][0] if cols else None
+    todo = [b for b in blocks if b[0] != col] or list(blocks)
+    b = min(todo, key=lambda p: abs(p[0] - avatar[0]) + abs(p[1] - avatar[1]))
+    gap = min(gaps, key=lambda p: abs(p[1] - b[1]))
+    c = lambda p: (p[0] // 4, p[1] // 4)  # noqa: E731
+    return (f"\n\nYOUR TASK RIGHT NOW: take the block at {c(b)} and push it "
+            f"into the divider cell at {c(gap)}. You are at {c(avatar)}.")
+
 
 def render(per, carriers) -> str:
     """The board as a text grid, in the same cell units the mechanics use."""
@@ -205,7 +248,8 @@ def one_clone(clone: int, arm: str, model: str, max_moves: int,
     lc0 = live.observation_space.levels_completed
     budget = buds[2]
 
-    system = (ORACLE_WA30 if arm == "oracle" else CONTROL_WA30) + (
+    system = {"oracle": ORACLE_WA30, "control": CONTROL_WA30,
+              "guided": GUIDED_WA30}.get(arm, CONTROL_WA30) + (
         "\n\nEach turn, reply with a short justification and then a final line "
         "of the exact form:\nACTIONS: n, n, n\nusing 1-8 action numbers from "
         "1..5. Nothing after that line.")
@@ -217,6 +261,7 @@ def one_clone(clone: int, arm: str, model: str, max_moves: int,
         msg = [{"role": "system", "content": system},
                {"role": "user", "content":
                 state_text(live, M)
+                + (next_goal_text(live, M) if arm == "guided" else "")
                 + (f"\n\nRecent moves you made: {history[-6:]}" if history else "")
                 + f"\n\nMoves used: {moves}/{budget}. Give your next actions."}]
         try:
@@ -289,7 +334,9 @@ def main() -> int:
         if len(o) < 5:
             print(f"  CAVEAT: n={len(o)} is under-powered; treat as a pilot, "
                   "not the pre-registered result.")
-    out = os.path.join(_HERE, "results.json")
+    # Name the file by the arms it holds: a bare results.json meant the
+    # `guided` run silently overwrote the oracle/control run's data.
+    out = os.path.join(_HERE, f"results_{'_'.join(arms)}.json")
     with open(out, "w") as fh:
         json.dump({"model": model, "clones": clones, "results": results}, fh,
                   indent=2)
