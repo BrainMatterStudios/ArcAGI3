@@ -50,6 +50,36 @@ import specialists as sp  # noqa: E402
 WAITS = (4, 10, 20)
 PRUNE = os.environ.get("WA30_MACRO_PRUNE", "1") != "0"
 
+# --------------------------------------------------------------------------
+# LIVE-COST ACCOUNTANT
+#
+# This planner branches on a `copy.deepcopy(env)`, which is SnapshotBackend
+# semantics — free offline, IMPOSSIBLE live (`Arcade.make` returns a remote
+# wrapper in COMPETITION mode; handoff 2026-08-28 §3 closed "search on a free
+# copy"). So the offline action count says nothing about deployability.
+#
+# Rather than port the planner to the backend API and then discover the price,
+# price it first. `ResetReplayBackend.children` has an exact published
+# contract: every token costs 1 reset + len(parent path) replay + 1 action. A
+# sequential macro of length L executed from a parent at depth d therefore
+# costs sum_{i=0}^{L-1} (d + i + 2) = L*d + L*(L-1)/2 + 2L.
+#
+# Counting that during a normal (free) snapshot run gives the live bill
+# exactly, with no port and no guessing.
+# --------------------------------------------------------------------------
+COST = {"rr_actions": 0, "candidates": 0, "committed": 0, "snapshot_actions": 0}
+
+
+def _reset_cost():
+    for k in COST:
+        COST[k] = 0
+
+
+def _rr_macro_cost(depth: int, length: int) -> int:
+    """Actions ResetReplayBackend would spend running `length` tokens from a
+    parent whose path is `depth` tokens long."""
+    return length * depth + length * (length - 1) // 2 + 2 * length
+
 
 def _action(a: int):
     from arcengine import GameAction
@@ -140,6 +170,20 @@ def engine_percept(g, frame=None):
             cell = grid[yy:yy + 4, xx:xx + 4]
             if cell.size and (cell != bg).any():
                 walls.add((xx, yy))
+    # DO NOT subtract `qthdiggudy` here. Tried and REFUTED 2026-08-28.
+    # `bnzklblgdk` sprites carry `is_collidable = False`, so they are absent
+    # from `pkbufziase`, and that looks like "carrier-only obstacle, not an
+    # avatar wall". It is not. `qthdiggudy` appears in BOTH `kblzhbvysd` (the
+    # carrier BFS) AND `fuykgiiwit` (the movement test used while holding a
+    # block, wa30.py), so it blocks the avatar too — the engine just enforces
+    # it through a second set instead of the collision set.
+    #
+    # The evidence is unambiguous: level 3's divider at x=32 is SIXTEEN
+    # bnzklblgdk cells and ZERO debyzcmtnr, yet the sprite trace shows the
+    # avatar stopping dead at x=28. Subtracting them let the model walk the
+    # avatar through the divider, `handoff_cells` then picked x=48 as the
+    # densest column, and level 3 regressed from an 82-move win to NO PLAN in
+    # 495 s. Treating every non-background cell as a wall is CORRECT here.
     for i in range(0, 64, 4):
         walls |= {(-4, i), (64, i), (i, -4), (i, 64)}
     return avatar, blocks, free_pads, walls, occupied
@@ -600,7 +644,13 @@ def plan(env0, budget: int, beam: int = 8, time_s: float = 600.0, verbose=True,
                 continue
             child = copy.deepcopy(env)
             verdict, done = run_actions(child, path, lc0)
+            # every candidate is a TRIAL: live it must be replayed from the
+            # parent, tried, and abandoned unless it is the one kept.
+            COST["candidates"] += 1
+            COST["rr_actions"] += _rr_macro_cost(moves, done)
+            COST["snapshot_actions"] += done
             if verdict == "win":
+                COST["committed"] += 1
                 return acts + path[:done], moves + done
             if verdict == "dead":
                 continue
