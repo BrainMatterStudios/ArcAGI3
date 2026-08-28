@@ -66,12 +66,31 @@ NB8 = [(-LAT, -LAT), (0, -LAT), (LAT, -LAT),
        (-LAT, 0), (LAT, 0),
        (-LAT, LAT), (0, LAT), (LAT, LAT)]
 
-# --- thresholds, with the dev-corpus margin each one carries ---------------
-MIN_TILES = 4              # detect_ft09's own floor
-MIN_LATTICE = 4            # tiles on the dominant lattice phase (branch A)
+# --- thresholds, with the measured margin each one carries -----------------
+#
+# CORRECTED 2026-08-28 after the first out-of-sample test (holdout_screen.py).
+# The original branch-A bars (both 4) were read off ft09's OWN geometry — 32
+# ring-isolated tiles, 16 on the dominant phase — and that is in-sample fitting.
+# The holdout corpus contains one further genuine ft09_gf2 game, cx01, whose
+# board is far sparser: 3 ring-isolated tiles, 2 on the dominant phase. The
+# old bars DECLINED it, i.e. a false negative on the only unseen same-class
+# game we have — the failure direction the module contract calls fatal.
+#
+# The SIGNAL was never the problem. Across all 38 games in both corpora,
+# ``n_strict`` is categorical: ft09 32, cx01 3, and **every one of the 36
+# negatives is exactly 0**. So branch A's bars are set to the lowest values
+# that admit the known positives, and the margin they retain is 3-vs-0 —
+# categorical, not a numeric hair. Raising them again re-introduces the false
+# negative; lowering them further buys nothing (0 is already excluded).
+MIN_TILES = 4              # detect_ft09's own floor, on the raw block count
+MIN_STRICT = 3             # branch A: ring-isolated tiles (cx01 3, ft09 32)
+MIN_STRICT_LATTICE = 2     # branch A: strict tiles on the dominant phase
 FRAC_MIN_TILES = 8         # branch B needs a real tile field, not 3 blocks
 FRAC_MIN_LATTICE = 6       # ... with a substantial dominant phase
 FRAC_MIN = 0.35            # ft09 0.50 vs next-highest CLICK game 0.21
+
+# Retained for compatibility; branch A no longer reads it.
+MIN_LATTICE = 4
 
 
 # --------------------------------------------------------------------------
@@ -235,8 +254,9 @@ def prescreen_ft09_gf2(grid, avail=None) -> tuple[bool, str]:
         return False, f"tiles<{MIN_TILES}({f['n_blocks']})"
     # branch A — ring-isolated sprite tiles on one lattice phase
     sl = f["strict_lattice"]
-    if f["n_strict"] >= MIN_TILES and sl["n"] >= MIN_LATTICE:
-        return True, f"strict_lattice(n={sl['n']},clues={sl['clues']})"
+    if f["n_strict"] >= MIN_STRICT and sl["n"] >= MIN_STRICT_LATTICE:
+        return True, (f"strict_lattice(strict={f['n_strict']},"
+                      f"n={sl['n']},clues={sl['clues']})")
     # branch B — a dominant lattice phase among touching tiles, with clues
     bl = f["block_lattice"]
     if (f["n_blocks"] >= FRAC_MIN_TILES and bl["n"] >= FRAC_MIN_LATTICE
