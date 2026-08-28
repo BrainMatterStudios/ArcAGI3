@@ -246,6 +246,57 @@ server-side state and "search on a free copy" is closed. A port means routing
 macro execution through the existing backend-agnostic
 `sp.chain(backend, handle, toks)` and pricing it under `ResetReplayBackend`.
 
+## 4d. Deployability: the port is dead, priced — and the replacement is built
+
+**The backend port was PRICED, not built, and the price killed it.**
+`ResetReplayBackend.children` has a published contract (1 reset +
+len(parent path) replay + 1 action per token), so a macro of length L at depth
+d costs `L*d + L*(L-1)/2 + 2L`. Counting that during a free snapshot run gives
+the live bill with no port and no guessing (`wa30_macro.COST`):
+
+| level 3 ALONE | |
+|---|---|
+| candidates tried | 195 |
+| snapshot actions (free) | 2,961 |
+| **reset-replay actions** | **92,517** |
+| tax multiple | **31.2x** |
+| affordable budget | ~73,000 |
+
+One level of one game costs **27% more than the entire budget**. This
+reproduces the env-search law (11-17x; worse here because macros are long and
+deep).
+
+But the bill is almost entirely **trials**. Committing only the final plan
+costs **82 actions**. So the deployable shape is not a backend port at all:
+
+    evaluate candidates IN A MODEL; execute only the committed plan on the engine
+
+**`wa30_carriersim.py` is that model, and it is VALIDATED.** It reproduces
+`ynmgxjqkgh` exactly — including the two details that are easy to get wrong:
+the `return` (not `continue`) after a pickup, so later carriers do not act on
+that tick; and `qthdiggudy` blocking movement as well as pathing. Lockstep
+against the engine, comparing every carrier position, block position and carry
+relation at every tick:
+
+| level | ticks | carriers | verdict |
+|---|---|---|---|
+| L1 | 199 | 0 | MATCH |
+| L2 | 69 | — | MATCH |
+| L3 | 99 | 1 | MATCH |
+| L4 | 99 | 3 | MATCH |
+
+One false divergence was reported first and is worth recording: on L4 tick 9
+the carriers matched exactly and a single block differed, because the harness
+never told the sim about a block the AVATAR was dragging. One engine tick is
+`avatar acts, THEN carriers act`; the avatar half is already modelled by
+`TwoWallDragModel`, so it is an INPUT to this model, not a prediction. Fixed in
+the harness, not the model.
+
+**Remaining for deployability:** swap `plan()`'s `copy.deepcopy(env)` +
+`run_actions` for `TwoWallDragModel` + `CarrierSim`, so no candidate touches
+the engine. Then the live bill for L3 is the committed plan only — 82 actions
+against ~73k affordable.
+
 ## 5. Standing laws added today
 
 1. **An in-sample confusion matrix is not a generalisation estimate.** Any
