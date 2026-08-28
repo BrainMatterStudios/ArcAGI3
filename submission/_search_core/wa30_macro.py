@@ -196,23 +196,139 @@ def handoff_cells(walls, occupied, blocks):
     # the dividing line is the column that walls occupy most densely
     from collections import Counter
     col = Counter(x for (x, _y) in walls if 0 <= x < 64).most_common(1)[0][0]
-    gaps = []
+    blockset = {tuple(b) for b in blocks}
+    # EVERY cell of the divider is a handoff target, INCLUDING the ones that
+    # read as wall (2026-08-28). The old version returned only the non-wall
+    # gaps, which on level 3 is exactly the two cells the starting blocks
+    # already plug -> after filtering, ZERO handoff legs, which is why the
+    # handoff macro never fired and the search fell back on fiction pad legs.
+    # The engine settles it: a block was pushed to (32,24), a cell the frame
+    # reads as solid wall. Blocks enter the divider; the avatar does not.
+    out = []
     for y in range(0, 64, 4):
-        if (col, y) in walls or (col, y) in occupied:
+        c = (col, y)
+        if c in occupied or c in blockset:
             continue
-        gaps.append((col, y))
-    return gaps
+        out.append(c)
+    return out
+
+
+class TwoWallDragModel:
+    """`sp._DragModel` with SEPARATE passability for the avatar and the block.
+
+    MEASURED 2026-08-28 (sprite-by-sprite trace of one executed leg). The
+    shipped model carries a single wall set and applies it to both bodies. On
+    level 3 that is simply false, and it is the reason every leg the planner
+    liked was fiction:
+
+        avatar : (16,36) -> (16,32) -> (28,32) -> (28,24)   never passes x=28
+        block  : pushed (32,32) -> (32,24)                  INTO the divider
+
+    The divider column reads as wall in the frame. The avatar can never enter
+    it; a block can be pushed into it. With one shared wall set the planner
+    must get one of those two wrong, and it chose to let the avatar walk to
+    x=52 — so `_astar_leg` happily returned 16 block->pad legs that the engine
+    then refused to carry out, at ~50 ms each, every single expansion.
+
+    Step semantics are otherwise identical to `sp._DragModel`.
+    """
+
+    def __init__(self, avatar_walls: set, block_walls: set):
+        self.avatar_walls = avatar_walls
+        self.block_walls = block_walls
+        self.walls = avatar_walls          # for anything introspecting .walls
+
+    def step(self, state, action):
+        ax, ay, bx, by, facing, held = state
+        if action == 5:
+            if held:
+                return (ax, ay, bx, by, facing, False)
+            if sp._faced_cell(ax, ay, facing) == (bx, by):   # noqa: SLF001
+                return (ax, ay, bx, by, facing, True)
+            return state
+        dx, dy = sp.DELTAS[action]
+        if not held:
+            nf = sp._facing_of(dx, dy)                        # noqa: SLF001
+            tgt = (ax + dx, ay + dy)
+            if tgt not in self.avatar_walls and tgt != (bx, by):
+                return (tgt[0], tgt[1], bx, by, nf, held)
+            return (ax, ay, bx, by, nf, held)
+        nav = (ax + dx, ay + dy)
+        nbl = (bx + dx, by + dy)
+        ok = ((nav not in self.avatar_walls or nav == (bx, by)) and
+              (nbl not in self.block_walls or nbl == (ax, ay)))
+        if ok:
+            return (nav[0], nav[1], nbl[0], nbl[1], facing, held)
+        return state
+
+
+def avatar_region(avatar, walls) -> set[tuple[int, int]]:
+    """Every cell the avatar could stand on, ignoring blocks.
+
+    Blocks are treated as PASSABLE on purpose: they can be pushed, so counting
+    them as obstacles would under-estimate the region and could wrongly discard
+    a real leg. Ignoring them over-estimates it, which makes every filter built
+    on this region a SOUND necessary condition — it can keep a leg that turns
+    out to be impossible (the A* then fails, as before) but can never throw away
+    a leg that was possible.
+    """
+    seen = {avatar}
+    stack = [avatar]
+    while stack:
+        x, y = stack.pop()
+        for nx, ny in ((x - 4, y), (x + 4, y), (x, y - 4), (x, y + 4)):
+            if (nx, ny) in seen or (nx, ny) in walls:
+                continue
+            if not (0 <= nx < 64 and 0 <= ny < 64):
+                continue
+            seen.add((nx, ny))
+            stack.append((nx, ny))
+    return seen
+
+
+def pushable_targets(cells, region) -> list[tuple[int, int]]:
+    """Targets a block could actually be pushed INTO by this avatar.
+
+    To push a block into cell `c` the avatar ends up two cells behind it: the
+    block passes through `c-d` and the avatar stands on `c-2d`. So `c` is only
+    reachable as a push target if some `c-2d` is in the avatar's region. This
+    is the test that makes the level-3 pad legs disappear — the avatar's region
+    is x <= 28 and every pad is at x = 52/56, so no pad has a legal push stance.
+    """
+    out = []
+    for (x, y) in cells:
+        for dx, dy in ((-4, 0), (4, 0), (0, -4), (0, 4)):
+            if (x + 2 * dx, y + 2 * dy) in region:
+                out.append((x, y))
+                break
+    return out
 
 
 def deliver_legs(env, av_color, deadline):
-    """-> [(label, action_ids)] A* drag legs to a free pad OR a handoff gap."""
+    """-> [(label, action_ids)] A* drag legs to a free pad OR a handoff gap.
+
+    REACHABILITY GATE (2026-08-28, measured). Profiling one expansion of the
+    level-3 search: `deliver_legs` was **8,052 ms of an 8,086 ms expansion —
+    99.6% of the planner's entire cost** — and 160 of its 200 A* calls were
+    block->pad legs on a level where the correction (§12c-quater) had already
+    established the avatar can never reach a pad. The correction was written
+    down but never applied to the code, so every expansion re-derived the same
+    16 fictions at ~50 ms each. Filtering targets by whether a legal push
+    stance exists removes them at flood-fill cost, and self-disables on levels
+    where the avatar CAN reach pads (L1, L2), so it is not a level-3 special
+    case.
+    """
     g = game_of(env)
     per = engine_percept(g, env.observation_space)
     if per is None:
         return []
     avatar, blocks, free_pads, walls, occupied = per
     blockset = {tuple(b) for b in blocks}
-    gaps = [c for c in handoff_cells(walls, occupied, blocks) if c not in blockset]
+    # The avatar's TRUE region: frame walls block it, and so do other blocks.
+    # This is the set the engine trace agrees with (max x = 28 on level 3).
+    region = avatar_region(avatar, walls | occupied)
+    gaps = handoff_cells(walls, occupied, blocks)
+    free_pads = pushable_targets(free_pads, region)
     out = []
     # HANDOFF LEGS. The avatar cannot reach any pad (walk region x <= 28,
     # pads at x = 52/56, verified by engine BFS both before and after the slots
@@ -227,7 +343,11 @@ def deliver_legs(env, av_color, deadline):
         for gcell in gaps:
             if time.time() > deadline:
                 return out
-            model = sp._DragModel((walls - {gcell}) | others | occupied)  # noqa: SLF001
+            # avatar keeps ALL walls (it cannot enter the divider); the block
+            # gets the goal cell opened (it can be pushed into it).
+            model = TwoWallDragModel(
+                avatar_walls=walls | others | occupied,
+                block_walls=(walls - {gcell}) | others | occupied)
             best = None
             for facing in (0, 90, 180, 270):
                 path = sp._astar_leg(                                     # noqa: SLF001
@@ -238,8 +358,26 @@ def deliver_legs(env, av_color, deadline):
                 out.append((f"handoff{tuple(b)}->{gcell}", best))
     for b in blocks:
         others = set(x for x in blocks if x != b)
-        model = sp._DragModel(walls | others | occupied)   # noqa: SLF001
-        for pad in free_pads:
+        blocked = walls | others | occupied
+        # FLOOD-FILL GATE before any A*. A block can only be dragged to a pad
+        # it can physically travel to; reachability over the same obstacle set
+        # is a necessary condition and costs one BFS instead of
+        # len(free_pads) * 4 A* searches. On level 3 the divider is in `walls`
+        # for both bodies here, so no pad is reachable and this loop's 160 A*
+        # calls per expansion — every one of which returned a leg the engine
+        # refused to execute — collapse to a single flood fill.
+        reach, stack = {tuple(b)}, [tuple(b)]
+        while stack:
+            x, y = stack.pop()
+            for nx, ny in ((x - 4, y), (x + 4, y), (x, y - 4), (x, y + 4)):
+                if (nx, ny) in reach or (nx, ny) in blocked:
+                    continue
+                if not (0 <= nx < 64 and 0 <= ny < 64):
+                    continue
+                reach.add((nx, ny))
+                stack.append((nx, ny))
+        model = sp._DragModel(blocked)                     # noqa: SLF001
+        for pad in [p for p in free_pads if p in reach]:
             if time.time() > deadline:
                 return out
             # FACING MATTERS. The drag model can only grab in the direction the
@@ -259,26 +397,71 @@ def deliver_legs(env, av_color, deadline):
     return out
 
 
+CARRIER_TAGS = ("kdweefinfi", "ysysltqlke")
+ETA_STUCK = 99          # a carrier with no path at all
+
+
+def carrier_etas(g) -> list[int]:
+    """Remaining travel for every autonomous carrier, one entry each.
+
+    THE ENGINE IS THE MODEL. `wa30.py:1142 ynmgxjqkgh` drives a carrier with
+    the game's OWN breadth-first searches — `czrprbohhe` when it is empty
+    (goal: any staging cell in `lkvghqfwan`) and `cyjrduhzmz` when it is
+    carrying (goal: a cell from which the held block lands on a pad). Those are
+    methods on the live game object, and the planner already runs every macro
+    on a `deepcopy`, so we can simply CALL them instead of reimplementing the
+    pick rule. A reimplementation could disagree with the engine; this cannot.
+
+    Returns path length - 1 = moves still needed, since the returned path
+    includes the carrier's current cell.
+    """
+    out = []
+    for tag in CARRIER_TAGS:
+        for c in g.current_level.get_sprites_by_tag(tag):
+            try:
+                if c in g.nsevyuople:
+                    p = (g.cyjrduhzmz(c) if tag == "kdweefinfi"
+                         else g.egqayvffim(c))
+                else:
+                    p = (g.czrprbohhe(c) if tag == "kdweefinfi"
+                         else g.zauouvdhta(c))
+            except Exception:  # noqa: BLE001 — a missing helper must not kill the search
+                p = None
+            out.append(len(p) - 1 if p and len(p) > 1 else
+                       (0 if p else ETA_STUCK))
+    return out
+
+
 def progress_key(env):
-    """(blocks needing avatar work, blocks not yet on a pad).
+    """(blocks needing avatar work, blocks not on a pad, total carrier travel).
 
     A block parked in the dividing wall column is HANDED OFF: the avatar's job
     on it is done and the carrier will collect it. Scoring only on 'unplaced'
     made every handoff look like zero progress, so best-first had no gradient
     and wandered — the search was already discovering handoffs at (32,24),
     (32,28), (32,36) and then throwing them away.
+
+    THIRD TERM ADDED 2026-08-28. The first two terms tie almost everywhere:
+    every channel row scores identically even though a block parked next to the
+    carrier is a far shorter ferry than one parked across the board, and every
+    WAIT of a different length scores identically until a delivery actually
+    lands. Total remaining carrier travel breaks both ties in the right
+    direction and is exact (it is the engine's own BFS). It sits LAST so it can
+    only order states that are otherwise equal in real progress — a shorter
+    ferry never outranks an actually-placed block.
     """
     g = game_of(env)
     per = engine_percept(g, env.observation_space)
     unplaced, occupied = status(g)
+    eta = sum(carrier_etas(g))
     if per is None:
-        return (len(unplaced), len(unplaced))
+        return (len(unplaced), len(unplaced), eta)
     _av, _bl, _fp, walls, _oc = per
     from collections import Counter
     cols = Counter(x for (x, _y) in walls if 0 <= x < 64)
     col = cols.most_common(1)[0][0] if cols else None
     todo = sum(1 for (x, _y) in unplaced if x != col)
-    return (todo, len(unplaced))
+    return (todo, len(unplaced), eta)
 
 
 def all_blocks_viable(env, av_color, deadline) -> bool:
@@ -357,13 +540,25 @@ def plan(env0, budget: int, beam: int = 8, time_s: float = 600.0, verbose=True,
         if nun < seen_best:
             seen_best = nun
             if verbose:
-                print(f"   {moves:>3} moves: {nun} unplaced  "
+                print(f"   {moves:>3} moves: todo={nun[0]} unplaced={nun[1]} "
+                      f"carrier_eta={nun[2]}  "
                       f"({expansions} macro expansions, {time.time()-t0:.0f}s)")
         legs = deliver_legs(env, av_color, deadline)
         cands = list(legs)
         idle = idle_action(env, lc0)
         if idle is not None:
-            for k in WAITS:
+            # ADAPTIVE WAIT (2026-08-28). The fixed ladder (4, 10, 20) is a
+            # guess about a quantity the engine will tell us exactly: each
+            # carrier's own BFS says how many player actions it still needs to
+            # reach its goal. Waiting that many moves is the ONLY wait length
+            # that is guaranteed to change the board — anything shorter buys
+            # nothing, anything longer overspends a per-level move budget.
+            # Waiting eta+1 covers the pick-up/drop action that follows arrival.
+            waits = set(WAITS)
+            for e in carrier_etas(game_of(env)):
+                if 0 < e < ETA_STUCK:
+                    waits.add(e + 1)
+            for k in sorted(waits):
                 cands.append((f"wait{k}", [idle] * k))
         if verbose and expansions <= 4:
             per = engine_percept(game_of(env), env.observation_space)
