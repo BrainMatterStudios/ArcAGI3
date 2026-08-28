@@ -464,7 +464,22 @@ def _grind_v8(session: Any, xs: dict[str, Any], level: int) -> None:
 def _engagement_caps() -> dict[str, Any]:
     """The v7 engagement caps, unchanged, in GuardedEnv's keyword form."""
     time_cap_s = max(30, _env_int("EXPLORER_GRIND_TIME_S", 600))
-    owned_time_cap_s = max(time_cap_s, _env_int("EXPLORER_OWNED_TIME_S", 1500))
+    # OWNED CAP RAISED 1500 -> 1700 (2026-08-28, measured).
+    # tu93 is the only game in the 25 the GENERIC lane cracks. Its cost under
+    # the shipped AVATAR dispatch (nbfs_macros first) is 84,685 offline actions
+    # = 1,733 s live at the measured x2.66 competition guard tax — 15.5% over a
+    # 1,500 s cap, which is why the crack was ruled unflyable. Re-ordering the
+    # AVATAR lanes to nbfs-first costs 73,804 actions = 1,510.1 s and loses ZERO
+    # levels across the 25-game census (48 either way) — but that still misses a
+    # 1,500 s cap by 10.1 s.
+    #
+    # ENVELOPE SAFETY (checked in `remaining_s`, not assumed): every engagement
+    # takes the MIN of this cap, the cumulative EXPLORER_RUN_GRIND_BUDGET_S
+    # (2700 s), the 5 h hard cutoff and the solver's soft time. The cumulative
+    # pool is unchanged, so raising the per-engagement cap CANNOT increase total
+    # grind wall time. The real cost is distributional: one FAILED engagement
+    # may now consume 1700 s of the shared 2700 s instead of 1500 s.
+    owned_time_cap_s = max(time_cap_s, _env_int("EXPLORER_OWNED_TIME_S", 1700))
     # engine-action ceiling: the v7 knob, additionally clamped to what the
     # wall cap can physically produce at the measured gateway rate (v7 shipped
     # 500000, which no 1500 s cap can ever reach — an inert ceiling).
