@@ -489,9 +489,22 @@ def all_blocks_viable(env, av_color, deadline) -> bool:
     # blocks x pads x facings searches per child and the whole planner managed
     # 4 expansions in 600 s. Reachability over static geometry is a necessary
     # condition for placeability and costs one BFS per child.
+    # GOALS INCLUDE THE HANDOFF CHANNEL (2026-08-28).
+    # Reaching a pad is not the only way a block gets placed — reaching the
+    # divider is enough, because the carrier ferries it the rest of the way.
+    # That is the level's whole mechanic, and `progress_key` already scores it
+    # that way. Asking only for pads is the SAME one-obstacle-set error that
+    # produced the fiction legs: it applies avatar-side geometry to a body that
+    # does not obey it.
+    #
+    # MEASURED: level 4 start reported `all_blocks_viable = False` — the entire
+    # level dead before a single expansion, so `plan` returned in 0.5 s of a
+    # 900 s budget and the chain stopped. Level 3 slipped through only by
+    # accident: its two divider cells were occupied by BLOCKS, which
+    # `engine_percept` subtracts from the wall set, leaving a hole the flood
+    # fill could pass through. Level 4 has no such hole.
     blocked = walls | occupied
-    seen = {tuple(blocks[0])} if blocks else set()
-    pads = set(free_pads)
+    pads = set(free_pads) | set(handoff_cells(walls, occupied, blocks))
     for b in blocks:
         start = tuple(b)
         stack, seen = [start], {start}
@@ -609,8 +622,106 @@ def plan(env0, budget: int, beam: int = 8, time_s: float = 600.0, verbose=True,
     return None, None
 
 
+def chain(core, buds, max_level: int, time_s: float, av_color=None) -> dict:
+    """Solve wa30 level by level, shipped A* first and the macro planner as the
+    fallback. -> per-level record.
+
+    WHY BOTH. The shipped `solve_wa30` is a pure avatar->pad A*; it clears the
+    levels where the avatar really can deliver (L1, L2) in far less wall time
+    than a macro search. It cannot clear a level whose pads sit behind a
+    divider, because there the avatar delivers NOTHING and the whole job is
+    handoff + carrier. Running the cheap planner first and the macro planner
+    only on its failures keeps the fast path fast and is exactly how a shipped
+    specialist would have to be structured.
+    """
+    rows = []
+    for lvl in range(1, max_level + 1):
+        a0 = core.backend.actions_spent
+        t0 = time.time()
+        r = sp.solve_level(core, "wa30_grabdrag", lvl, 120.0)
+        if r.get("solved"):
+            core.backend.adopt(r["handle"])
+            rows.append({"level": lvl, "by": "shipped", "moves": None,
+                         "actions": core.backend.actions_spent - a0,
+                         "wall": round(time.time() - t0, 1)})
+            print(f"  L{lvl}: shipped A*  "
+                  f"({core.backend.actions_spent - a0} actions, "
+                  f"{time.time() - t0:.1f}s)")
+            continue
+        live = core.backend.env
+        budget = buds[lvl - 1] if lvl - 1 < len(buds) else 100
+        # The avatar colour is a by-product of the SPECIALIST'S probe, so it
+        # only exists on `core` after `solve_level` has run at least once —
+        # reading it before the chain starts yields None, and `plan` bails
+        # instantly on a None colour. That is not a stall; it is a missing
+        # input, and it cost a full chain run to spot. Read it here, lazily.
+        av = av_color or getattr(core, "_wa30_avcolor", None)
+        if av is None:
+            print(f"  L{lvl}: avatar colour unknown — cannot plan")
+            break
+        p, moves = plan(live, budget, beam=8, time_s=time_s, verbose=False,
+                        av_color=av)
+        if p is None:
+            rows.append({"level": lvl, "by": None, "moves": None,
+                         "actions": core.backend.actions_spent - a0,
+                         "wall": round(time.time() - t0, 1)})
+            print(f"  L{lvl}: NO PLAN inside {budget} moves "
+                  f"({time.time() - t0:.1f}s)  <- chain stops here")
+            break
+        lc = live.observation_space.levels_completed
+        verdict, done = run_actions(live, p, lc)
+        rows.append({"level": lvl, "by": "macro", "moves": moves,
+                     "budget": budget, "verdict": verdict,
+                     "actions": core.backend.actions_spent - a0,
+                     "wall": round(time.time() - t0, 1)})
+        print(f"  L{lvl}: macro {moves}/{budget} moves -> {verdict} "
+              f"({core.backend.actions_spent - a0} actions, "
+              f"{time.time() - t0:.1f}s)")
+        if verdict != "win":
+            break
+    return {"rows": rows,
+            "levels_won": sum(1 for r in rows
+                              if r["by"] and (r.get("verdict", "win") == "win")),
+            "actions": core.backend.actions_spent}
+
+
 def main() -> int:
     logging.disable(logging.INFO)
+    if len(sys.argv) > 1 and sys.argv[1] == "chain":
+        max_level = int(sys.argv[2]) if len(sys.argv) > 2 else 9
+        time_s = float(sys.argv[3]) if len(sys.argv) > 3 else 900.0
+        if os.environ.get("ONLY_RESET_LEVELS") != "true":
+            print("ERROR: run with ONLY_RESET_LEVELS=true")
+            return 2
+        import json
+
+        import search_core as sc
+        from arc_agi import Arcade, OperationMode
+        from step_budgets import budgets_for
+
+        root_dir = os.path.dirname(os.path.dirname(_HERE))
+        arc = Arcade(operation_mode=OperationMode.OFFLINE,
+                     environments_dir=os.path.join(root_dir,
+                                                   "environment_files"))
+        probe = arc.make("wa30")
+        probe.reset()
+        buds = budgets_for(game_of(probe))
+        env = arc.make("wa30")
+        env.reset()
+        core = sc.SearchCore(env, backend="snapshot", max_states=20000)
+        core.warmup_and_freeze()
+        av = getattr(core, "_wa30_avcolor", None)
+        print(f"wa30 CHAIN to L{max_level}, budgets {buds}, avatar colour {av}\n")
+        res = chain(core, buds, max_level, time_s, av)
+        print(f"\nlevels won: {res['levels_won']} / {max_level}"
+              f"   total engine actions (snapshot): {res['actions']}")
+        out = os.path.join(_HERE, "results", "wa30_chain.json")
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w") as fh:
+            json.dump(res, fh, indent=2)
+        print(f"wrote {out}")
+        return 0
+
     level = int(sys.argv[1]) if len(sys.argv) > 1 else 3
     beam = int(sys.argv[2]) if len(sys.argv) > 2 else 8
     time_s = float(sys.argv[3]) if len(sys.argv) > 3 else 600.0
