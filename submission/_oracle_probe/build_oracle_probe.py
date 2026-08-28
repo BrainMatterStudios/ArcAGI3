@@ -148,17 +148,31 @@ def _probe_chat(messages, temperature):
              or "http://127.0.0.1:1234/v1").rstrip("/")
     _model = (_po.environ.get("LOCAL_ANALYZER_MODEL")
               or "Qwen/Qwen3.8-27B-FP8")
+    # THE BUG THAT COST THE FIRST 27B RUN (~4 h GPU, 0/30 fabricated):
+    # this kernel's vLLM is launched with
+    #   default_chat_template_kwargs: {'preserve_thinking': True}
+    # so every reply opens with a reasoning block. With max_tokens=512 the
+    # reasoning consumed the ENTIRE budget (~42 tok/s x ~12 s = ~500 tokens)
+    # and the final "ACTIONS:" line was never emitted — 400 calls, 0 actions.
+    # Two independent defences, because one is not enough for a 4 h run:
+    #   1. ask the template to drop thinking for this request;
+    #   2. give enough headroom that the answer still lands if it does not.
     _body = _pj.dumps({
         "model": _model, "messages": messages, "temperature": temperature,
-        "max_tokens": 512, "stream": False,
+        "max_tokens": 3000, "stream": False,
+        "chat_template_kwargs": {"preserve_thinking": False},
     }).encode()
     _req = _pu.Request(
         _base + "/chat/completions", data=_body,
         headers={"Content-Type": "application/json",
                  "Authorization": "Bearer " + (_po.environ.get("LOCAL_ANALYZER_API_KEY") or "EMPTY")})
-    with _pu.urlopen(_req, timeout=600) as _r:
+    with _pu.urlopen(_req, timeout=900) as _r:
         _d = _pj.loads(_r.read())
-    return (_d["choices"][0]["message"].get("content") or "")
+    _m = _d["choices"][0]["message"]
+    # Some servers put the thinking in reasoning_content and leave content
+    # empty; concatenate so an ACTIONS line is found wherever it landed.
+    return ((_m.get("content") or "") + "\n"
+            + (_m.get("reasoning_content") or ""))
 
 
 def _probe_main():
@@ -166,6 +180,24 @@ def _probe_main():
 
     OP.ask = lambda messages, model, temperature: _probe_chat(messages, temperature)
     OP.ROOT = str(_probe_env_dir().parent)   # oracle_probe joins ROOT/environment_files
+
+    # PREFLIGHT — fail in minutes, not hours.
+    # The first 27B run spent ~4 h and returned a fabricated 0/30 because every
+    # reply was unparsable (thinking ate max_tokens). One call, checked, before
+    # committing the GPU to 30 clones.
+    _pf = _probe_chat([
+        {"role": "system", "content": "Reply with a short sentence, then a "
+         "final line of the exact form:\nACTIONS: n, n, n\nusing numbers 1..5."},
+        {"role": "user", "content": "Say hello and give three actions."}], 0.2)
+    _acts = OP.parse_actions(_pf)
+    print(f"PREFLIGHT parsed={_acts} from {len(_pf)} chars", flush=True)
+    if not _acts:
+        print("PREFLIGHT RAW REPLY (first 1500 chars):\n" + _pf[:1500], flush=True)
+        raise RuntimeError(
+            "PREFLIGHT FAILED: the served model produced no parsable ACTIONS "
+            "line. Aborting BEFORE spending the GPU — a run in this state "
+            "reports 0/N and looks like a real negative. Fix the request "
+            "(max_tokens / chat_template_kwargs) and re-push.")
 
     clones = int(_po.environ.get("ORACLE_PROBE_CLONES", "10"))
     arms = (_po.environ.get("ORACLE_PROBE_ARMS", "oracle,control,guided")).split(",")

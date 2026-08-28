@@ -223,6 +223,25 @@ def parse_actions(text: str, cap: int = 8) -> list[int]:
     return nums[:cap]
 
 
+# INSTRUMENT GUARD, added after the first 27B run burned ~4 h of GPU and
+# returned a fabricated 0/30.
+#
+# That run reported `moves: 0, turns: 40` for EVERY clone: the model was
+# queried 400 times and not one reply contained a parsable action. Cause: the
+# kernel's vLLM is launched with `default_chat_template_kwargs:
+# {'preserve_thinking': True}`, so every reply opens with a reasoning block,
+# and `max_tokens: 512` was consumed entirely by it (~42 tok/s x ~12 s/turn
+# ~= 500 tokens) — the ACTIONS line was never reached.
+#
+# The existing guard only excluded clones that RAISED. These did not raise;
+# they returned unparsable content, which is indistinguishable from a broken
+# parser and sailed through as a clean "0/30 FAIL". A clone that never
+# executed a single action has not tested the model — it has tested the
+# harness. Treat it as INVALID, never as a failure.
+def clone_is_valid(r: dict) -> bool:
+    return not r.get("error") and int(r.get("moves") or 0) > 0
+
+
 def one_clone(clone: int, arm: str, model: str, max_moves: int,
               verbose: bool) -> dict:
     import logging
@@ -255,6 +274,7 @@ def one_clone(clone: int, arm: str, model: str, max_moves: int,
         "1..5. Nothing after that line.")
     moves, turns = 0, 0
     history: list[str] = []
+    unparsed_sample = [None]
     t0 = time.time()
     while moves < min(budget, max_moves) and turns < 40:
         turns += 1
@@ -271,6 +291,10 @@ def one_clone(clone: int, arm: str, model: str, max_moves: int,
                     "moves": moves, "won": False}
         acts = parse_actions(reply)
         if not acts:
+            # keep the FIRST unparsable reply verbatim: the 27B run failed
+            # this way 400 times and left no evidence to diagnose from.
+            if unparsed_sample[0] is None:
+                unparsed_sample[0] = reply[:1200]
             history.append("(no parsable action)")
             continue
         verdict, done = M.run_actions(live, acts, lc0)
@@ -288,7 +312,8 @@ def one_clone(clone: int, arm: str, model: str, max_moves: int,
     un, oc = M.status(g)
     return {"clone": clone, "arm": arm, "won": False, "moves": moves,
             "turns": turns, "blocks_left": len(un), "delivered": len(oc),
-            "wall": round(time.time() - t0, 1)}
+            "wall": round(time.time() - t0, 1),
+            "unparsed_sample": unparsed_sample[0]}
 
 
 def main() -> int:
@@ -315,12 +340,13 @@ def main() -> int:
     # A clone only counts if the model actually got to play.
     for arm in arms:
         a = [r for r in results if r["arm"] == arm]
-        ok = [r for r in a if not r.get("error")]
+        ok = [r for r in a if clone_is_valid(r)]
         w = sum(1 for r in ok if r.get("won"))
         print(f"{arm:8} cleared {w}/{len(ok)} valid "
-              f"({len(a) - len(ok)} errored, excluded)"
+              f"({len(a) - len(ok)} INVALID — errored or zero actions "
+              f"executed — excluded)"
               + (f" = {100.0 * w / len(ok):.0f}%" if ok else ""))
-    o = [r for r in results if r["arm"] == "oracle" and not r.get("error")]
+    o = [r for r in results if r["arm"] == "oracle" and clone_is_valid(r)]
     if not o:
         print("\nNO VALID ORACLE CLONES — instrument failure, NO VERDICT. "
               "Fix the harness before reading anything into this run.")
