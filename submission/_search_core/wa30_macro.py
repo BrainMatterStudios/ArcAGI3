@@ -48,6 +48,7 @@ if _HERE not in sys.path:
 import specialists as sp  # noqa: E402
 
 WAITS = (4, 10, 20)
+PRUNE = os.environ.get("WA30_MACRO_PRUNE", "1") != "0"
 
 
 def _action(a: int):
@@ -615,7 +616,16 @@ def plan(env0, budget: int, beam: int = 8, time_s: float = 600.0, verbose=True,
             # progress available. So a child is discarded when ANY unplaced
             # block has no leg to any free pad: that block can never be placed
             # again and the branch is already lost, however good its count is.
-            if un[0] and not all_blocks_viable(child, av_color, deadline):
+            # PRUNE IS A SWITCH, NOT A LAW (measured 2026-08-28 on level 4).
+            # It is load-bearing on level 3, where the carrier can seal the
+            # board. On level 4 it is net-NEGATIVE: with it the search stalls
+            # at todo=3 by 51 moves, without it it reaches todo=2 by 79. The
+            # difference is not beam width — beam 8 and beam 32 produce a
+            # byte-identical trace, so children are being DISCARDED, not
+            # trimmed. Default ON (level 3 needs it); WA30_MACRO_PRUNE=0 turns
+            # it off for levels where free carrier labour is absent.
+            if (PRUNE and un[0]
+                    and not all_blocks_viable(child, av_color, deadline)):
                 continue
             heap.append((un, moves + done, expansions, acts + path[:done], child))
         heap = sorted(heap, key=lambda s: (s[0], s[1]))[:beam]

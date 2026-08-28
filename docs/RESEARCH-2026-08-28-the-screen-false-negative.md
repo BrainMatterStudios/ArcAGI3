@@ -193,6 +193,59 @@ the pad loop's 160 A* calls.
 *body semantics* before its search. One obstacle set for two bodies with
 different passability is a phantom-wall bug in either direction.
 
+## 4c. wa30 chained to 3/9 — and exactly why level 4 does not fall
+
+`wa30_macro.py chain N T` runs shipped A* first and the macro planner only on
+its failures. **L1 28 actions/0.1 s, L2 201/2.7 s (shipped), L3 82/100 moves
+(macro) — 3 of 9, one better than the census's 2.**
+
+Two more instances of the SAME one-body error surfaced getting there, making
+four in total across the planner:
+
+| component | collapsed two bodies into one obstacle set | symptom |
+|---|---|---|
+| `_DragModel` | avatar allowed to escort a block to x=52 | 16 fiction legs, 99.6% of runtime |
+| `handoff_cells` | only non-wall gaps are targets | 0 handoff legs; macro never fired |
+| `all_blocks_viable` | blocks cannot enter the divider | **L4 dead at start; 0.5 s of a 900 s budget** |
+
+L3 had only passed `all_blocks_viable` by accident: its two divider cells held
+BLOCKS, which `engine_percept` subtracts from the wall set, leaving a hole the
+flood fill could cross. L4 has no such hole. Goals now include the handoff
+channel — reaching the divider IS placement, since the carrier ferries the rest
+— which is how `progress_key` already scored it.
+
+(A fourth was mine: `chain()` read `core._wa30_avcolor` before any
+`solve_level` had run, so it was always `None` and `plan` bailed instantly. A
+missing input presenting as a stall.)
+
+**Why L4 still does not fall — three things ruled out and one cause found.**
+
+- **Not beam width.** Beam 8 and beam 32 produce a *byte-identical* trace —
+  same 7 expansions, same stall. Children are being discarded, not trimmed.
+- **Not the budget, at first.** It reaches `todo=3` at 41 moves with 59 of its
+  100 left and shortest legs of 6-8.
+- **The deadlock prune is net-negative here.** Prune ON stalls at `todo=3` by
+  51 moves; prune OFF reaches `todo=2` by 79. Now a switch —
+  `WA30_MACRO_PRUNE=0` — defaulting ON, because level 3 genuinely needs it.
+- **THE CAUSE: L4 has almost no free labour.** Per-carrier ETA at level start
+  is `[99, 5, 99]` — **two of its three carriers have NO path to any of the 25
+  staging cells before the avatar has moved at all.** L3 solved because one
+  carrier ferried continuously while the avatar worked; L4's avatar must
+  personally handle ~6 of 7 blocks inside 100 moves at ~12 moves per leg. That
+  matches the independently measured free-delivery count (L4 = 1/7).
+
+So L4 is an EFFICIENCY problem, not a search-quality one: the remaining gain
+has to come from shorter handoff legs (better divider-cell choice), not from
+waiting on carriers that cannot move. **wa30 is not a third crack**: a crack
+needs all 9 levels, and L5-L9 are unexplored.
+
+**Deployability is a separate, unstarted problem.** `plan()` uses raw
+`copy.deepcopy(env)` — `SnapshotBackend` semantics, offline only
+(`search_core.py:30`). Live, `Arcade.make` returns a remote wrapper with
+server-side state and "search on a free copy" is closed. A port means routing
+macro execution through the existing backend-agnostic
+`sp.chain(backend, handle, toks)` and pricing it under `ResetReplayBackend`.
+
 ## 5. Standing laws added today
 
 1. **An in-sample confusion matrix is not a generalisation estimate.** Any
