@@ -36,7 +36,22 @@ SUB = HERE.parent
 ROOT = SUB.parent
 BASE_NB = SUB / "_duck38_v12" / "arc3-duck38-v12.ipynb"
 GRAFT_PY = SUB / "_throughput_v1" / "graft_throughput.py"
-KERNEL_SLUG = "arc3-tp-smoke"
+GRAFT2_PY = SUB / "_throughput_v1" / "graft_control.py"
+ARMS = {
+    # arm: (kernel slug, phases as (name, env), read rule)
+    "tp": {
+        "slug": "arc3-tp-smoke",
+        "phases": [("stock", {"TP_ENABLE": "0", "TP2_ENABLE": "0"}),
+                   ("tp", {"TP_ENABLE": "1", "TP2_ENABLE": "0"})],
+        "read": "throughput",
+    },
+    "tp2": {
+        "slug": "arc3-tp2-smoke",
+        "phases": [("tp", {"TP_ENABLE": "1", "TP2_ENABLE": "0"}),
+                   ("tp2", {"TP_ENABLE": "1", "TP2_ENABLE": "1"})],
+        "read": "control",
+    },
+}
 
 PER_GAME_S = 7920
 SOFT_END_S = 19800          # 5.5 h global backstop: boot + 2 x 2.2 h + slack
@@ -109,8 +124,9 @@ assert "RTX" in _gpu_name and "6000" in _gpu_name, (
 '''
 
 
-def _smoke_cell(games: list[str]) -> str:
+def _smoke_cell(games: list[str], phases: list[tuple[str, dict]]) -> str:
     games_repr = json.dumps(games, indent=4)
+    phase_lines = "\n".join(f"    ({name!r}, GAMES_25, {PER_GAME_S}, {env!r})," for name, env in phases)
     return f'''# Smoke/eval hook: a NORMAL COMMIT runs the THROUGHPUT A/B SMOKE on the scored
 # GPU class. The scored rerun path (KAGGLE_IS_COMPETITION_RERUN) never enters
 # this branch.
@@ -120,8 +136,7 @@ def _smoke_cell(games: list[str]) -> str:
 # pass-through (TP_ENABLE=0), then "tp" with the Pack-1 flags on.
 GAMES_25 = {games_repr}
 SMOKE_PHASES = [
-    ("stock", GAMES_25, {PER_GAME_S}, {{"TP_ENABLE": "0"}}),
-    ("tp", GAMES_25, {PER_GAME_S}, {{"TP_ENABLE": "1"}}),
+{phase_lines}
 ]
 TP_PHASE_ERRORS = []
 TP_ALL_RUNS = []
@@ -171,6 +186,17 @@ os.environ["TP_YIELD_SECONDS"] = "900"
 os.environ["TP_TOOL_STEPS"] = "8"
 os.environ["TP_KEEP_NOTES_ON_GAME_OVER"] = "1"
 os.environ["TP_BATCH_CAP"] = "10"
+os.environ["TP2_ENABLE"] = "1"
+os.environ["TP2_SUMMARY"] = "1"
+os.environ["TP2_PROBE"] = "1"
+os.environ["TP2_PROBE_CLICKS"] = "3"
+os.environ["TP2_STALL"] = "1"
+os.environ["TP2_STALL_T1"] = "10"
+os.environ["TP2_STALL_T2"] = "40"
+os.environ["TP2_STALL_RESETS_PER_LEVEL"] = "2"
+os.environ["TP2_STREAK"] = "1"
+os.environ["TP2_STREAK_N"] = "3"
+os.environ["TP2_DIFF"] = "1"
 for _stale in ("EFFORT_MEDIUM", "EFFORT_DEAD_RETRY", "YIELD_CARRYOVER", "YIELD_SLICE_CAP",
                "EXPLORER", "EXPLORER_V8"):
     os.environ.pop(_stale, None)
@@ -181,6 +207,7 @@ GRAFT_CELL_TAIL = r'''
 _TP_DIR = WORKING_DIR / "tp_bundle"
 _TP_DIR.mkdir(parents=True, exist_ok=True)
 (_TP_DIR / "graft_throughput.py").write_text(_TP_SOURCE, encoding="utf-8")
+(_TP_DIR / "graft_control.py").write_text(_TP2_SOURCE, encoding="utf-8")
 if str(_TP_DIR) not in sys.path:
     sys.path.insert(0, str(_TP_DIR))
 
@@ -190,8 +217,12 @@ _tpmod = _importlib.import_module("graft_throughput")
 _tp_status = _tpmod.install()
 print("[throughput]", _tp_status)
 assert _tp_status == "throughput: OK", "throughput graft must be live, got: " + repr(_tp_status)
-print("[throughput] flags:", {k: v for k, v in os.environ.items() if k.startswith("TP_")})
-print("[throughput] status:", _tpmod.status())
+_tcmod = _importlib.import_module("graft_control")
+_tc_status = _tcmod.install()
+print("[control]", _tc_status)
+assert _tc_status == "control: OK", "control graft must be live, got: " + repr(_tc_status)
+print("[grafts] flags:", {k: v for k, v in os.environ.items() if k.startswith("TP")})
+print("[grafts] status:", _tpmod.status(), _tcmod.status())
 '''
 
 TELEMETRY_CELL = r'''# ---- tp smoke telemetry: THE READ. Per phase: per-game actions / levels /
@@ -295,6 +326,7 @@ def _tp_phase_end(phase, game_runs):
         "phase": phase,
         "env": {k: v for k, v in os.environ.items() if k.startswith("TP_")},
         "graft_status": _tpmod.status(),
+        "control_status": _tcmod.status(),
         "wall_s": round(wall, 1),
         "games": games,
         "n_games": len(games),
@@ -358,10 +390,10 @@ print("[tp-tel] installed; metrics url =", _metrics_url(), flush=True)
 
 REPORT_CELL = r'''# ---- tp smoke final report (grep for TP SMOKE / PHASE / READ) ----
 print("=" * 78)
-print("TP SMOKE RESULTS (Pack 1 throughput graft, stock vs tp)")
+print("TP SMOKE RESULTS (arm", ARM_NAME, "read rule", READ_RULE, ")")
 print("install verdict:", _tp_status)
 by = {p["phase"]: p for p in TP_PHASES}
-for name in ("stock", "tp"):
+for name in [p[0] for p in SMOKE_PHASES]:
     p = by.get(name)
     if not p:
         print(f"PHASE {name}: MISSING")
@@ -378,21 +410,32 @@ for name in ("stock", "tp"):
 
 verdict = "UNREADABLE"
 detail = ""
-if "stock" in by and "tp" in by and by["stock"]["n_games"] and by["tp"]["n_games"]:
-    s, t = by["stock"], by["tp"]
+_names = [p[0] for p in SMOKE_PHASES]
+if len(_names) == 2 and all(n in by and by[n]["n_games"] for n in _names):
+    s, t = by[_names[0]], by[_names[1]]
     ratio = (t["mean_actions"] / s["mean_actions"]) if s["mean_actions"] else float("inf")
     dlev = t["mean_levels"] - s["mean_levels"]
+    dzero = t["zero_level_games"] - s["zero_level_games"]
     hit = t["prefix_hit_rate"] or 0.0
-    detail = f"actions x{ratio:.2f} levels {dlev:+.3f} prefix_hit {hit:.2f}"
-    if ratio >= 2.0 and dlev >= -0.15 and hit >= 0.5:
-        verdict = "PASS"
-    elif ratio >= 1.5 and dlev >= -0.15:
-        verdict = "INCONCLUSIVE"
-    else:
-        verdict = "FAIL"
+    detail = (f"actions x{ratio:.2f} levels {dlev:+.3f} zero_level {dzero:+d} "
+              f"prefix_hit {hit:.2f} score {t['mean_score'] - s['mean_score']:+.3f}")
+    if READ_RULE == "throughput":
+        if ratio >= 2.0 and dlev >= -0.15 and hit >= 0.5:
+            verdict = "PASS"
+        elif ratio >= 1.5 and dlev >= -0.15:
+            verdict = "INCONCLUSIVE"
+        else:
+            verdict = "FAIL"
+    else:  # control: fewer zero-level games without losing depth
+        if dzero <= -3 and dlev >= -0.1:
+            verdict = "PASS"
+        elif dlev < -0.15 or dzero > 2:
+            verdict = "FAIL"
+        else:
+            verdict = "INCONCLUSIVE"
 print(f"TP SMOKE READ: {verdict} ({detail}) phase_errors={TP_PHASE_ERRORS}")
 results = {
-    "arm": "tp-smoke",
+    "arm": ARM_NAME,
     "install_verdict": _tp_status,
     "phases": TP_PHASES,
     "phase_errors": TP_PHASE_ERRORS,
@@ -416,11 +459,15 @@ def public_games() -> list[str]:
     return names
 
 
-def main() -> None:
+def main(arm: str = "tp") -> None:
+    spec = ARMS[arm]
+    slug = spec["slug"]
     nb = json.loads(BASE_NB.read_text())
     graft_src = GRAFT_PY.read_text()
-    assert "def install() -> str:" in graft_src
+    graft2_src = GRAFT2_PY.read_text()
+    assert "def install() -> str:" in graft_src and "def install() -> str:" in graft2_src
     assert "def time_guard_per_game_s" in graft_src
+    assert "def run_probe" in graft2_src
     games = public_games()
 
     def idx_of(marker: str) -> int:
@@ -434,7 +481,7 @@ def main() -> None:
                 "outputs": [], "source": text.splitlines(keepends=True)}
 
     nb["cells"].insert(idx_of(MARK_IMPORTS) + 1, code_cell(GPU_ASSERT_CELL))
-    nb["cells"][idx_of(MARK_SMOKE)]["source"] = _smoke_cell(games).splitlines(keepends=True)
+    nb["cells"][idx_of(MARK_SMOKE)]["source"] = _smoke_cell(games, spec["phases"]).splitlines(keepends=True)
 
     run_idx = idx_of(MARK_RUN)
     run_src = "".join(nb["cells"][run_idx]["source"])
@@ -442,8 +489,10 @@ def main() -> None:
     run_src = run_src.replace(RUN_BLOCK_OLD, RUN_BLOCK_NEW)
     nb["cells"][run_idx]["source"] = run_src.splitlines(keepends=True)
 
-    graft_cell_text = GRAFT_CELL_HEAD + repr(graft_src) + GRAFT_CELL_TAIL
-    assert repr(graft_src) in graft_cell_text
+    graft_cell_text = (GRAFT_CELL_HEAD + repr(graft_src) + "\n_TP2_SOURCE = " + repr(graft2_src)
+                       + "\nARM_NAME = " + repr(arm) + "\nREAD_RULE = " + repr(spec["read"]) + "\n"
+                       + GRAFT_CELL_TAIL)
+    assert repr(graft_src) in graft_cell_text and repr(graft2_src) in graft_cell_text
     nb["cells"].insert(run_idx, code_cell(graft_cell_text))
     nb["cells"].insert(run_idx + 1, code_cell(TELEMETRY_CELL))
     nb["cells"].insert(idx_of(MARK_RUN) + 1, code_cell(REPORT_CELL))
@@ -453,17 +502,20 @@ def main() -> None:
     assert joined.index("GPU misbind") < joined.index(MARK_ATTEST)
     assert joined.index(MARK_ATTEST) < joined.index("SMOKE_PHASES = [")
     assert joined.index('os.environ["TP_ENABLE"] = "1"') < joined.index(MARK_RUN)
+    assert joined.count("SMOKE_PHASES = [") == 1 and all(n in joined for n, _ in spec["phases"])
     assert joined.index("[tp-tel] installed") < joined.index(MARK_RUN)
     assert joined.index(MARK_RUN) < joined.index("TP SMOKE RESULTS")
     assert 'EFFORT_MEDIUM"] = "1"' not in joined
     for name in games:
         assert joined.count(name) == 1, name
 
-    (HERE / f"{KERNEL_SLUG}.ipynb").write_text(json.dumps(nb, indent=1) + "\n")
-    (HERE / "kernel-metadata.json").write_text(json.dumps({
-        "id": f"ahmedmobasher86/{KERNEL_SLUG}",
-        "title": KERNEL_SLUG,
-        "code_file": f"{KERNEL_SLUG}.ipynb",
+    out_dir = HERE if arm == "tp" else HERE / arm
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{slug}.ipynb").write_text(json.dumps(nb, indent=1) + "\n")
+    (out_dir / "kernel-metadata.json").write_text(json.dumps({
+        "id": f"ahmedmobasher86/{slug}",
+        "title": slug,
+        "code_file": f"{slug}.ipynb",
         "language": "python",
         "kernel_type": "notebook",
         "is_private": True,
@@ -483,10 +535,12 @@ def main() -> None:
     }, indent=2) + "\n")
 
     code = "\n".join("".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code")
-    print("built", KERNEL_SLUG, "code-cell sha256", hashlib.sha256(code.encode()).hexdigest()[:16])
+    print("built", slug, "arm", arm, "code-cell sha256", hashlib.sha256(code.encode()).hexdigest()[:16])
     print("cells:", len(nb["cells"]), "games:", len(games), "notebook bytes:",
-          (HERE / f"{KERNEL_SLUG}.ipynb").stat().st_size)
+          (out_dir / f"{slug}.ipynb").stat().st_size)
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    main(sys.argv[1] if len(sys.argv) > 1 else "tp")

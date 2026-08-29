@@ -10,18 +10,20 @@ NB = HERE / "arc3-tp-smoke.ipynb"
 
 
 def main() -> int:
-    nb = json.loads(NB.read_text())
+    nb_path = Path(sys.argv[1]) if len(sys.argv) > 1 else NB
+    nb = json.loads(nb_path.read_text())
     cells = [("".join(c["source"])) for c in nb["cells"] if c["cell_type"] == "code"]
     joined = "\n".join(cells)
     checks = {
         "graft install asserted": 'assert _tp_status == "throughput: OK"' in joined,
-        "two phases": joined.count('("stock", GAMES_25') == 1 and joined.count('("tp", GAMES_25') == 1,
-        "phase env flips TP_ENABLE": '{"TP_ENABLE": "0"}' in joined and '{"TP_ENABLE": "1"}' in joined,
+        "two phases": joined.count(", GAMES_25, ") == 2,
+        "phase env set": joined.count("'TP_ENABLE': ") == 2 and joined.count("'TP2_ENABLE': ") == 2,
+        "both grafts install asserted": 'assert _tc_status == "control: OK"' in joined,
         "scored branch intact": "bm.games = _competition_games()" in joined and "KAGGLE_IS_COMPETITION_RERUN" in joined,
         "metrics scrape": "vllm:prefix_cache_hits_total" in joined,
         "phase begin/end wired": "_tp_phase_begin(_phase_name)" in joined and "_tp_phase_end(_phase_name" in joined,
         "report": "TP SMOKE READ" in joined,
-        "graft source embedded": "def _patch_trim" in joined and "def time_guard_per_game_s" in joined,
+        "graft source embedded": "def _patch_trim" in joined and "def time_guard_per_game_s" in joined and "def run_probe" in joined,
         "25 games": joined.count("GAMES_25 = [") == 1,
     }
     ok = True
