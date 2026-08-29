@@ -38,6 +38,8 @@ from typing import Any
 
 _tls = threading.local()
 _STATE = {"installed": False}
+# Pack 2 hook: called as ON_CUT(agent, dropped_messages) after a hysteresis cut.
+ON_CUT = None
 
 DEFAULT_TRIM_LOW_WATER = 0.5
 DEFAULT_CONTEXT_WINDOW = 24576
@@ -136,11 +138,19 @@ def _patch_trim(cls: Any) -> None:
             if estimate <= budget:
                 return [system_message, *self._drop_until_first_user_message(history)]
             target = max(1, int(budget * low))
+            original = list(history)
             while history and estimate > target:
                 if not self._drop_oldest_history_block(history, preserve_recent=preserve_recent):
                     break
                 estimate = self._estimate_request_input_tokens([system_message, *history], tools=tools)
             history = self._drop_until_first_user_message(history)
+            dropped = original[: max(0, len(original) - len(history))]
+            hook = ON_CUT
+            if hook is not None and dropped:
+                try:
+                    hook(self, dropped)
+                except Exception:  # noqa: BLE001 — a summary failure never blocks the turn
+                    pass
             return [system_message, *history]
         except Exception:  # noqa: BLE001 — fail open to stock
             return stock_trim(self, messages, tools=tools, preserve_recent=preserve_recent,

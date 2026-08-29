@@ -143,6 +143,47 @@ class TrimTests(_AgentMixin, unittest.TestCase):
         self.assertEqual(out[-3:], msgs[-3:])
 
 
+class CutHookTests(_AgentMixin, unittest.TestCase):
+    def test_15_on_cut_receives_dropped_messages(self) -> None:
+        agent = self._agent()
+        agent._context_budget_tokens = 4000
+        seen = []
+        tp.ON_CUT = lambda a, dropped: seen.append((a, list(dropped)))
+        try:
+            msgs = self._messages(12)
+            out = agent._trim_messages_for_context(msgs)
+        finally:
+            tp.ON_CUT = None
+        self.assertEqual(len(seen), 1)
+        self.assertIs(seen[0][0], agent)
+        self.assertEqual(len(seen[0][1]) + (len(out) - 1), len(msgs) - 1)
+        self.assertEqual(seen[0][1][0], msgs[1])
+
+    def test_16_on_cut_exception_is_swallowed(self) -> None:
+        agent = self._agent()
+        agent._context_budget_tokens = 4000
+
+        def boom(a, d):
+            raise RuntimeError("x")
+
+        tp.ON_CUT = boom
+        try:
+            out = agent._trim_messages_for_context(self._messages(12))
+        finally:
+            tp.ON_CUT = None
+        self.assertLessEqual(agent._estimate_request_input_tokens(out), 2700)
+
+    def test_17_no_hook_when_under_budget(self) -> None:
+        agent = self._agent()
+        seen = []
+        tp.ON_CUT = lambda a, d: seen.append(1)
+        try:
+            agent._trim_messages_for_context(self._messages(2))
+        finally:
+            tp.ON_CUT = None
+        self.assertEqual(seen, [])
+
+
 class InitOverrideTests(_AgentMixin, unittest.TestCase):
     def test_20_defaults_applied(self) -> None:
         agent = self._agent()
