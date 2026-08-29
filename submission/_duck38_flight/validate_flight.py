@@ -57,9 +57,9 @@ import graft_control as _tc, graft_explore as _te  # noqa: E402
 checks = {
     "install OK": ns["_tp_status"] == "throughput: OK",
     "flags in env": {k: os.environ.get(k) for k in ("TP_ENABLE", "TP_CONTEXT_WINDOW", "TP_BATCH_CAP")}
-                    == {"TP_ENABLE": "1", "TP_CONTEXT_WINDOW": "24576", "TP_BATCH_CAP": "30"},
+                    == {"TP_ENABLE": "1", "TP_CONTEXT_WINDOW": "0", "TP_BATCH_CAP": "0"},
     "effort purged": "EFFORT_MEDIUM" not in os.environ,
-    "status enabled": status["enabled"] and status["trim_low_water"] == 0.5,
+    "status enabled": status["enabled"] and status["trim_low_water"] == 1.0,
     "seams wrapped": all(
         hasattr(getattr(agent_mod.ToolAgent, n), "_tp_stock") or hasattr(getattr(agent_mod.ToolAgent, n), "_tp2_stock")
         for n in ("_trim_messages_for_context", "__init__", "_update_summarized_knowledge_from_step_summary",
@@ -74,7 +74,7 @@ checks = {
                  == (_tc.enabled(), _te.enabled()),
 }
 agent = agent_mod.ToolAgent(model="m", base_url="http://127.0.0.1:9/v1", provider="vllm")
-checks["instance budget"] = agent._context_budget_tokens == 24576 - agent._reply_reserve_tokens - agent._request_safety_margin_tokens
+checks["instance budget"] = agent._context_budget_tokens == max(1024, agent_mod._LOCAL_ANALYZER_CONTEXT_WINDOW - agent._reply_reserve_tokens - agent._request_safety_margin_tokens)
 checks["instance yield/steps"] = agent._yield_seconds == (None if agent_mod._LOCAL_ANALYZER_YIELD_SECONDS <= 0 else float(agent_mod._LOCAL_ANALYZER_YIELD_SECONDS)) and agent._tool_steps == (None if agent_mod._LOCAL_ANALYZER_TOOL_STEPS <= 0 else agent_mod._LOCAL_ANALYZER_TOOL_STEPS)
 
 ok = True

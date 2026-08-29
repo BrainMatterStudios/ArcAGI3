@@ -74,6 +74,28 @@ ARMS = {
                                    "TP_CONTEXT_WINDOW": "24576", "TP_BATCH_CAP": "30"})],
         "read": "control",
     },
+    # Clean Pack 2 read: STOCK Pack 1 (only notes-on-GAME_OVER + time guard kept)
+    # vs the same + control (async summaries).
+    "tp2c": {
+        "slug": "arc3-tp2c-smoke",
+        "phases": [("stock", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0",
+                              "TP_TRIM_LOW_WATER": "1.0", "TP_CONTEXT_WINDOW": "0",
+                              "TP_YIELD_SECONDS": "-1", "TP_TOOL_STEPS": "-1", "TP_BATCH_CAP": "0"}),
+                   ("stock_ctl", {"TP_ENABLE": "1", "TP2_ENABLE": "1", "TP4_ENABLE": "0",
+                                  "TP_TRIM_LOW_WATER": "1.0", "TP_CONTEXT_WINDOW": "0",
+                                  "TP_YIELD_SECONDS": "-1", "TP_TOOL_STEPS": "-1", "TP_BATCH_CAP": "0"})],
+        "read": "control",
+    },
+    # Gentle hysteresis: 43k window, cut 25% at a time (post-cut context >= stock's
+    # steady state), everything else stock. tp1b showed 24k/50% starves recency.
+    "tp1c": {
+        "slug": "arc3-tp1c-smoke",
+        "phases": [("stock", {"TP_ENABLE": "0", "TP2_ENABLE": "0", "TP4_ENABLE": "0"}),
+                   ("hyst43", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0",
+                               "TP_TRIM_LOW_WATER": "0.75", "TP_CONTEXT_WINDOW": "43008",
+                               "TP_YIELD_SECONDS": "-1", "TP_TOOL_STEPS": "-1", "TP_BATCH_CAP": "0"})],
+        "read": "throughput",
+    },
     "tp4": {
         "slug": "arc3-tp4-smoke",
         "phases": [("tp2", {"TP_ENABLE": "1", "TP2_ENABLE": "1", "TP4_ENABLE": "0"}),
