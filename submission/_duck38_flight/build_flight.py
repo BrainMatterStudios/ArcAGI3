@@ -38,10 +38,13 @@ GRAFT4_PY = SUB / "_throughput_v1" / "graft_explore.py"
 EXPLORER_PY = SUB / "_throughput_v1" / "frontier_explorer.py"
 BASE_CODE_SHA256_PREFIX = "dc2c36f8"
 
+# Pack 1 flight config = the tp1b "mech24" smoke phase: hysteresis trim + 24k
+# window + notes + time guard, STOCK yield (60 s) and tool steps, batch cap 30.
+# (The first tp smoke read FAIL with yield 900 / tool steps 8 / cap 10.)
 PACK1 = {
     "TP_ENABLE": "1", "TP_TRIM_LOW_WATER": "0.5", "TP_CONTEXT_WINDOW": "24576",
-    "TP_YIELD_SECONDS": "900", "TP_TOOL_STEPS": "8", "TP_KEEP_NOTES_ON_GAME_OVER": "1",
-    "TP_BATCH_CAP": "10",
+    "TP_YIELD_SECONDS": "-1", "TP_TOOL_STEPS": "-1", "TP_KEEP_NOTES_ON_GAME_OVER": "1",
+    "TP_BATCH_CAP": "30",
 }
 PACK2 = {
     "TP2_SUMMARY": "1", "TP2_PROBE": "1", "TP2_PROBE_CLICKS": "3", "TP2_STALL": "1",
@@ -104,9 +107,9 @@ print("[throughput]", _tp_status)
 assert _tp_status == "throughput: OK", "throughput graft must be live, got: " + repr(_tp_status)
 _tp_state = _tpmod.status()
 assert _tp_state["enabled"] and _tp_state["trim_low_water"] == 0.5 \
-    and _tp_state["context_window"] == 24576 and _tp_state["yield_seconds"] == 900.0 \
-    and _tp_state["tool_steps"] == 8 and _tp_state["keep_notes_on_game_over"] \
-    and _tp_state["batch_cap"] == 10, "flight config not in effect: " + repr(_tp_state)
+    and _tp_state["context_window"] == 24576 and _tp_state["yield_seconds"] == -1.0 \
+    and _tp_state["tool_steps"] == -1 and _tp_state["keep_notes_on_game_over"] \
+    and _tp_state["batch_cap"] == 30, "flight config not in effect: " + repr(_tp_state)
 print("[throughput] status:", _tp_state)
 _tcmod = _importlib.import_module("graft_control")
 _tc_status = _tcmod.install()

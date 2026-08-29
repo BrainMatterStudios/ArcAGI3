@@ -57,7 +57,7 @@ import graft_control as _tc, graft_explore as _te  # noqa: E402
 checks = {
     "install OK": ns["_tp_status"] == "throughput: OK",
     "flags in env": {k: os.environ.get(k) for k in ("TP_ENABLE", "TP_CONTEXT_WINDOW", "TP_BATCH_CAP")}
-                    == {"TP_ENABLE": "1", "TP_CONTEXT_WINDOW": "24576", "TP_BATCH_CAP": "10"},
+                    == {"TP_ENABLE": "1", "TP_CONTEXT_WINDOW": "24576", "TP_BATCH_CAP": "30"},
     "effort purged": "EFFORT_MEDIUM" not in os.environ,
     "status enabled": status["enabled"] and status["trim_low_water"] == 0.5,
     "seams wrapped": all(
@@ -75,7 +75,7 @@ checks = {
 }
 agent = agent_mod.ToolAgent(model="m", base_url="http://127.0.0.1:9/v1", provider="vllm")
 checks["instance budget"] = agent._context_budget_tokens == 24576 - agent._reply_reserve_tokens - agent._request_safety_margin_tokens
-checks["instance yield/steps"] = agent._yield_seconds == 900.0 and agent._tool_steps == 8
+checks["instance yield/steps"] = agent._yield_seconds == (None if agent_mod._LOCAL_ANALYZER_YIELD_SECONDS <= 0 else float(agent_mod._LOCAL_ANALYZER_YIELD_SECONDS)) and agent._tool_steps == (None if agent_mod._LOCAL_ANALYZER_TOOL_STEPS <= 0 else agent_mod._LOCAL_ANALYZER_TOOL_STEPS)
 
 ok = True
 for name, passed in checks.items():

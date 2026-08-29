@@ -49,6 +49,27 @@ Fetch: `python3 submission/_tp_smoke/fetch_results.py tp_smoke_results.json stdo
 - Levels/game on 25 games is noisy (identical-bytes spread ≈ ±0.3 locally); actions/game and prefix-hit are
   near-deterministic. Read levels for *direction*, not magnitude.
 
+## 2b. Pack 1 smoke READ (14:50 UTC): FAIL — and the cause is known
+
+`arc3-tp-smoke` v1, 25 games × 7,920 s, stock then tp (yield 900 / tool steps 8 / cap 10 / 24k):
+
+| phase | actions/game | levels/game | zero-level | score | requests | prefix hit | gen tok/s |
+|---|---|---|---|---|---|---|---|
+| stock | 47.4 | 1.00 | 8 | 3.86 | 1,213 | 0.29 | 331 |
+| tp | 19.0 | 0.40 | 16 | 1.25 | 1,989 | 0.55 | 440 |
+
+The mechanics worked (prefix hit ×1.9, decode +33%, +64% requests) but actions fell 60%. Two causes,
+from the transcripts (`submission/_tp_smoke/results/transcripts/`):
+1. **Bug (fixed, `0634261`)**: a deep hysteresis cut inside a long single turn removed the turn's only
+   user message; vLLM rejected those requests with `400 "No user query found in messages"` (11 of 50
+   calls on ar25, 6 of 53 on re86), each aborting the turn.
+2. **The stock 60-s yield was doing useful work**: it re-grounds the model with a fresh prompt + board
+   after every investigation call (41% of calls act in stock vs 18% under an 8-call in-turn loop).
+   Longer yield / bounded tool steps are withdrawn.
+
+`arc3-tp1b-smoke` (pushed ~15:00 UTC): stock vs **mech24** = hysteresis + 24k window + notes + time guard
+with the STOCK yield and tool steps, batch cap 30. Same read rule. Flight arms rebuilt to this config.
+
 ## 3. Decision tree for the 08-30 slot (00:01 UTC)
 
 1. tp PASS or INCONCLUSIVE-with-levels-up → push `submission/_duck38_flight/tp1` as a commit
