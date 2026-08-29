@@ -41,17 +41,25 @@ ARMS = {
     # arm: (kernel slug, phases as (name, env), read rule)
     "tp": {
         "slug": "arc3-tp-smoke",
-        "phases": [("stock", {"TP_ENABLE": "0", "TP2_ENABLE": "0"}),
-                   ("tp", {"TP_ENABLE": "1", "TP2_ENABLE": "0"})],
+        "phases": [("stock", {"TP_ENABLE": "0", "TP2_ENABLE": "0", "TP4_ENABLE": "0"}),
+                   ("tp", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0"})],
         "read": "throughput",
     },
     "tp2": {
         "slug": "arc3-tp2-smoke",
-        "phases": [("tp", {"TP_ENABLE": "1", "TP2_ENABLE": "0"}),
-                   ("tp2", {"TP_ENABLE": "1", "TP2_ENABLE": "1"})],
+        "phases": [("tp", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0"}),
+                   ("tp2", {"TP_ENABLE": "1", "TP2_ENABLE": "1", "TP4_ENABLE": "0"})],
+        "read": "control",
+    },
+    "tp4": {
+        "slug": "arc3-tp4-smoke",
+        "phases": [("tp2", {"TP_ENABLE": "1", "TP2_ENABLE": "1", "TP4_ENABLE": "0"}),
+                   ("tp24", {"TP_ENABLE": "1", "TP2_ENABLE": "1", "TP4_ENABLE": "1"})],
         "read": "control",
     },
 }
+GRAFT4_PY = SUB / "_throughput_v1" / "graft_explore.py"
+EXPLORER_PY = SUB / "_throughput_v1" / "frontier_explorer.py"
 
 PER_GAME_S = 7920
 SOFT_END_S = 19800          # 5.5 h global backstop: boot + 2 x 2.2 h + slack
@@ -197,6 +205,11 @@ os.environ["TP2_STALL_RESETS_PER_LEVEL"] = "2"
 os.environ["TP2_STREAK"] = "1"
 os.environ["TP2_STREAK_N"] = "3"
 os.environ["TP2_DIFF"] = "1"
+os.environ["TP4_ENABLE"] = "1"
+os.environ["TP4_STALL_T3"] = "30"
+os.environ["TP4_BUDGET"] = "800"
+os.environ["TP4_RUNS_PER_LEVEL"] = "1"
+os.environ["TP4_ENDGAME_S"] = "300"
 for _stale in ("EFFORT_MEDIUM", "EFFORT_DEAD_RETRY", "YIELD_CARRYOVER", "YIELD_SLICE_CAP",
                "EXPLORER", "EXPLORER_V8"):
     os.environ.pop(_stale, None)
@@ -208,6 +221,8 @@ _TP_DIR = WORKING_DIR / "tp_bundle"
 _TP_DIR.mkdir(parents=True, exist_ok=True)
 (_TP_DIR / "graft_throughput.py").write_text(_TP_SOURCE, encoding="utf-8")
 (_TP_DIR / "graft_control.py").write_text(_TP2_SOURCE, encoding="utf-8")
+(_TP_DIR / "frontier_explorer.py").write_text(_FE_SOURCE, encoding="utf-8")
+(_TP_DIR / "graft_explore.py").write_text(_TP4_SOURCE, encoding="utf-8")
 if str(_TP_DIR) not in sys.path:
     sys.path.insert(0, str(_TP_DIR))
 
@@ -221,8 +236,12 @@ _tcmod = _importlib.import_module("graft_control")
 _tc_status = _tcmod.install()
 print("[control]", _tc_status)
 assert _tc_status == "control: OK", "control graft must be live, got: " + repr(_tc_status)
+_temod = _importlib.import_module("graft_explore")
+_te_status = _temod.install()
+print("[explore]", _te_status)
+assert _te_status == "explore: OK", "explore graft must be live, got: " + repr(_te_status)
 print("[grafts] flags:", {k: v for k, v in os.environ.items() if k.startswith("TP")})
-print("[grafts] status:", _tpmod.status(), _tcmod.status())
+print("[grafts] status:", _tpmod.status(), _tcmod.status(), _temod.status())
 '''
 
 TELEMETRY_CELL = r'''# ---- tp smoke telemetry: THE READ. Per phase: per-game actions / levels /
@@ -327,6 +346,7 @@ def _tp_phase_end(phase, game_runs):
         "env": {k: v for k, v in os.environ.items() if k.startswith("TP_")},
         "graft_status": _tpmod.status(),
         "control_status": _tcmod.status(),
+        "explore_status": _temod.status(),
         "wall_s": round(wall, 1),
         "games": games,
         "n_games": len(games),
@@ -465,7 +485,10 @@ def main(arm: str = "tp") -> None:
     nb = json.loads(BASE_NB.read_text())
     graft_src = GRAFT_PY.read_text()
     graft2_src = GRAFT2_PY.read_text()
+    graft4_src = GRAFT4_PY.read_text()
+    fe_src = EXPLORER_PY.read_text()
     assert "def install() -> str:" in graft_src and "def install() -> str:" in graft2_src
+    assert "def install() -> str:" in graft4_src and "class FrontierExplorer" in fe_src
     assert "def time_guard_per_game_s" in graft_src
     assert "def run_probe" in graft2_src
     games = public_games()
@@ -490,9 +513,11 @@ def main(arm: str = "tp") -> None:
     nb["cells"][run_idx]["source"] = run_src.splitlines(keepends=True)
 
     graft_cell_text = (GRAFT_CELL_HEAD + repr(graft_src) + "\n_TP2_SOURCE = " + repr(graft2_src)
+                       + "\n_FE_SOURCE = " + repr(fe_src) + "\n_TP4_SOURCE = " + repr(graft4_src)
                        + "\nARM_NAME = " + repr(arm) + "\nREAD_RULE = " + repr(spec["read"]) + "\n"
                        + GRAFT_CELL_TAIL)
-    assert repr(graft_src) in graft_cell_text and repr(graft2_src) in graft_cell_text
+    for src in (graft_src, graft2_src, graft4_src, fe_src):
+        assert repr(src) in graft_cell_text
     nb["cells"].insert(run_idx, code_cell(graft_cell_text))
     nb["cells"].insert(run_idx + 1, code_cell(TELEMETRY_CELL))
     nb["cells"].insert(idx_of(MARK_RUN) + 1, code_cell(REPORT_CELL))
