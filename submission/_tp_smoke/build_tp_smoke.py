@@ -45,6 +45,18 @@ ARMS = {
                    ("tp", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0"})],
         "read": "throughput",
     },
+    # Pack 1b: the mechanical half only (hysteresis trim + 24k window + notes +
+    # time guard), with the STOCK 60 s yield / unlimited tool steps that the
+    # tp smoke showed re-ground the model after every investigation call, and
+    # a looser batch cap. Stock vs mech24 inside one boot.
+    "tp1b": {
+        "slug": "arc3-tp1b-smoke",
+        "phases": [("stock", {"TP_ENABLE": "0", "TP2_ENABLE": "0", "TP4_ENABLE": "0"}),
+                   ("mech24", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0",
+                               "TP_YIELD_SECONDS": "-1", "TP_TOOL_STEPS": "-1",
+                               "TP_CONTEXT_WINDOW": "24576", "TP_BATCH_CAP": "30"})],
+        "read": "throughput",
+    },
     "tp2": {
         "slug": "arc3-tp2-smoke",
         "phases": [("tp", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0"}),

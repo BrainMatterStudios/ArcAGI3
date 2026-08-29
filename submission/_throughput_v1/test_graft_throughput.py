@@ -143,6 +143,34 @@ class TrimTests(_AgentMixin, unittest.TestCase):
         self.assertEqual(out[-3:], msgs[-3:])
 
 
+class LastUserMessageTests(_AgentMixin, unittest.TestCase):
+    def _long_turn(self, calls: int, chars: int = 600) -> list[dict]:
+        """One user prompt followed by many assistant+tool pairs (a single long turn)."""
+        msgs = [{"role": "system", "content": "sys"}, {"role": "user", "content": "u0 " + "x" * chars}]
+        for i in range(calls):
+            msgs.append({"role": "assistant", "content": f"a{i}", "tool_calls": [
+                {"id": f"c{i}", "function": {"name": "python", "arguments": "{}"}}]})
+            msgs.append({"role": "tool", "tool_call_id": f"c{i}", "content": "t" * chars})
+        return msgs
+
+    def test_18_single_long_turn_keeps_its_user_message(self) -> None:
+        agent = self._agent()
+        agent._context_budget_tokens = 4000
+        msgs = self._long_turn(12)
+        out = agent._trim_messages_for_context(msgs)
+        self.assertGreaterEqual(len(out), 2)
+        self.assertEqual(out[0]["role"], "system")
+        self.assertTrue(any(m.get("role") == "user" for m in out[1:]), "user message was cut away")
+
+    def test_19_cut_stops_at_last_user_message(self) -> None:
+        agent = self._agent()
+        agent._context_budget_tokens = 4000
+        msgs = self._messages(3) + self._long_turn(12)[2:]   # 3 short turns then one long turn
+        out = agent._trim_messages_for_context(msgs)
+        self.assertTrue(any(m.get("role") == "user" for m in out[1:]))
+        self.assertEqual(out[-1], msgs[-1])
+
+
 class CutHookTests(_AgentMixin, unittest.TestCase):
     def test_15_on_cut_receives_dropped_messages(self) -> None:
         agent = self._agent()

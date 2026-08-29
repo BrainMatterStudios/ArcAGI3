@@ -54,6 +54,7 @@ def main() -> None:
             continue
         blob = api(f["url"])
         dest = OUT_DIR / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(blob)
         print(f"wrote {dest} ({len(blob)} bytes)")
 

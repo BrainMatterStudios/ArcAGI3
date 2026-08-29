@@ -139,11 +139,24 @@ def _patch_trim(cls: Any) -> None:
                 return [system_message, *self._drop_until_first_user_message(history)]
             target = max(1, int(budget * low))
             original = list(history)
+
+            def user_count(items):
+                return sum(1 for m in items if str(m.get("role", "")).strip() == "user")
+
             while history and estimate > target:
+                # Never cut away the most recent user message: a request whose
+                # history is only assistant/tool turns is rejected by the
+                # server ("No user query found in messages", measured live).
+                if user_count(history) <= 1:
+                    break
                 if not self._drop_oldest_history_block(history, preserve_recent=preserve_recent):
                     break
                 estimate = self._estimate_request_input_tokens([system_message, *history], tools=tools)
             history = self._drop_until_first_user_message(history)
+            if not history and original:
+                # fall back to the stock trim rather than send an empty history
+                return stock_trim(self, messages, tools=tools, preserve_recent=preserve_recent,
+                                  extra_safety_tokens=extra_safety_tokens)
             dropped = original[: max(0, len(original) - len(history))]
             hook = ON_CUT
             if hook is not None and dropped:
