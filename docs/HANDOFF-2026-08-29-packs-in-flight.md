@@ -108,6 +108,18 @@ hysteresis (43k window, 25% cuts, post-cut context ≥ stock's steady state).
 Instrument note: the two stock phases agreed on levels (1.00 / 1.04) but differed 37% on actions/game
 (47 vs 65) — read levels and zero-level counts, not actions.
 
+
+## 2e. tp2b READ (20:20 UTC): INCONCLUSIVE, slightly positive on the (bad) mech24 base
+
+| phase | actions | levels | zero-level | score | turns | requests |
+|---|---|---|---|---|---|---|
+| mech24 | 23.4 | 0.44 | 15 | 1.30 | 9.4 | 1,867 |
+| mech24 + control (async summaries) | 22.9 | 0.48 | 14 | 1.59 | 6.5 | 1,657 |
+
+Control is no longer costing throughput (requests down, summaries off the critical path) and reads
+neutral-to-positive on levels. The clean read is `arc3-tp2c-smoke` (stock vs stock+control, running,
+~00:30 UTC). `arc3-tp1c-smoke` (stock vs 43k/25% hysteresis) pushed 20:25 UTC.
+
 ## 3. Decision tree for the 08-30 slot (00:01 UTC)
 
 1. tp PASS or INCONCLUSIVE-with-levels-up → push `submission/_duck38_flight/tp1` as a commit
