@@ -19,7 +19,7 @@ Seams:
   (C) STALL    _HarnessGameSession._execute_action + ToolAgent._build_user_prompt
                + ToolAgent.analyze — HUD-aware frame hashing; after
                TP2_STALL_T1 actions without a new board state a STAGNATION
-               directive is appended to the prompt; after TP2_STALL_T2 the
+               directive is appended to the prompt; after TP2_STALL_T2 (30) the
                harness issues a level RESET (max TP2_STALL_RESETS_PER_LEVEL).
   (D) STREAK   _HarnessGameSession.step_env — inside one python tool call,
                after TP2_STREAK_N consecutive no-effect actions further
@@ -44,6 +44,8 @@ from typing import Any
 _STATE = {"installed": False}
 _OFF = {"0", "false", "no", "off"}
 _lock = threading.Lock()
+# stock ToolAgent.analyze as captured at install (tests may swap it)
+_ANALYZE_STOCK: dict[str, Any] = {}
 
 SUMMARY_SYSTEM_PROMPT = (
     "You compress the working notes of an agent playing an unknown 64x64 grid game. "
@@ -133,7 +135,7 @@ def stall_t1() -> int:
 
 
 def stall_t2() -> int:
-    return max(stall_t1() + 1, _int("TP2_STALL_T2", 40))
+    return max(stall_t1() + 1, _int("TP2_STALL_T2", 30))
 
 
 def stall_resets_per_level() -> int:
@@ -740,9 +742,10 @@ def install() -> str:
                     valid_actions = solver_mod._engine_action_names(sess.game)
         except Exception:  # noqa: BLE001
             pass
-        stock = agent_cls.analyze._tp2_stock
-        return stock(self, state_path, action_num, valid_actions=valid_actions, step_env=step_env, **kwargs)
+        return _ANALYZE_STOCK["fn"](self, state_path, action_num, valid_actions=valid_actions,
+                                    step_env=step_env, **kwargs)
 
+    _ANALYZE_STOCK["fn"] = stock_analyze
     analyze._tp2_stock = stock_analyze
     agent_cls.analyze = analyze
 

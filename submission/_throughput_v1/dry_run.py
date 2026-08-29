@@ -132,10 +132,13 @@ def main() -> int:
         # Pack 2 (low thresholds so the tiers fire inside ~60 actions)
         "TP2_ENABLE": "1", "TP2_STALL_T1": "6", "TP2_STALL_T2": "20", "TP2_STREAK_N": "3",
         "TP2_PROBE_CLICKS": "3",
+        # Pack 4 (explorer takes over a stalled level after 30 stale actions)
+        "TP4_ENABLE": "1", "TP4_STALL_T3": "12", "TP4_BUDGET": "150",
     })
 
     import arc_agi
     import graft_control as tc
+    import graft_explore as te
     import graft_throughput as tp
     from inference.agent import tool_agent as agent_mod
     from inference.framework import solver as solver_mod
@@ -144,10 +147,24 @@ def main() -> int:
 
     print("[tp-dry]", tp.install())
     print("[tp-dry]", tc.install())
-    assert tp._STATE["installed"] and tc._STATE["installed"]
+    print("[tp-dry]", te.install())
+    assert tp._STATE["installed"] and tc._STATE["installed"] and te._STATE["installed"]
 
     counters = {"probe_games": 0, "probe_actions": 0, "prompts_with_probe": 0, "prompts_with_stall": 0,
-                "prompts_with_reset_note": 0, "diff_results": 0, "streak_halts": 0, "resets": 0}
+                "prompts_with_reset_note": 0, "diff_results": 0, "streak_halts": 0, "resets": 0,
+                "explorer_runs": 0, "explorer_actions": 0, "explorer_levels": 0, "prompts_with_explorer_note": 0}
+
+    inner_run_explorer = te.run_explorer
+
+    def run_explorer_counted(*a, **k):
+        rec = inner_run_explorer(*a, **k)
+        counters["explorer_runs"] += 1
+        counters["explorer_actions"] += rec["actions"]
+        counters["explorer_levels"] += "COMPLETED" in rec["outcome"]
+        print("[tp-dry] explorer:", rec, flush=True)
+        return rec
+
+    te.run_explorer = run_explorer_counted
 
     inner_probe = tc.run_probe
 
@@ -167,6 +184,7 @@ def main() -> int:
         counters["prompts_with_probe"] += "Harness probe" in text
         counters["prompts_with_stall"] += "STAGNATION WARNING" in text
         counters["prompts_with_reset_note"] += "RESET by the harness" in text
+        counters["prompts_with_explorer_note"] += "model-free explorer took over" in text
         return text
 
     agent_mod.ToolAgent._build_user_prompt = prompt
@@ -231,6 +249,7 @@ def main() -> int:
         "stagnation directive fired": counters["prompts_with_stall"] >= 1,
         "harness RESET tier fired": counters["prompts_with_reset_note"] >= 1,
         "summary rate-limited": MockBrain.summary_posts <= MockBrain.tool_posts // 4,
+        "explorer fallback fired": counters["explorer_runs"] >= 1 and counters["prompts_with_explorer_note"] >= 1,
         "tool posts": MockBrain.tool_posts >= 20,
     }
     ok = True

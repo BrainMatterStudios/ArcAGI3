@@ -242,20 +242,13 @@ class SeamTests(unittest.TestCase):
             captured["action_num"] = action_num
             return None
 
-        stock = self.agent_mod.ToolAgent.analyze._tp2_stock
-        self.agent_mod.ToolAgent.analyze._tp2_stock = fake_stock
-        try:
-            with mock.patch.object(self.solver_mod, "_engine_action_names", lambda g: ["ACTION1", "RESET"]):
-                # patch the wrapper's captured stock via a fresh install-free call path:
-                wrapper = self.agent_mod.ToolAgent.analyze
-                # the wrapper closed over stock_analyze; emulate by calling with a step_env bound to sess
-                bound = types.MethodType(lambda self_, a: None, sess)
-                try:
-                    wrapper(agent, Path("/nonexistent"), 45, valid_actions=["UP", "RESET"], step_env=bound)
-                except Exception:
-                    pass
-        finally:
-            self.agent_mod.ToolAgent.analyze._tp2_stock = stock
+        with mock.patch.dict(tc._ANALYZE_STOCK, {"fn": fake_stock}), \
+             mock.patch.object(self.solver_mod, "_engine_action_names", lambda g: ["ACTION1", "RESET"]):
+            bound = types.MethodType(lambda self_, a: None, sess)
+            # call the Pack-2 wrapper directly (later grafts may wrap it again)
+            wrapper = getattr(self.agent_mod.ToolAgent.analyze, "_tp4_stock", self.agent_mod.ToolAgent.analyze)
+            wrapper(agent, Path("/nonexistent"), 45, valid_actions=["UP", "RESET"], step_env=bound)
+        self.assertEqual(captured["action_num"], sess.action_count)
         self.assertEqual([c[0] for c in sess.calls], ["RESET"])
         self.assertEqual(st.resets_this_level, 1)
         self.assertEqual(st.since_new, 0)
