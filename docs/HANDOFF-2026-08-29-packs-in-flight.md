@@ -88,6 +88,26 @@ cost, no effect). The batch aggregate dropped the diff (fixed, `84f510c`).
 Changes (`84f510c`): summaries now run in a background thread, ≤300 tokens, ≥240 s apart, ~120 words.
 `arc3-tp2b-smoke` (pushed ~15:50 UTC): mech24 vs mech24+control on the corrected Pack 1 base.
 
+## 2d. tp1b READ (19:40 UTC): FAIL — hysteresis starves recency
+
+| phase | actions | levels | zero-level | score | turns | prefix hit | gen tok/s |
+|---|---|---|---|---|---|---|---|
+| stock | 64.6 | 1.04 | 9 | 4.90 | 18.3 | 0.28 | 330 |
+| mech24 (hysteresis 24k/50%, stock yield) | 20.8 | 0.60 | 12 | 2.21 | 9.7 | 0.54 | 471 |
+
+Transcripts: yield 60 s in effect, zero 400s, no batch-cap hits. After each 50% cut the model has 1–3
+turns of history (ka59: `history_messages` 3–8 on 23 of 41 turns; stock 12–26) and it re-investigates:
+turns ending in yield-without-action 32/41 vs 20/47 in stock. **Recent context is load-bearing for this
+model; "we are time-starved, not context-starved" (R4 §4) was wrong as a design premise.** Throughput
+gains that cost recency are net negative.
+
+Consequences: Pack 1 in the flight arms is reduced to notes-survive-GAME_OVER + time guard. Two arms queued
+behind `tp2b`: **tp2c** = stock vs stock+control (the clean Pack 2 read) and **tp1c** = stock vs gentle
+hysteresis (43k window, 25% cuts, post-cut context ≥ stock's steady state).
+
+Instrument note: the two stock phases agreed on levels (1.00 / 1.04) but differed 37% on actions/game
+(47 vs 65) — read levels and zero-level counts, not actions.
+
 ## 3. Decision tree for the 08-30 slot (00:01 UTC)
 
 1. tp PASS or INCONCLUSIVE-with-levels-up → push `submission/_duck38_flight/tp1` as a commit
