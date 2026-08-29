@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""submit_v8harvest_20260829.py — one-shot armed runner for the 2026-08-28 00:01 UTC
+"""submit_v8harvest_20260830.py — one-shot armed runner for the 2026-08-30 00:01 UTC
 slot (duck38-v8: the crack-or-nothing search arm, first flight).
 
 WHAT duck38-v8 IS
@@ -61,7 +61,7 @@ READING RULE (pre-registered, binding)
   result that falsifies the shape.
 
 Hard guards, in order, all fatal on failure:
-  1. ONE-SHOT WINDOW — refuses to run outside 2026-08-29 00:01-23:30 UTC.
+  1. ONE-SHOT WINDOW — refuses to run outside 2026-08-30 00:01-23:30 UTC.
      (WIDENED: the 02:00 end was left at 08-28 when the target moved to
      08-29, so the runner woke on time and aborted itself. --mock skips
      this check, which is exactly why the mock did not catch it.)
@@ -103,9 +103,9 @@ EXPECTED_SCRIPT_VERSION_ID = "345333330"
 EXPECTED_HASH = "a6257e6dc1ebb9279841c83a72a660f60b68bf01d03f78eb9fe4bfef7568d01c"
 LOCAL_NOTEBOOK = REPO / "submission/_duck38_v8/arc3-duck38-v8.ipynb"
 COMPETITION = "arc-prize-2026-arc-agi-3"
-TARGET_UTC = datetime(2026, 8, 29, 0, 1, 0, tzinfo=timezone.utc)
-WINDOW_END_UTC = datetime(2026, 8, 29, 23, 30, 0, tzinfo=timezone.utc)
-MARKER = REPO / "logs/v8harvest_20260829.marker"
+TARGET_UTC = datetime(2026, 8, 30, 0, 1, 0, tzinfo=timezone.utc)
+WINDOW_END_UTC = datetime(2026, 8, 30, 23, 30, 0, tzinfo=timezone.utc)
+MARKER = REPO / "logs/v8harvest_20260830.marker"
 
 # Both directions can actually fail: the graft must be present AND the base
 # must still be the v12 bytes with the attested brain.
@@ -131,7 +131,7 @@ FORBIDDEN_MARKERS = (
 )
 
 MESSAGE = (
-    "EXACT-BYTE HARVEST DRAW #2 of duck38-v8 [v8-a6257e6d]: scriptVersionId "
+    "EXACT-BYTE HARVEST DRAW #3 of duck38-v8 [v8-a6257e6d]: scriptVersionId "
     "345333330, kernel version 1, BYTE-IDENTICAL to completed live draw "
     "55829275 (1.65). No code change of any kind - this is a variance harvest, "
     "not an experiment. WHY A HARVEST AND NOT AN ARM: the planned v9 re-fly "
