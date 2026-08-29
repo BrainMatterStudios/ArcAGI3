@@ -70,6 +70,24 @@ from the transcripts (`submission/_tp_smoke/results/transcripts/`):
 `arc3-tp1b-smoke` (pushed ~15:00 UTC): stock vs **mech24** = hysteresis + 24k window + notes + time guard
 with the STOCK yield and tool steps, batch cap 30. Same read rule. Flight arms rebuilt to this config.
 
+## 2c. Pack 2 smoke READ (15:40 UTC): INCONCLUSIVE, leaning negative — confounded, re-run queued
+
+`arc3-tp2-smoke` v1 ran Pack 2 on top of the *broken* Pack 1 base (trim bug + yield 900), so the pair is
+fair but the absolute level is depressed:
+
+| phase | actions | levels | zero-level | score | turns | requests |
+|---|---|---|---|---|---|---|
+| tp | 22.4 | 0.48 | 15 | 1.73 | 13.5 | 2,023 |
+| tp2 | 22.1 | 0.36 | 16 | 0.83 | 8.1 | 1,570 |
+
+Transcripts (ar25/ft09/re86): turns took ~55% longer (570–680 s vs 360–430 s); the extra requests were
+**~18 synchronous summary calls per game, ~70 s each at concurrency 28**, and the carried notes grew from
+~270 to ~1,300 chars. The stall directive, harness RESET and streak halt never fired on these games (no
+cost, no effect). The batch aggregate dropped the diff (fixed, `84f510c`).
+
+Changes (`84f510c`): summaries now run in a background thread, ≤300 tokens, ≥240 s apart, ~120 words.
+`arc3-tp2b-smoke` (pushed ~15:50 UTC): mech24 vs mech24+control on the corrected Pack 1 base.
+
 ## 3. Decision tree for the 08-30 slot (00:01 UTC)
 
 1. tp PASS or INCONCLUSIVE-with-levels-up → push `submission/_duck38_flight/tp1` as a commit
