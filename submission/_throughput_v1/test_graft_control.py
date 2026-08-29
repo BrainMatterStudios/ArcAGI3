@@ -66,6 +66,28 @@ class PrimitiveTests(unittest.TestCase):
         self.assertIn((0, 0), m)
         self.assertNotIn((4, 4), m)
 
+    def test_02b_edge_band_extends_to_whole_row(self) -> None:
+        hud = tc.HudMask()
+        prev = tuple(tuple(0 for _ in range(64)) for _ in range(64))
+        for i in range(1, 12):
+            nxt = [list(r) for r in prev]
+            nxt[0][63] = i % 7                 # units digit ticks every transition
+            if i % 5 == 0:
+                nxt[0][62] = i // 5            # tens digit ticks rarely
+            nxt = tuple(tuple(r) for r in nxt)
+            hud.observe(prev, nxt)
+            prev = nxt
+        m = hud.mask()
+        self.assertIn((0, 62), m)              # slow digit masked via the row extension
+        self.assertIn((0, 5), m)
+        self.assertNotIn((30, 30), m)
+
+    def test_02c_edge_only(self) -> None:
+        self.assertTrue(tc._edge_only({"changed_ex_hud": 2, "bbox": [0, 60, 0, 63]}))
+        self.assertTrue(tc._edge_only({"changed_ex_hud": 2, "bbox": [10, 62, 40, 63]}))
+        self.assertFalse(tc._edge_only({"changed_ex_hud": 2, "bbox": [10, 10, 12, 12]}))
+        self.assertFalse(tc._edge_only({"changed_ex_hud": 0, "bbox": [0, 0, 0, 0]}))
+
     def test_03_diff_summary(self) -> None:
         a = grid_with({(1, 1): 3, (2, 2): 4})
         b = grid_with({(1, 2): 3, (2, 2): 4, (0, 0): 7})
@@ -211,6 +233,7 @@ class SeamTests(unittest.TestCase):
     def test_14_analyze_resets_level_at_t2(self) -> None:
         agent = self._agent()
         sess = _FakeSession(grid_with({(1, 1): 3}))
+        sess.game.current_state.available_actions = [0, 1, 2, 3, 4]
         st = tc._state(sess)
         st.since_new = 45
         captured = {}
@@ -266,7 +289,7 @@ class SeamTests(unittest.TestCase):
                  "Open questions: what the key does\nPlan: go up then right\nCross-level notes: keys open doors"}}]}
         resp = mock.Mock(); resp.raise_for_status = lambda: None; resp.json = lambda: reply
         with mock.patch("requests.post", return_value=resp) as post:
-            self.assertTrue(tc._summarize_into_notes(agent, dropped, self.agent_mod))
+            self.assertTrue(tc._summarize_into_notes(agent, dropped, self.agent_mod, force=True))
             payload = post.call_args.kwargs["json"]
         self.assertEqual(payload["chat_template_kwargs"], {"enable_thinking": False})
         self.assertEqual(payload["max_tokens"], 600)
@@ -276,7 +299,7 @@ class SeamTests(unittest.TestCase):
         # failure leaves notes untouched (ON_CUT swallows; here the helper raises)
         with mock.patch("requests.post", side_effect=RuntimeError("down")):
             with self.assertRaises(RuntimeError):
-                tc._summarize_into_notes(agent, dropped, self.agent_mod)
+                tc._summarize_into_notes(agent, dropped, self.agent_mod, force=True)
         self.assertEqual(agent._summarized_knowledge["world_model"], "player at (3,4), walls block")
 
     def test_17_level_boundary_keeps_action_model_and_cross_level(self) -> None:
@@ -293,6 +316,27 @@ class SeamTests(unittest.TestCase):
         self.assertEqual(agent._summarized_knowledge["current_plan"], "")
         self.assertEqual(agent._summarized_knowledge["action_model"], "UP moves 1")
         self.assertEqual(agent._summarized_knowledge["cross_level_notes"], "doors need keys")
+
+    def test_19_summary_rate_limited(self) -> None:
+        agent = self._agent()
+        dropped = [{"role": "tool", "tool_call_id": "c", "content": "x" * 700} for _ in range(5)]
+        reply = {"choices": [{"message": {"content": "World model: w"}}]}
+        resp = mock.Mock(); resp.raise_for_status = lambda: None; resp.json = lambda: reply
+        with mock.patch("requests.post", return_value=resp) as post:
+            self.assertTrue(tc._summarize_into_notes(agent, dropped, self.agent_mod))
+            self.assertFalse(tc._summarize_into_notes(agent, dropped, self.agent_mod))   # too soon
+            self.assertEqual(post.call_count, 1)
+            os.environ["TP2_SUMMARY_MIN_INTERVAL_S"] = "0"
+            self.assertFalse(tc._summarize_into_notes(agent, [{"role": "tool", "content": "short"}], self.agent_mod))
+            self.assertTrue(tc._summarize_into_notes(agent, dropped, self.agent_mod))
+            self.assertEqual(post.call_count, 2)
+
+    def test_20_reset_available_reads_engine_ids(self) -> None:
+        sess = _FakeSession(grid_with({(1, 1): 3}))
+        sess.game.current_state.available_actions = [0, 1, 2]
+        self.assertTrue(tc._reset_available(sess, self.arcengine))
+        sess.game.current_state.available_actions = [1, 2]
+        self.assertFalse(tc._reset_available(sess, self.arcengine))
 
     def test_18_disabled_is_passthrough(self) -> None:
         os.environ["TP2_ENABLE"] = "0"

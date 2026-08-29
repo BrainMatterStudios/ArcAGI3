@@ -37,6 +37,7 @@ import hashlib
 import json
 import os
 import threading
+import time
 from collections import Counter, deque
 from typing import Any
 
@@ -147,6 +148,17 @@ def summary_max_tokens() -> int:
     return max(100, _int("TP2_SUMMARY_MAX_TOKENS", 600))
 
 
+def summary_min_interval_s() -> float:
+    try:
+        return max(0.0, float(_env("TP2_SUMMARY_MIN_INTERVAL_S", "90")))
+    except ValueError:
+        return 90.0
+
+
+def summary_min_chars() -> int:
+    return max(0, _int("TP2_SUMMARY_MIN_CHARS", 2000))
+
+
 def status() -> dict[str, Any]:
     return {
         "installed": _STATE["installed"], "enabled": enabled(),
@@ -178,10 +190,12 @@ class HudMask:
         self.n = 0
         self.min_transitions = min_transitions
         self.threshold = threshold
+        self.size: tuple[int, int] = (64, 64)
 
     def observe(self, before: Grid, after: Grid) -> None:
         if not before or not after or len(before) != len(after):
             return
+        self.size = (len(after), len(after[0]) if after[0] else 0)
         changed = 0
         for r, (rb, ra) in enumerate(zip(before, after)):
             if rb == ra:
@@ -193,12 +207,46 @@ class HudMask:
         if changed:
             self.n += 1
 
-    def mask(self) -> set[tuple[int, int]] | None:
+    def mask(self, edge_band: int | None = None, band_threshold: float = 0.3,
+             size: tuple[int, int] | None = None) -> set[tuple[int, int]] | None:
+        """Volatile cells, extended to whole edge-band rows/columns (HUD bars
+        and multi-digit counters live on the border; only their fastest digit
+        clears the per-cell threshold, so mask the bar, not the digit)."""
         if self.n < self.min_transitions:
             return None
         cut = self.threshold * self.n
         out = {cell for cell, cnt in self.counts.items() if cnt > cut}
+        h, w = size or self.size
+        if edge_band is None:
+            edge_band = max(1, h // 16)
+        row_sum: Counter = Counter()
+        col_sum: Counter = Counter()
+        for (r, c), cnt in self.counts.items():
+            row_sum[r] += cnt
+            col_sum[c] += cnt
+        band_rows = [r for r in range(h) if r < edge_band or r >= h - edge_band]
+        band_cols = [c for c in range(w) if c < edge_band or c >= w - edge_band]
+        for r in band_rows:
+            if any((r, c) in out for c in range(w)) or row_sum[r] / (self.n * w) >= band_threshold:
+                out.update((r, c) for c in range(w))
+        for c in band_cols:
+            if any((r, c) in out for r in range(h)) or col_sum[c] / (self.n * h) >= band_threshold:
+                out.update((r, c) for r in range(h))
         return out or None
+
+
+def _edge_only(diff: dict[str, Any] | None, edge_band: int | None = None,
+               size: tuple[int, int] = (64, 64)) -> bool:
+    """True when every changed non-HUD cell lies inside the border band."""
+    if not diff or not diff.get("bbox") or diff.get("changed_ex_hud", 0) == 0:
+        return False
+    r0, c0, r1, c1 = diff["bbox"]
+    h, w = size
+    if edge_band is None:
+        edge_band = max(1, h // 16)
+    rows_in_band = (r1 < edge_band) or (r0 >= h - edge_band)
+    cols_in_band = (c1 < edge_band) or (c0 >= w - edge_band)
+    return rows_in_band or cols_in_band
 
 
 def diff_summary(before: Grid, after: Grid, mask: set[tuple[int, int]] | None = None) -> dict[str, Any]:
@@ -313,6 +361,20 @@ def _state(session: Any) -> SessionState:
     return st
 
 
+def _reset_available(session: Any, arcengine: Any) -> bool:
+    """RESET is filtered out of the model-facing valid_actions by the solver;
+    ask the engine state directly (absent list => assume available)."""
+    try:
+        available = session.game.current_state.available_actions
+    except Exception:  # noqa: BLE001
+        return True
+    try:
+        ids = set(int(a) for a in (available or []))
+    except Exception:  # noqa: BLE001
+        return True
+    return (not ids) or int(arcengine.GameAction.RESET.value) in ids
+
+
 def _session_of(agent: Any) -> Any:
     cb = getattr(agent, "_step_env_callback", None)
     return getattr(cb, "__self__", None)
@@ -343,6 +405,11 @@ def _after_action(st: SessionState, before: Grid, after: Grid, payload: dict[str
         h = grid_hash(after, mask)
         st.recent_hashes.append(h)
         if h in st.seen:
+            st.since_new += 1
+        elif diff is not None and (diff["changed_ex_hud"] == 0
+                                   or _edge_only(diff, size=(len(after), len(after[0]) if after[0] else 0))):
+            # only HUD/border cells moved: not a new gameplay state
+            st.seen.add(h)
             st.since_new += 1
         else:
             st.seen.add(h)
@@ -412,9 +479,27 @@ def _notes_text(agent: Any) -> str:
     return "\n".join(lines)
 
 
-def _summarize_into_notes(agent: Any, dropped: list[dict[str, Any]], agent_mod: Any) -> bool:
+def _summary_allowed(agent: Any, text: str) -> bool:
+    """Rate limit: skip tiny cuts and cuts closer than the minimum interval."""
+    if len(text) < summary_min_chars():
+        return False
+    now = time.monotonic()
+    last = getattr(agent, "_tp2_last_summary_at", None)
+    if last is not None and (now - last) < summary_min_interval_s():
+        return False
+    try:
+        agent._tp2_last_summary_at = now
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
+def _summarize_into_notes(agent: Any, dropped: list[dict[str, Any]], agent_mod: Any,
+                          *, force: bool = False) -> bool:
     text = _transcript(dropped)
     if not text.strip():
+        return False
+    if not force and not _summary_allowed(agent, text):
         return False
     prev = _notes_text(agent)
     user_text = ("Previous notes:\n" + prev + "\n\n" if prev else "") + "Transcript of the turns being compressed:\n" + text
@@ -640,8 +725,8 @@ def install() -> str:
             sess = getattr(step_env, "__self__", None)
             if sess is not None and stall_enabled():
                 st = _state(sess)
-                if (st.since_new >= stall_t2() and st.resets_this_level < stall_resets_per_level()
-                        and "RESET" in [str(a).upper() for a in (valid_actions or [])]):
+                if st.since_new >= stall_t2() and st.resets_this_level < stall_resets_per_level() \
+                        and _reset_available(sess, arcengine):
                     action = arcengine.ActionInput(id=arcengine.GameAction.RESET, data={})
                     sess._execute_action(action, batch_index=1, batch_size=1, generated_tokens=0)
                     st.resets_this_level += 1
