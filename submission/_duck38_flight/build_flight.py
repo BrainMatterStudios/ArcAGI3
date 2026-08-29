@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""build_duck38_tp1.py — THE PACK-1 FLIGHT ARM: duck38-v12 base + the
+"""build_flight.py — THE PACK FLIGHT ARMS (tp1 / tp2 / tp24): duck38-v12 base + the
 throughput graft, in its exact flight configuration.
 
 ARM: the tracked v12 notebook (submission/_duck38_v12/arc3-duck38-v12.ipynb,
@@ -33,17 +33,26 @@ HERE = Path(__file__).parent
 SUB = HERE.parent
 BASE_NB = SUB / "_duck38_v12" / "arc3-duck38-v12.ipynb"
 GRAFT_PY = SUB / "_throughput_v1" / "graft_throughput.py"
-KERNEL_SLUG = "arc3-duck38-tp1"
+GRAFT2_PY = SUB / "_throughput_v1" / "graft_control.py"
+GRAFT4_PY = SUB / "_throughput_v1" / "graft_explore.py"
+EXPLORER_PY = SUB / "_throughput_v1" / "frontier_explorer.py"
 BASE_CODE_SHA256_PREFIX = "dc2c36f8"
 
-FLIGHT_CONFIG = {
-    "TP_ENABLE": "1",
-    "TP_TRIM_LOW_WATER": "0.5",
-    "TP_CONTEXT_WINDOW": "24576",
-    "TP_YIELD_SECONDS": "900",
-    "TP_TOOL_STEPS": "8",
-    "TP_KEEP_NOTES_ON_GAME_OVER": "1",
+PACK1 = {
+    "TP_ENABLE": "1", "TP_TRIM_LOW_WATER": "0.5", "TP_CONTEXT_WINDOW": "24576",
+    "TP_YIELD_SECONDS": "900", "TP_TOOL_STEPS": "8", "TP_KEEP_NOTES_ON_GAME_OVER": "1",
     "TP_BATCH_CAP": "10",
+}
+PACK2 = {
+    "TP2_SUMMARY": "1", "TP2_PROBE": "1", "TP2_PROBE_CLICKS": "3", "TP2_STALL": "1",
+    "TP2_STALL_T1": "10", "TP2_STALL_T2": "30", "TP2_STALL_RESETS_PER_LEVEL": "2",
+    "TP2_STREAK": "1", "TP2_STREAK_N": "3", "TP2_DIFF": "1",
+}
+PACK4 = {"TP4_STALL_T3": "30", "TP4_BUDGET": "800", "TP4_RUNS_PER_LEVEL": "1", "TP4_ENDGAME_S": "300"}
+ARMS = {
+    "tp1": {"slug": "arc3-duck38-tp1", "flags": {**PACK1, **PACK2, **PACK4, "TP2_ENABLE": "0", "TP4_ENABLE": "0"}},
+    "tp2": {"slug": "arc3-duck38-tp2", "flags": {**PACK1, **PACK2, **PACK4, "TP2_ENABLE": "1", "TP4_ENABLE": "0"}},
+    "tp24": {"slug": "arc3-duck38-tp24", "flags": {**PACK1, **PACK2, **PACK4, "TP2_ENABLE": "1", "TP4_ENABLE": "1"}},
 }
 PURGE = ("EFFORT_MEDIUM", "EFFORT_DEAD_RETRY", "YIELD_CARRYOVER", "YIELD_SLICE_CAP",
          "EXPLORER", "EXPLORER_V8")
@@ -71,13 +80,17 @@ GRAFT_CELL_HEAD = r'''# THE ONE DELTA vs flown v12: the Pack-1 throughput graft.
 #   BATCH_CAP=10         blind 20-140-action batches burn efficiency and
 #                        trigger GAME_OVERs.
 #
-# effort_medium and the explorer grafts are DELIBERATELY ABSENT and purged.
+# All three graft modules ride every arm; TP2_ENABLE / TP4_ENABLE select the arm.
+# effort_medium and the v7/v8 explorer grafts are DELIBERATELY ABSENT and purged.
 '''
 
 GRAFT_CELL_TAIL = r'''
 _TP_DIR = WORKING_DIR / "tp_bundle"
 _TP_DIR.mkdir(parents=True, exist_ok=True)
 (_TP_DIR / "graft_throughput.py").write_text(_TP_SOURCE, encoding="utf-8")
+(_TP_DIR / "graft_control.py").write_text(_TP2_SOURCE, encoding="utf-8")
+(_TP_DIR / "frontier_explorer.py").write_text(_FE_SOURCE, encoding="utf-8")
+(_TP_DIR / "graft_explore.py").write_text(_TP4_SOURCE, encoding="utf-8")
 if str(_TP_DIR) not in sys.path:
     sys.path.insert(0, str(_TP_DIR))
 
@@ -95,6 +108,18 @@ assert _tp_state["enabled"] and _tp_state["trim_low_water"] == 0.5 \
     and _tp_state["tool_steps"] == 8 and _tp_state["keep_notes_on_game_over"] \
     and _tp_state["batch_cap"] == 10, "flight config not in effect: " + repr(_tp_state)
 print("[throughput] status:", _tp_state)
+_tcmod = _importlib.import_module("graft_control")
+_tc_status = _tcmod.install()
+print("[control]", _tc_status)
+assert _tc_status == "control: OK", "control graft must be live, got: " + repr(_tc_status)
+_temod = _importlib.import_module("graft_explore")
+_te_status = _temod.install()
+print("[explore]", _te_status)
+assert _te_status == "explore: OK", "explore graft must be live, got: " + repr(_te_status)
+print("[control] status:", _tcmod.status())
+print("[explore] status:", _temod.status())
+assert _tcmod.enabled() == (os.environ.get("TP2_ENABLE") == "1")
+assert _temod.enabled() == (os.environ.get("TP4_ENABLE") == "1")
 
 # 9 h time guard (scored path only): 4 x 7,920 s + ~630 s setup left ~90 s of
 # slack under the box; shrink the per-game cap only as far as the measured
@@ -114,7 +139,12 @@ else:
 '''
 
 
-def main() -> None:
+def main(arm: str = "tp1") -> None:
+    spec = ARMS[arm]
+    slug = spec["slug"]
+    flight_config = spec["flags"]
+    out_dir = HERE / arm
+    out_dir.mkdir(parents=True, exist_ok=True)
     nb = json.loads(BASE_NB.read_text())
     base_code = "\n".join("".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code")
     base_sha = hashlib.sha256(base_code.encode()).hexdigest()
@@ -122,19 +152,25 @@ def main() -> None:
         f"base v12 notebook drifted from the flown-1.55 bytes ({base_sha[:16]}) — re-attest")
 
     graft_src = GRAFT_PY.read_text()
-    assert "def install() -> str:" in graft_src
-    assert "def time_guard_per_game_s" in graft_src
+    graft2_src = GRAFT2_PY.read_text()
+    graft4_src = GRAFT4_PY.read_text()
+    fe_src = EXPLORER_PY.read_text()
+    assert "def install() -> str:" in graft_src and "def time_guard_per_game_s" in graft_src
+    assert "def run_probe" in graft2_src and "def run_explorer" in graft4_src and "class FrontierExplorer" in fe_src
 
     run_hits = [i for i, c in enumerate(nb["cells"])
                 if c["cell_type"] == "code" and MARK_RUN in "".join(c["source"])]
     assert len(run_hits) == 1, run_hits
     run_idx = run_hits[0]
 
-    flag_lines = "".join(f'os.environ["{k}"] = "{v}"\n' for k, v in FLIGHT_CONFIG.items())
+    flag_lines = "".join(f'os.environ["{k}"] = "{v}"\n' for k, v in flight_config.items())
     purge = ("for _stale in " + repr(PURGE) + ":\n    os.environ.pop(_stale, None)\n\n")
     graft_cell_text = (GRAFT_CELL_HEAD + flag_lines + purge
-                       + "_TP_SOURCE = " + repr(graft_src) + "\n" + GRAFT_CELL_TAIL)
-    assert repr(graft_src) in graft_cell_text
+                       + "_TP_SOURCE = " + repr(graft_src) + "\n_TP2_SOURCE = " + repr(graft2_src)
+                       + "\n_FE_SOURCE = " + repr(fe_src) + "\n_TP4_SOURCE = " + repr(graft4_src) + "\n"
+                       + GRAFT_CELL_TAIL)
+    for s_ in (graft_src, graft2_src, graft4_src, fe_src):
+        assert repr(s_) in graft_cell_text
 
     nb["cells"].insert(run_idx, {
         "cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [],
@@ -145,7 +181,7 @@ def main() -> None:
     assert MARK_ATTEST in joined and MARK_SMOKE in joined
     assert joined.index(MARK_ATTEST) < joined.index(MARK_SMOKE)
     assert joined.index(MARK_SMOKE) < joined.index('os.environ["TP_ENABLE"] = "1"')
-    for flag, val in FLIGHT_CONFIG.items():
+    for flag, val in flight_config.items():
         line = f'os.environ["{flag}"] = "{val}"'
         assert joined.count(line) == 1, (flag, joined.count(line))
         assert joined.index(line) < joined.index(MARK_RUN), flag
@@ -154,11 +190,11 @@ def main() -> None:
     assert "Qwen/Qwen3.8-27B-FP8" in joined
     assert len(nb["cells"]) == 12
 
-    (HERE / f"{KERNEL_SLUG}.ipynb").write_text(json.dumps(nb, indent=1) + "\n")
-    (HERE / "kernel-metadata.json").write_text(json.dumps({
-        "id": f"ahmedmobasher86/{KERNEL_SLUG}",
-        "title": KERNEL_SLUG,
-        "code_file": f"{KERNEL_SLUG}.ipynb",
+    (out_dir / f"{slug}.ipynb").write_text(json.dumps(nb, indent=1) + "\n")
+    (out_dir / "kernel-metadata.json").write_text(json.dumps({
+        "id": f"ahmedmobasher86/{slug}",
+        "title": slug,
+        "code_file": f"{slug}.ipynb",
         "language": "python",
         "kernel_type": "notebook",
         "is_private": True,
@@ -178,9 +214,11 @@ def main() -> None:
     }, indent=2) + "\n")
 
     code = "\n".join("".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code")
-    print("built", KERNEL_SLUG, "code-cell sha256", hashlib.sha256(code.encode()).hexdigest())
-    print("cells:", len(nb["cells"]), "notebook bytes:", (HERE / f"{KERNEL_SLUG}.ipynb").stat().st_size)
+    print("built", slug, "arm", arm, "code-cell sha256", hashlib.sha256(code.encode()).hexdigest())
+    print("cells:", len(nb["cells"]), "notebook bytes:", (out_dir / f"{slug}.ipynb").stat().st_size)
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    main(sys.argv[1] if len(sys.argv) > 1 else "tp1")
