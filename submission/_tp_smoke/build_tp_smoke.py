@@ -63,6 +63,17 @@ ARMS = {
                    ("tp2", {"TP_ENABLE": "1", "TP2_ENABLE": "1", "TP4_ENABLE": "0"})],
         "read": "control",
     },
+    # Pack 2 on the corrected Pack-1 base (tp1b mech24): async/cheap summaries.
+    "tp2b": {
+        "slug": "arc3-tp2b-smoke",
+        "phases": [("mech24", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0",
+                               "TP_YIELD_SECONDS": "-1", "TP_TOOL_STEPS": "-1",
+                               "TP_CONTEXT_WINDOW": "24576", "TP_BATCH_CAP": "30"}),
+                   ("mech24_ctl", {"TP_ENABLE": "1", "TP2_ENABLE": "1", "TP4_ENABLE": "0",
+                                   "TP_YIELD_SECONDS": "-1", "TP_TOOL_STEPS": "-1",
+                                   "TP_CONTEXT_WINDOW": "24576", "TP_BATCH_CAP": "30"})],
+        "read": "control",
+    },
     "tp4": {
         "slug": "arc3-tp4-smoke",
         "phases": [("tp2", {"TP_ENABLE": "1", "TP2_ENABLE": "1", "TP4_ENABLE": "0"}),

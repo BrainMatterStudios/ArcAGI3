@@ -285,7 +285,7 @@ class SeamTests(unittest.TestCase):
             self.assertTrue(tc._summarize_into_notes(agent, dropped, self.agent_mod, force=True))
             payload = post.call_args.kwargs["json"]
         self.assertEqual(payload["chat_template_kwargs"], {"enable_thinking": False})
-        self.assertEqual(payload["max_tokens"], 600)
+        self.assertEqual(payload["max_tokens"], 300)
         self.assertIn("Previous notes:", payload["messages"][1]["content"])
         self.assertEqual(agent._summarized_knowledge["world_model"], "player at (3,4), walls block")
         self.assertEqual(agent._summarized_knowledge["cross_level_notes"], "keys open doors")
@@ -330,6 +330,38 @@ class SeamTests(unittest.TestCase):
         self.assertTrue(tc._reset_available(sess, self.arcengine))
         sess.game.current_state.available_actions = [1, 2]
         self.assertFalse(tc._reset_available(sess, self.arcengine))
+
+    def test_21_batch_aggregate_keeps_diff(self) -> None:
+        r1 = {"executed": True, "action_num": 1, "level": 1, "reward": 0.0, "state": "NOT_FINISHED",
+              "board_changed": True, "frame_count": 1, "diff": {"changed": 3, "changed_ex_hud": 3, "bbox": [1, 1, 2, 2],
+              "colors_added": [3], "colors_removed": [0]}}
+        r2 = dict(r1, action_num=2, diff={"changed": 2, "changed_ex_hud": 1, "bbox": [5, 5, 5, 6], "colors_added": [], "colors_removed": []})
+        out = self.agent_mod._aggregate_action_batch_result(
+            requested_count=2, executed_results=[r1, r2], blocked_actions=[], last_failed=None,
+            valid_actions=["UP"], fallback={})
+        self.assertEqual(out["diff"]["changed_ex_hud"], 1)
+        self.assertEqual(out["diff"]["batch_changed_ex_hud_total"], 4)
+
+    def test_22_async_summary_merges_in_background(self) -> None:
+        import threading as _t
+        agent = self._agent()
+        dropped = [{"role": "tool", "tool_call_id": "c", "content": "x" * 700} for _ in range(5)]
+        reply = {"choices": [{"message": {"content": "World model: async-merged"}}]}
+        resp = mock.Mock(); resp.raise_for_status = lambda: None; resp.json = lambda: reply
+        done = _t.Event()
+        real = tc._summarize_into_notes
+
+        def wrapped(*a, **k):
+            try:
+                return real(*a, **k)
+            finally:
+                done.set()
+
+        with mock.patch("requests.post", return_value=resp), mock.patch.object(tc, "_summarize_into_notes", wrapped):
+            tp.ON_CUT(agent, dropped)
+            self.assertTrue(done.wait(5.0))
+        self.assertEqual(agent._summarized_knowledge["world_model"], "async-merged")
+        self.assertFalse(getattr(agent, "_tp2_summary_inflight", False))
 
     def test_18_disabled_is_passthrough(self) -> None:
         os.environ["TP2_ENABLE"] = "0"

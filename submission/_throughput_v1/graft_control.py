@@ -58,7 +58,7 @@ SUMMARY_SYSTEM_PROMPT = (
     "Plan: <the best next steps>\n"
     "Cross-level notes: <rules likely to hold on later levels>\n"
     "Keep coordinates, colours and counts exact. Keep ruled-out hypotheses as ruled out. "
-    "At most 220 words total."
+    "At most 120 words total; one line per field, no blank lines."
 )
 LEVEL_SUMMARY_SYSTEM_PROMPT = (
     "The agent just completed a level of an unknown 64x64 grid game and moves to the next "
@@ -147,18 +147,22 @@ def streak_n() -> int:
 
 
 def summary_max_tokens() -> int:
-    return max(100, _int("TP2_SUMMARY_MAX_TOKENS", 600))
+    return max(100, _int("TP2_SUMMARY_MAX_TOKENS", 300))
 
 
 def summary_min_interval_s() -> float:
     try:
-        return max(0.0, float(_env("TP2_SUMMARY_MIN_INTERVAL_S", "90")))
+        return max(0.0, float(_env("TP2_SUMMARY_MIN_INTERVAL_S", "240")))
     except ValueError:
-        return 90.0
+        return 240.0
 
 
 def summary_min_chars() -> int:
     return max(0, _int("TP2_SUMMARY_MIN_CHARS", 2000))
+
+
+def summary_async() -> bool:
+    return _flag("TP2_SUMMARY_ASYNC", "1")
 
 
 def status() -> dict[str, Any]:
@@ -509,9 +513,10 @@ def _summarize_into_notes(agent: Any, dropped: list[dict[str, Any]], agent_mod: 
     note = agent_mod._extract_scientist_note(content)
     if not note or not any(note.values()):
         return False
-    for key, value in note.items():
-        if value:
-            agent._summarized_knowledge[key] = value
+    with _lock:
+        for key, value in note.items():
+            if value:
+                agent._summarized_knowledge[key] = value
     return True
 
 
@@ -645,6 +650,25 @@ def install() -> str:
     execute_action_wrapped._tp2_stock = stock_execute_action
     session_cls._execute_action = execute_action_wrapped
 
+    stock_aggregate = agent_mod._aggregate_action_batch_result
+
+    def aggregate(*args, **kwargs):
+        out = stock_aggregate(*args, **kwargs)
+        try:
+            if diff_enabled():
+                executed = kwargs.get("executed_results") if "executed_results" in kwargs else (args[1] if len(args) > 1 else [])
+                diffs = [r.get("diff") for r in (executed or []) if isinstance(r, dict) and isinstance(r.get("diff"), dict)]
+                if diffs:
+                    last = dict(diffs[-1])
+                    last["batch_changed_ex_hud_total"] = sum(int(d.get("changed_ex_hud", 0)) for d in diffs)
+                    out["diff"] = last
+        except Exception:  # noqa: BLE001
+            pass
+        return out
+
+    aggregate._tp2_stock = stock_aggregate
+    agent_mod._aggregate_action_batch_result = aggregate
+
     stock_compact = agent_cls._compact_action_result
 
     def compact(self, payload):
@@ -770,8 +794,32 @@ def install() -> str:
 
     # (A) summaries -------------------------------------------------------
     def on_cut(agent, dropped):
-        if summary_enabled():
+        if not summary_enabled():
+            return
+        if not summary_async():
             _summarize_into_notes(agent, dropped, agent_mod)
+            return
+        # Rate-limit on the caller's thread, then run the summary call in the
+        # background so the turn is never blocked; the merge lands under a
+        # lock and the next prompt build picks it up (measured: a blocking
+        # 600-token summary cost ~70 s per cut at concurrency 28).
+        text = _transcript(list(dropped))
+        if not _summary_allowed(agent, text):
+            return
+        if getattr(agent, "_tp2_summary_inflight", False):
+            return
+        agent._tp2_summary_inflight = True
+        snapshot = list(dropped)
+
+        def worker():
+            try:
+                _summarize_into_notes(agent, snapshot, agent_mod, force=True)
+            except Exception:  # noqa: BLE001
+                pass
+            finally:
+                agent._tp2_summary_inflight = False
+
+        threading.Thread(target=worker, name="tp2-summary", daemon=True).start()
 
     tp.ON_CUT = on_cut
 
