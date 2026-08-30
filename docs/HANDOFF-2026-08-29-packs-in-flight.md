@@ -203,3 +203,13 @@ tp1c v1 died on a Kaggle infra mount failure (competition wheelhouse absent at t
   rejected -> image nvcc predates SM 12.0 -> jcole75 cu13 wheels.
 - serving-lab4 CLOSED Pack 3 for the 27B: 0.24 boots (KV x4.7) but tok/s unchanged at conc 28;
   MTP acceptance 0.72-0.77 yet +2.5% at conc 28 and 19/20 greedy mismatches.
+
+## 9. 08-30 21:00 UTC — FLASH-NEXT FIRST FLIGHT ARMED (Ahmed-approved)
+
+Ahmed approved the Flash-Next submission for the 08-31 00:01 UTC slot. Runner
+`scripts/submit_flashnext_20260831.py` launched 20:59 UTC (in-session background task), counting down.
+Arm: arc3-flashnext-flight v1 (svid 346125566, hash 08f83048…) — STOCK duck harness served by
+Qwen3.8-Flash-Next NVFP4; commit smoke SMOKE-OK (boot 980 s, vc33 2 levels in a 40-min box).
+Reading rule pre-registered in the submission message (new distribution; >=1.45 positive; >1.74 re-banks;
+<0.5 = suspect serving, pull the kernel log). tp5em (svid 346075311) and harvest #4 runners stay armed
+but UNLAUNCHED — candidates for 09-01 depending on the flashnext read.
