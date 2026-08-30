@@ -54,6 +54,7 @@ from inference.agent import tool_agent as agent_mod  # noqa: E402
 
 status = ns["_tpmod"].status()
 import graft_control as _tc, graft_explore as _te  # noqa: E402
+import graft_emission as _tm  # noqa: E402
 checks = {
     "install OK": ns["_tp_status"] == "throughput: OK",
     "flags in env": {k: os.environ.get(k) for k in ("TP_ENABLE", "TP_CONTEXT_WINDOW", "TP_BATCH_CAP")}
@@ -61,7 +62,7 @@ checks = {
     "effort purged": "EFFORT_MEDIUM" not in os.environ,
     "status enabled": status["enabled"] and status["trim_low_water"] == 1.0,
     "seams wrapped": all(
-        hasattr(getattr(agent_mod.ToolAgent, n), "_tp_stock") or hasattr(getattr(agent_mod.ToolAgent, n), "_tp2_stock")
+        any(hasattr(getattr(agent_mod.ToolAgent, n), a) for a in ("_tp_stock", "_tp2_stock", "_tp5_stock"))
         for n in ("_trim_messages_for_context", "__init__", "_update_summarized_knowledge_from_step_summary",
                   "_normalize_python_actions", "_run_python_tool")),
     "time guard shrank cap": 7000.0 < solver.max_runtime_s_per_game < 7920.0,
@@ -70,8 +71,9 @@ checks = {
                        and any('SMOKE_GAMES = ["vc33-5430563c"' in c for c in cells),
     "no telemetry cells": not any("tp-tel" in c for c in cells),
     "control/explore installed": ns["_tc_status"] == "control: OK" and ns["_te_status"] == "explore: OK",
-    "arm flags": {"tp1": (False, False), "tp2": (True, False), "tp24": (True, True)}[ARM]
-                 == (_tc.enabled(), _te.enabled()),
+    "arm flags": {"tp1": (False, False, False), "tp2": (True, False, False),
+                  "tp24": (True, True, False), "tp5em": (False, False, True)}[ARM]
+                 == (_tc.enabled(), _te.enabled(), _tm.enabled()),
 }
 agent = agent_mod.ToolAgent(model="m", base_url="http://127.0.0.1:9/v1", provider="vllm")
 checks["instance budget"] = agent._context_budget_tokens == max(1024, agent_mod._LOCAL_ANALYZER_CONTEXT_WINDOW - agent._reply_reserve_tokens - agent._request_safety_margin_tokens)

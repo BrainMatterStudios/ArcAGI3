@@ -36,6 +36,7 @@ GRAFT_PY = SUB / "_throughput_v1" / "graft_throughput.py"
 GRAFT2_PY = SUB / "_throughput_v1" / "graft_control.py"
 GRAFT4_PY = SUB / "_throughput_v1" / "graft_explore.py"
 EXPLORER_PY = SUB / "_throughput_v1" / "frontier_explorer.py"
+GRAFT5_PY = SUB / "_throughput_v1" / "graft_emission.py"
 BASE_CODE_SHA256_PREFIX = "dc2c36f8"
 
 # Pack 1 flight config = the tp1b "mech24" smoke phase: hysteresis trim + 24k
@@ -56,10 +57,16 @@ PACK2 = {
     "TP2_STREAK": "1", "TP2_STREAK_N": "3", "TP2_DIFF": "1",
 }
 PACK4 = {"TP4_STALL_T3": "30", "TP4_BUDGET": "800", "TP4_RUNS_PER_LEVEL": "1", "TP4_ENDGAME_S": "300"}
+PACK5 = {"TP5_WM_FROM_REASONING": "1", "TP5_ACT_FLOOR": "3"}
 ARMS = {
-    "tp1": {"slug": "arc3-duck38-tp1", "flags": {**PACK1, **PACK2, **PACK4, "TP2_ENABLE": "0", "TP4_ENABLE": "0"}},
-    "tp2": {"slug": "arc3-duck38-tp2", "flags": {**PACK1, **PACK2, **PACK4, "TP2_ENABLE": "1", "TP4_ENABLE": "0"}},
-    "tp24": {"slug": "arc3-duck38-tp24", "flags": {**PACK1, **PACK2, **PACK4, "TP2_ENABLE": "1", "TP4_ENABLE": "1"}},
+    "tp1": {"slug": "arc3-duck38-tp1", "flags": {**PACK1, **PACK2, **PACK4, **PACK5, "TP2_ENABLE": "0", "TP4_ENABLE": "0", "TP5_ENABLE": "0"}},
+    "tp2": {"slug": "arc3-duck38-tp2", "flags": {**PACK1, **PACK2, **PACK4, **PACK5, "TP2_ENABLE": "1", "TP4_ENABLE": "0", "TP5_ENABLE": "0"}},
+    "tp24": {"slug": "arc3-duck38-tp24", "flags": {**PACK1, **PACK2, **PACK4, **PACK5, "TP2_ENABLE": "1", "TP4_ENABLE": "1", "TP5_ENABLE": "0"}},
+    # THE SMOKE-PASSED ARM (arc3-tp5-smoke, 08-30: levels 0.88->1.04, zero 9->6,
+    # score 3.50->4.40; tn36 0->2, tr87/m0r0/wa30/bp35 0->1): stock harness +
+    # emission graft ONLY. Pack 1 stays neutral (notes+guard), Packs 2/4 off.
+    "tp5em": {"slug": "arc3-duck38-tp5em", "flags": {**PACK1, **PACK2, **PACK4, **PACK5,
+                                                     "TP2_ENABLE": "0", "TP4_ENABLE": "0", "TP5_ENABLE": "1"}},
 }
 PURGE = ("EFFORT_MEDIUM", "EFFORT_DEAD_RETRY", "YIELD_CARRYOVER", "YIELD_SLICE_CAP",
          "EXPLORER", "EXPLORER_V8")
@@ -98,6 +105,7 @@ _TP_DIR.mkdir(parents=True, exist_ok=True)
 (_TP_DIR / "graft_control.py").write_text(_TP2_SOURCE, encoding="utf-8")
 (_TP_DIR / "frontier_explorer.py").write_text(_FE_SOURCE, encoding="utf-8")
 (_TP_DIR / "graft_explore.py").write_text(_TP4_SOURCE, encoding="utf-8")
+(_TP_DIR / "graft_emission.py").write_text(_TP5_SOURCE, encoding="utf-8")
 if str(_TP_DIR) not in sys.path:
     sys.path.insert(0, str(_TP_DIR))
 
@@ -123,6 +131,12 @@ _temod = _importlib.import_module("graft_explore")
 _te_status = _temod.install()
 print("[explore]", _te_status)
 assert _te_status == "explore: OK", "explore graft must be live, got: " + repr(_te_status)
+_tmmod = _importlib.import_module("graft_emission")
+_tm_status = _tmmod.install()
+print("[emission]", _tm_status)
+assert _tm_status == "emission: OK", "emission graft must be live, got: " + repr(_tm_status)
+assert _tmmod.enabled() == (os.environ.get("TP5_ENABLE") == "1")
+print("[emission] status:", _tmmod.status())
 print("[control] status:", _tcmod.status())
 print("[explore] status:", _temod.status())
 assert _tcmod.enabled() == (os.environ.get("TP2_ENABLE") == "1")
@@ -162,6 +176,8 @@ def main(arm: str = "tp1") -> None:
     graft2_src = GRAFT2_PY.read_text()
     graft4_src = GRAFT4_PY.read_text()
     fe_src = EXPLORER_PY.read_text()
+    graft5_src = GRAFT5_PY.read_text()
+    assert "def install() -> str:" in graft5_src
     assert "def install() -> str:" in graft_src and "def time_guard_per_game_s" in graft_src
     assert "def run_probe" in graft2_src and "def run_explorer" in graft4_src and "class FrontierExplorer" in fe_src
 
@@ -174,9 +190,10 @@ def main(arm: str = "tp1") -> None:
     purge = ("for _stale in " + repr(PURGE) + ":\n    os.environ.pop(_stale, None)\n\n")
     graft_cell_text = (GRAFT_CELL_HEAD + flag_lines + purge
                        + "_TP_SOURCE = " + repr(graft_src) + "\n_TP2_SOURCE = " + repr(graft2_src)
-                       + "\n_FE_SOURCE = " + repr(fe_src) + "\n_TP4_SOURCE = " + repr(graft4_src) + "\n"
+                       + "\n_FE_SOURCE = " + repr(fe_src) + "\n_TP4_SOURCE = " + repr(graft4_src)
+                       + "\n_TP5_SOURCE = " + repr(graft5_src) + "\n"
                        + GRAFT_CELL_TAIL)
-    for s_ in (graft_src, graft2_src, graft4_src, fe_src):
+    for s_ in (graft_src, graft2_src, graft4_src, fe_src, graft5_src):
         assert repr(s_) in graft_cell_text
 
     nb["cells"].insert(run_idx, {
