@@ -225,6 +225,7 @@ RUNTIME_ARCHIVE = "@@RUNTIME_ARCHIVE@@"
 QWEN_SERVED_MODEL_NAME = "@@MODEL_ID@@"
 MODEL_REVISION = "@@MODEL_REVISION@@"
 INPUT_ROOT = Path("/kaggle/input")
+CU13_HOME = globals().get("CU13_HOME") or {"value": None}
 
 # scratch root: the extracted runtime is ~15 GB — keep it OFF /kaggle/working
 # (its ~20 GB doubles as the preserved-output volume).
@@ -306,7 +307,24 @@ def serving_env():
     arch = ARCH_OVERRIDE.get("value")
     if arch:
         env["TORCH_CUDA_ARCH_LIST"] = arch
+    # v4: flashinfer's sm120 fused-MoE JIT dropped every major-12 arch because
+    # the nvcc it found (the image's old /usr/local/cuda) predates SM 12.0.
+    # Point the whole toolchain at the CUDA-13.3 pip wheels installed at
+    # assemble time (the jcole75 wheelhouse recipe: nvidia/cu13 layout).
+    cu13 = CU13_HOME.get("value")
+    if cu13:
+        env["CUDA_HOME"] = cu13
+        env["CUDA_PATH"] = cu13
+        env["FLASHINFER_NVCC"] = str(Path(cu13) / "bin" / "nvcc")
+        env["FLASHINFER_EXTRA_LDFLAGS"] = f"-L{Path(cu13) / 'lib'} -L/usr/local/nvidia/lib64"
+        env["PATH"] = f"{Path(cu13) / 'bin'}{os.pathsep}" + env.get("PATH", "")
+        env["LD_LIBRARY_PATH"] = f"{Path(cu13) / 'lib'}{os.pathsep}/usr/local/nvidia/lib64{os.pathsep}" + env.get("LD_LIBRARY_PATH", "")
+        env["LIBRARY_PATH"] = f"{Path(cu13) / 'lib'}{os.pathsep}/usr/local/nvidia/lib64{os.pathsep}" + env.get("LIBRARY_PATH", "")
+        env["CPATH"] = f"{Path(cu13) / 'include'}{os.pathsep}" + env.get("CPATH", "")
     return env
+
+
+CU13_HOME = globals().get("CU13_HOME") or {"value": None}
 
 
 ARCH_OVERRIDE = {"value": None}
@@ -336,6 +354,45 @@ try:
     ASSEMBLE["bundle_dir"] = str(BUNDLE_DIR)
     ASSEMBLE["runtime_tarball"] = str(RUNTIME_TARBALL)
     print("flashnext-gate: shards", ASSEMBLE["shard_dirs"], flush=True)
+
+    # ---- v4: CUDA-13.3 compiler toolchain for the flashinfer sm120 JIT ----
+    # The tarball may or may not carry an nvcc; the image's is too old for
+    # SM 12.0. Prefer a cu13 nvcc found inside the extracted runtime, else
+    # install the pinned CUDA-13.3 wheels from the jcole75 wheelhouse.
+    def _wire_cu13():
+        hits = sorted(RUNTIME_ROOT.rglob("nvidia/cu13/bin/nvcc")) if RUNTIME_ROOT.exists() else []
+        if hits:
+            CU13_HOME["value"] = str(hits[0].parent.parent)
+            print("flashnext-gate: cu13 nvcc found in runtime:", hits[0], flush=True)
+            return
+        wh = None
+        for cand in (INPUT_ROOT / "arc3-qwen36-runtime-wheels",
+                     INPUT_ROOT / "datasets" / "jcole75" / "arc3-qwen36-runtime-wheels"):
+            if (cand / "wheels").is_dir():
+                wh = cand / "wheels"
+                break
+        if wh is None:
+            print("flashnext-gate: WARNING no cu13 nvcc and no wheelhouse mount — JIT will fail", flush=True)
+            return
+        target = SCRATCH_ROOT / "cu13-site"
+        target.mkdir(parents=True, exist_ok=True)
+        cmd = [sys.executable, "-m", "pip", "install", "--no-index", "--find-links", str(wh),
+               "--target", str(target), "--no-deps", "--disable-pip-version-check", "--no-warn-conflicts",
+               "nvidia-cuda-nvcc==13.3.73", "nvidia-cuda-crt==13.3.73", "nvidia-cuda-runtime==13.3.29",
+               "nvidia-cuda-cccl==13.3.3.4.1", "nvidia-cuda-nvrtc==13.3.33", "nvidia-nvvm==13.3.73",
+               "nvidia-curand==10.4.3.29", "nvidia-cublas==13.3.0.5"]
+        print("flashnext-gate: installing cu13 toolchain:", " ".join(cmd[-8:]), flush=True)
+        subprocess.run(cmd, check=True)
+        nvcc = target / "nvidia" / "cu13" / "bin" / "nvcc"
+        if nvcc.is_file():
+            CU13_HOME["value"] = str(nvcc.parent.parent)
+            out = subprocess.run([str(nvcc), "--version"], capture_output=True, text=True)
+            print("flashnext-gate: cu13 nvcc:", (out.stdout or out.stderr).strip().splitlines()[-1], flush=True)
+        else:
+            print("flashnext-gate: WARNING cu13 wheels installed but no bin/nvcc at", nvcc, flush=True)
+
+    _wire_cu13()
+    ASSEMBLE["cu13_home"] = CU13_HOME["value"]
     print("flashnext-gate: bundle", BUNDLE_DIR, "| tarball", RUNTIME_TARBALL, flush=True)
 
     # ---- their runtime install, verbatim semantics (sha-pinned tarball + zstd) ----
@@ -1444,6 +1501,7 @@ def main() -> None:
         "machine_shape": "NvidiaRtxPro6000",
         "keywords": ["gpu"],
         "dataset_sources": [
+        "jcole75/arc3-qwen36-runtime-wheels",
             "sonphamorg/arc3-flashnext-serving-part-a-v1",
             "sonphamorg/arc3-flashnext-serving-part-b-v1",
             "sonphamorg/arc3-flashnext-serving-part-c-v1",
