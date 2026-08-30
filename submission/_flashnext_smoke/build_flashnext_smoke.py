@@ -208,6 +208,7 @@ def _find_taaf_bundle() -> Path:
 
 
 BUNDLE_DIR = _find_taaf_bundle()
+TAAF_BUNDLE_DIR = BUNDLE_DIR    # survives the gate assemble cell, which REBINDS BUNDLE_DIR
 os.environ["TAAF_KAGGLE_BUNDLE_DIR"] = str(BUNDLE_DIR)
 print(f"TAAF source bundle: {BUNDLE_DIR}")
 
@@ -307,6 +308,23 @@ print((_smi.stdout or "").strip()[:900], flush=True)
 '''
 
 CELL_DUCK_ENV = r'''# ============ duck analyzer env — the ONLY wiring change vs the 27B kernel ============
+# v3: the gate ASSEMBLE cell rebinds BUNDLE_DIR to sonpham's source-bundle
+# (their June-fork tree, which carries its own solver pkls WITHOUT
+# the anim fields — v2 loaded it and died on hard_noop_guard). Re-pin the
+# TAAF bundle before the deploy cell reads any pkl, and drop their tree from
+# sys.path + sys.modules so the anim classes win.
+BUNDLE_DIR = TAAF_BUNDLE_DIR
+_sonpham_paths = [p for p in sys.path if "source-bundle" in p or "sonphamorg" in p]
+for _p in _sonpham_paths:
+    sys.path.remove(_p)
+for _m, _mod in list(sys.modules.items()):
+    if _m.split(".")[0] in ("inference", "taaf"):
+        _f = getattr(_mod, "__file__", "") or ""
+        if "source-bundle" in _f or "sonphamorg" in _f:
+            del sys.modules[_m]
+print("duck-env: BUNDLE_DIR re-pinned to", BUNDLE_DIR, "| pruned", len(_sonpham_paths), "paths")
+assert (BUNDLE_DIR / "taaf-kaggle-bundle.json").is_file()
+assert "anim-20260807" in str(BUNDLE_DIR), f"re-pin failed: {BUNDLE_DIR}"
 # Reproduces the 27B bundle's exported setup_env EXACTLY (same keys,
 # same stock sampling: temp 0.6 / top-p 0.95 / top-k 20 / thinking on) except:
 #   * base URL + model id -> the Flash-Next server booted above (port 1234,
