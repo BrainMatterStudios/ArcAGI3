@@ -294,12 +294,22 @@ def serving_env():
             "VLLM_ENABLE_CUDA_COMPATIBILITY": "0",
             "VLLM_PLE_CPU_OFFLOAD": "1",
             "VLLM_PLE_OFFLOAD_READY_TIMEOUT": "1800",
-            "TORCH_CUDA_ARCH_LIST": "12.0f",
             "PYTORCH_ALLOC_CONF": "expandable_segments:False",  # v2: True needs pidfd_getfd CUDA-IPC, blocked by Kaggle seccomp (v1 boot death in the PLE offload worker)
             "HF_HUB_OFFLINE": "1",
         }
     )
+    # v3: "12.0f" made the tarball's flashinfer filter out every major-12 arch
+    # ("No supported CUDA architectures found for major versions [12]" in the
+    # sm120 fused-MoE JIT). Ladder now controls the arch env: None = unset
+    # (flashinfer derives SM 12.0 from the device), or an explicit string.
+    env.pop("TORCH_CUDA_ARCH_LIST", None)
+    arch = ARCH_OVERRIDE.get("value")
+    if arch:
+        env["TORCH_CUDA_ARCH_LIST"] = arch
     return env
+
+
+ARCH_OVERRIDE = {"value": None}
 
 
 RUNTIME_OK = False
@@ -494,7 +504,11 @@ REDUCED_SERVE_FLAGS = [
     "--default-chat-template-kwargs", '{"preserve_thinking": true}',
     "--reasoning-parser", "qwen3",
 ]
-BOOT_LADDER = [("gcp_exact", FLASH_SERVE_FLAGS), ("reduced", REDUCED_SERVE_FLAGS)]
+# (tag, flags, TORCH_CUDA_ARCH_LIST override): None = unset -> flashinfer
+# derives SM 12.0 from the device; "12.0a" = the CUTLASS sm120a spelling.
+BOOT_LADDER = [("gcp_exact", FLASH_SERVE_FLAGS, None),
+               ("gcp_exact_arch120a", FLASH_SERVE_FLAGS, "12.0a"),
+               ("reduced", REDUCED_SERVE_FLAGS, None)]
 
 BASELINE_27B = @@BASELINE_27B@@
 GATE_CONC28_TOK_S = @@GATE_CONC28_TOK_S@@
@@ -511,7 +525,7 @@ RESULTS["meta"].update({
     "reduced_serve_flags": REDUCED_SERVE_FLAGS,
     "baseline_27b": BASELINE_27B,
     "serving_env_keys": ["VLLM_PLE_CPU_OFFLOAD=1", "VLLM_PLE_OFFLOAD_READY_TIMEOUT=1800",
-                         "TORCH_CUDA_ARCH_LIST=12.0f",
+                         "TORCH_CUDA_ARCH_LIST per boot ladder (None -> device detect; 12.0a fallback)",
                          "PYTORCH_ALLOC_CONF=expandable_segments:False"],
     "decision_rules": {
         "gate_pass": (f"boots on 1 GPU (either rung) AND stable conc-28 gen tok/s aggregate >= "
@@ -1089,8 +1103,10 @@ BOOT_TAG = None
 try:
     if not RUNTIME_OK:
         raise RuntimeError("assemble failed — boot skipped")
-    for _tag, _flags in BOOT_LADDER:
+    for _tag, _flags, _arch in BOOT_LADDER:
         try:
+            ARCH_OVERRIDE["value"] = _arch
+            print(f"flashnext-gate: rung [{_tag}] TORCH_CUDA_ARCH_LIST={_arch!r}", flush=True)
             start_server(_flags, tag=_tag)
             BOOT_TAG = _tag
             break
@@ -1101,7 +1117,7 @@ try:
             save_results()
             stop_server(f"cleanup after failed {_tag}")
     if BOOT_TAG is None:
-        RESULTS["verdicts"]["boot"] = "BOOT FAILED on both rungs (their exact config AND reduced)"
+        RESULTS["verdicts"]["boot"] = "BOOT FAILED on all rungs (device-detect arch, 12.0a, reduced)"
     else:
         _b = RESULTS["boots"][BOOT_TAG]
         _el = _b.get("engine_lines") or {}
@@ -1394,7 +1410,7 @@ def main() -> None:
             < joined.index("Phase 4 —") < joined.index("Phase 5 —"))
     # Their serve-chain invariants (kaggle_flashnext_setup.py, copied verbatim)
     for needed in ('"VLLM_PLE_CPU_OFFLOAD": "1"', '"VLLM_PLE_OFFLOAD_READY_TIMEOUT": "1800"',
-                   '"TORCH_CUDA_ARCH_LIST": "12.0f"', '"VLLM_ENABLE_CUDA_COMPATIBILITY": "0"',
+                   '"VLLM_ENABLE_CUDA_COMPATIBILITY": "0"',
                    '"PYTORCH_ALLOC_CONF": "expandable_segments:False"',
                    '"--tensor-parallel-size", "1"', '"--gpu-memory-utilization", "0.96"',
                    '"--max-num-seqs", "22"', '"--max-num-batched-tokens", "6144"',

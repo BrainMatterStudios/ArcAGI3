@@ -39,7 +39,7 @@ REQUIRED_TOKENS = [
     # their serving_env verbatim (the single-GPU mechanism)
     '"VLLM_PLE_CPU_OFFLOAD": "1"',
     '"VLLM_PLE_OFFLOAD_READY_TIMEOUT": "1800"',
-    '"TORCH_CUDA_ARCH_LIST": "12.0f"',
+    'ARCH_OVERRIDE',
     '"VLLM_ENABLE_CUDA_COMPATIBILITY": "0"',
     '"PYTORCH_ALLOC_CONF": "expandable_segments:False"',
     '"HF_HUB_OFFLINE": "1"',
