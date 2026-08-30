@@ -172,3 +172,19 @@ Analysis over the three stock phases (tp, tp1b, tp2c; per-game levels in `submis
 
 08-30 slot: submission 55886429 (byte-identical harvest draw #3) landed 08:52 UTC. 08-29 draw scored 1.39.
 tp1c v1 died on a Kaggle infra mount failure (competition wheelhouse absent at t+5s); v2 re-pushed, QUEUED.
+
+## 7. 08-30 midday — Flash-Next is the live bet; Pack 5 built from forensics
+
+- **R7 forensics** (docs/research-2026-08-29/R7): modal stock failure = analysis-paralysis (63% of wall
+  in zero-action model calls; 47% of calls yield without acting) + notes-channel amnesia (4/16 games carry
+  ZERO notes because assistant text is empty; the world model sits in hidden reasoning). Goal hallucination:
+  not observed. Action volume alone: refuted (dc22/sc25 exceeded baseline actions, cleared nothing).
+- **Pack 5 (`graft_emission.py`)**: wm-from-reasoning harvest + act-floor (force the tool call after 3
+  analysis-only calls). `arc3-tp5-smoke` = stock vs stock+emission, QUEUED behind serving-lab4.
+- **R6 model scan**: top pick Qwen3.8-Flash-Next NVFP4 (125B MoE, 6B active). `submission/_flashnext_gate/`
+  built (aa741f0): single-GPU vLLM-dev boot via sonpham's public 3-part package, PLE tables (104GB) in host
+  RAM, their exact argv. **Their own package lock records duck-harness GCP mean 9.63 on the 25 public games**
+  (our stock: 4.1–4.9 local) — same loop shape, bigger sparse brain. License prize-compatible (Qwen
+  Community 1.0). Gate: boots AND >=450 tok/s conc-28 AND qwen3_xml parse >=95%.
+- GPU queue order when a session frees: **flashnext-gate first**, then tp1c retry (fresh slug arc3-tp1c2).
+- tp1c died twice to the same Kaggle competition-mount flake (metadata identical to working kernels).
