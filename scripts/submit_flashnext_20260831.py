@@ -131,7 +131,7 @@ FORBIDDEN_MARKERS = (
 MESSAGE = (
     "MODEL-SWAP FIRST FLIGHT arc3-flashnext-flight [fn-08f83048]: STOCK duck harness served by "
     "Qwen3.8-Flash-Next NVFP4 (125B MoE, 6B active; sonpham 3-part package; PLE tables in host RAM; "
-    "cu13-nvcc JIT fix; watchdog; 9h time guard). 25-game Kaggle smoke read PASS: levels 1.16 vs 27B "
+    "cu13-nvcc JIT fix; server auto-relaunch; 9h time guard). 25-game Kaggle smoke read PASS: levels 1.16 vs 27B "
     "0.84-1.04, zero-level 4/25 vs 8-9, actions x6. scriptVersionId 346125566, kernel v1. "
     "READING RULE (pre-registered, NEW distribution): >=1.45 = model-swap positive live; >1.74 re-banks "
     "the LB best; 0.69-1.30 = informative single draw of a new arm; <0.5 = suspect serving failure, pull the log."
