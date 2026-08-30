@@ -154,3 +154,21 @@ neutral-to-positive on levels. The clean read is `arc3-tp2c-smoke` (stock vs sto
   calls in one dry run.
 - Kaggle allows ≥2 concurrent GPU kernels; the weekly quota (30 h per the older memory, 60 h per the last
   handoff — unverified) is the real bottleneck. Check remaining quota in the web UI before the third push.
+
+## 6. 08-30 pooled-stock evidence (75 stock plays across 3 kernels) — the keep/kill base
+
+Analysis over the three stock phases (tp, tp1b, tp2c; per-game levels in `submission/_tp_smoke/results*/`):
+
+- **Volatility dominates**: same bytes draw ar25 at 1/2/4 levels, ft09 0–4, re86 0–3, vc33 0–3.
+  Single stock draw ≈ 3.9–4.9 local; **best-of-3 = 7.81 local (1.48 levels/game)**. 12/25 games always
+  clear ≥1 level, 10 flaky, only 3 never (dc22, g50t, sk48).
+- **The budget currency is LLM turns**: ~16 turns/game in 2.2 h (~500 s/turn at conc 28). Cleared levels
+  cost 5–64 actions. corr(actions, levels) = 0.32 across the 75 plays.
+- Implications, in order: (1) serving speed (turns/game) is the one throughput lever the recency finding
+  does not kill → serving-lab4 (RUNNING 08-30 ~09:00 UTC) measures vLLM 0.24 + MTP + prefix-regime;
+  (2) per-game volatility means flaky games are won by better *draws by default* — mechanisms that
+  stabilise the good draw (carry notes across GAME_OVER, avoid known-noop repeats) matter more than new
+  capabilities; (3) any future lever read needs levels, never actions.
+
+08-30 slot: submission 55886429 (byte-identical harvest draw #3) landed 08:52 UTC. 08-29 draw scored 1.39.
+tp1c v1 died on a Kaggle infra mount failure (competition wheelhouse absent at t+5s); v2 re-pushed, QUEUED.
