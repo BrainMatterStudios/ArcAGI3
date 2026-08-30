@@ -41,7 +41,7 @@ REQUIRED_TOKENS = [
     '"VLLM_PLE_OFFLOAD_READY_TIMEOUT": "1800"',
     '"TORCH_CUDA_ARCH_LIST": "12.0f"',
     '"VLLM_ENABLE_CUDA_COMPATIBILITY": "0"',
-    '"PYTORCH_ALLOC_CONF": "expandable_segments:True"',
+    '"PYTORCH_ALLOC_CONF": "expandable_segments:False"',
     '"HF_HUB_OFFLINE": "1"',
     # their launch_server argv verbatim
     '"--tensor-parallel-size", "1"',

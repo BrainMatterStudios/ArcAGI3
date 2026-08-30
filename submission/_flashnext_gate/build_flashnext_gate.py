@@ -295,7 +295,7 @@ def serving_env():
             "VLLM_PLE_CPU_OFFLOAD": "1",
             "VLLM_PLE_OFFLOAD_READY_TIMEOUT": "1800",
             "TORCH_CUDA_ARCH_LIST": "12.0f",
-            "PYTORCH_ALLOC_CONF": "expandable_segments:True",
+            "PYTORCH_ALLOC_CONF": "expandable_segments:False",  # v2: True needs pidfd_getfd CUDA-IPC, blocked by Kaggle seccomp (v1 boot death in the PLE offload worker)
             "HF_HUB_OFFLINE": "1",
         }
     )
@@ -512,7 +512,7 @@ RESULTS["meta"].update({
     "baseline_27b": BASELINE_27B,
     "serving_env_keys": ["VLLM_PLE_CPU_OFFLOAD=1", "VLLM_PLE_OFFLOAD_READY_TIMEOUT=1800",
                          "TORCH_CUDA_ARCH_LIST=12.0f",
-                         "PYTORCH_ALLOC_CONF=expandable_segments:True"],
+                         "PYTORCH_ALLOC_CONF=expandable_segments:False"],
     "decision_rules": {
         "gate_pass": (f"boots on 1 GPU (either rung) AND stable conc-28 gen tok/s aggregate >= "
                       f"{GATE_CONC28_TOK_S} AND tool-call parse >= {GATE_TOOL_PARSE}"),
@@ -1395,7 +1395,7 @@ def main() -> None:
     # Their serve-chain invariants (kaggle_flashnext_setup.py, copied verbatim)
     for needed in ('"VLLM_PLE_CPU_OFFLOAD": "1"', '"VLLM_PLE_OFFLOAD_READY_TIMEOUT": "1800"',
                    '"TORCH_CUDA_ARCH_LIST": "12.0f"', '"VLLM_ENABLE_CUDA_COMPATIBILITY": "0"',
-                   '"PYTORCH_ALLOC_CONF": "expandable_segments:True"',
+                   '"PYTORCH_ALLOC_CONF": "expandable_segments:False"',
                    '"--tensor-parallel-size", "1"', '"--gpu-memory-utilization", "0.96"',
                    '"--max-num-seqs", "22"', '"--max-num-batched-tokens", "6144"',
                    '"--max-model-len", "32768"', '"--kv-cache-dtype", "auto"',
