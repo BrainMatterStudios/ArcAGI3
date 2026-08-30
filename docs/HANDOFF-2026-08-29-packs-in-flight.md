@@ -188,3 +188,18 @@ tp1c v1 died on a Kaggle infra mount failure (competition wheelhouse absent at t
   Community 1.0). Gate: boots AND >=450 tok/s conc-28 AND qwen3_xml parse >=95%.
 - GPU queue order when a session frees: **flashnext-gate first**, then tp1c retry (fresh slug arc3-tp1c2).
 - tp1c died twice to the same Kaggle competition-mount flake (metadata identical to working kernels).
+
+## 8. 08-30 evening — Pack 5 PASS, Flash-Next boots, tp5em armed for 08-31 (Ahmed's call)
+
+- **tp5 smoke PASS** (first passing harness read): stock 0.88 lv/9 zero -> +emission 1.04 lv/6 zero,
+  local 3.50 -> 4.40; forensics' named victims flipped (tn36 0->2, tr87/m0r0/wa30/bp35 0->1).
+- **Flight arm** arc3-duck38-tp5em committed COMPLETE (svid 346075311, hash 070598bf == local).
+  Gated runner `scripts/submit_tp5em_20260831.py` mock-tested. **Fallback** harvest #4 runner also ready.
+  Neither launches without Ahmed (approval gate); default if silent = harvest.
+- **Flash-Next gate v4: BOOTS on Kaggle** (their exact config, 740 s; cu13-nvcc fix). conc-28 412-480
+  tok/s vs 27B 280-297; per-session +39-45%; parse 1.0. Formal gate FAIL at the 450 stable bar —
+  recorded; proceeding to the decisive 25-game stock-harness smoke (builder being written:
+  submission/_flashnext_smoke/). Failure ladder that got here: pidfd_getfd (seccomp) -> arch "12.0f"
+  rejected -> image nvcc predates SM 12.0 -> jcole75 cu13 wheels.
+- serving-lab4 CLOSED Pack 3 for the 27B: 0.24 boots (KV x4.7) but tok/s unchanged at conc 28;
+  MTP acceptance 0.72-0.77 yet +2.5% at conc 28 and 19/20 greedy mismatches.
