@@ -190,6 +190,14 @@ os.environ["TAAF_KAGGLE_SETUP_ENV"] = str(SETUP_ENV_PATH)
 
 def _find_taaf_bundle() -> Path:
     explicit = os.getenv("TAAF_KAGGLE_BUNDLE_DIR", "").strip()
+    # v2: sonpham's flashnext datasets ALSO contain a taaf-kaggle-bundle.json
+    # (their apex fork). v1 rglobbed /kaggle/input and picked theirs first ->
+    # their solver source + our pickle -> AttributeError hard_noop_guard.
+    # Pin to the anim-20260807 bundle (the bytes the pickle was built from).
+    for pinned in (Path("/kaggle/input/taaf-kaggle-source-anim-20260807-anim"),
+                   Path("/kaggle/input/datasets/jakobbrggen/taaf-kaggle-source-anim-20260807-anim")):
+        if (pinned / DATASET_BUNDLE_MARKER).is_file():
+            return pinned
     if explicit and (Path(explicit) / DATASET_BUNDLE_MARKER).is_file():
         return Path(explicit)
     for root in [Path("/kaggle/input/datasets"), Path("/kaggle/input"), Path.cwd()]:
