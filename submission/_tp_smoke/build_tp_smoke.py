@@ -41,8 +41,8 @@ ARMS = {
     # arm: (kernel slug, phases as (name, env), read rule)
     "tp": {
         "slug": "arc3-tp-smoke",
-        "phases": [("stock", {"TP_ENABLE": "0", "TP2_ENABLE": "0", "TP4_ENABLE": "0"}),
-                   ("tp", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0"})],
+        "phases": [("stock", {"TP_ENABLE": "0", "TP2_ENABLE": "0", "TP4_ENABLE": "0", "TP5_ENABLE": "0"}),
+                   ("tp", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0", "TP5_ENABLE": "0"})],
         "read": "throughput",
     },
     # Pack 1b: the mechanical half only (hysteresis trim + 24k window + notes +
@@ -51,7 +51,7 @@ ARMS = {
     # a looser batch cap. Stock vs mech24 inside one boot.
     "tp1b": {
         "slug": "arc3-tp1b-smoke",
-        "phases": [("stock", {"TP_ENABLE": "0", "TP2_ENABLE": "0", "TP4_ENABLE": "0"}),
+        "phases": [("stock", {"TP_ENABLE": "0", "TP2_ENABLE": "0", "TP4_ENABLE": "0", "TP5_ENABLE": "0"}),
                    ("mech24", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0",
                                "TP_YIELD_SECONDS": "-1", "TP_TOOL_STEPS": "-1",
                                "TP_CONTEXT_WINDOW": "24576", "TP_BATCH_CAP": "30"})],
@@ -59,8 +59,8 @@ ARMS = {
     },
     "tp2": {
         "slug": "arc3-tp2-smoke",
-        "phases": [("tp", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0"}),
-                   ("tp2", {"TP_ENABLE": "1", "TP2_ENABLE": "1", "TP4_ENABLE": "0"})],
+        "phases": [("tp", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0", "TP5_ENABLE": "0"}),
+                   ("tp2", {"TP_ENABLE": "1", "TP2_ENABLE": "1", "TP4_ENABLE": "0", "TP5_ENABLE": "0"})],
         "read": "control",
     },
     # Pack 2 on the corrected Pack-1 base (tp1b mech24): async/cheap summaries.
@@ -90,21 +90,34 @@ ARMS = {
     # steady state), everything else stock. tp1b showed 24k/50% starves recency.
     "tp1c": {
         "slug": "arc3-tp1c-smoke",
-        "phases": [("stock", {"TP_ENABLE": "0", "TP2_ENABLE": "0", "TP4_ENABLE": "0"}),
+        "phases": [("stock", {"TP_ENABLE": "0", "TP2_ENABLE": "0", "TP4_ENABLE": "0", "TP5_ENABLE": "0"}),
                    ("hyst43", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0",
                                "TP_TRIM_LOW_WATER": "0.75", "TP_CONTEXT_WINDOW": "43008",
                                "TP_YIELD_SECONDS": "-1", "TP_TOOL_STEPS": "-1", "TP_BATCH_CAP": "0"})],
         "read": "throughput",
     },
+    # Pack 5 (forensics-derived): stock vs stock + emission (wm-from-reasoning
+    # + act-floor 3). Single change vs stock; read rule = control (levels/zero).
+    "tp5": {
+        "slug": "arc3-tp5-smoke",
+        "phases": [("stock", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0", "TP5_ENABLE": "0",
+                              "TP_TRIM_LOW_WATER": "1.0", "TP_CONTEXT_WINDOW": "0",
+                              "TP_YIELD_SECONDS": "-1", "TP_TOOL_STEPS": "-1", "TP_BATCH_CAP": "0"}),
+                   ("stock_em", {"TP_ENABLE": "1", "TP2_ENABLE": "0", "TP4_ENABLE": "0", "TP5_ENABLE": "1",
+                                 "TP_TRIM_LOW_WATER": "1.0", "TP_CONTEXT_WINDOW": "0",
+                                 "TP_YIELD_SECONDS": "-1", "TP_TOOL_STEPS": "-1", "TP_BATCH_CAP": "0"})],
+        "read": "control",
+    },
     "tp4": {
         "slug": "arc3-tp4-smoke",
-        "phases": [("tp2", {"TP_ENABLE": "1", "TP2_ENABLE": "1", "TP4_ENABLE": "0"}),
-                   ("tp24", {"TP_ENABLE": "1", "TP2_ENABLE": "1", "TP4_ENABLE": "1"})],
+        "phases": [("tp2", {"TP_ENABLE": "1", "TP2_ENABLE": "1", "TP4_ENABLE": "0", "TP5_ENABLE": "0"}),
+                   ("tp24", {"TP_ENABLE": "1", "TP2_ENABLE": "1", "TP4_ENABLE": "1", "TP5_ENABLE": "0"})],
         "read": "control",
     },
 }
 GRAFT4_PY = SUB / "_throughput_v1" / "graft_explore.py"
 EXPLORER_PY = SUB / "_throughput_v1" / "frontier_explorer.py"
+GRAFT5_PY = SUB / "_throughput_v1" / "graft_emission.py"
 
 PER_GAME_S = 7920
 SOFT_END_S = 19800          # 5.5 h global backstop: boot + 2 x 2.2 h + slack
@@ -255,6 +268,9 @@ os.environ["TP4_STALL_T3"] = "30"
 os.environ["TP4_BUDGET"] = "800"
 os.environ["TP4_RUNS_PER_LEVEL"] = "1"
 os.environ["TP4_ENDGAME_S"] = "300"
+os.environ["TP5_ENABLE"] = "1"
+os.environ["TP5_WM_FROM_REASONING"] = "1"
+os.environ["TP5_ACT_FLOOR"] = "3"
 for _stale in ("EFFORT_MEDIUM", "EFFORT_DEAD_RETRY", "YIELD_CARRYOVER", "YIELD_SLICE_CAP",
                "EXPLORER", "EXPLORER_V8"):
     os.environ.pop(_stale, None)
@@ -268,6 +284,7 @@ _TP_DIR.mkdir(parents=True, exist_ok=True)
 (_TP_DIR / "graft_control.py").write_text(_TP2_SOURCE, encoding="utf-8")
 (_TP_DIR / "frontier_explorer.py").write_text(_FE_SOURCE, encoding="utf-8")
 (_TP_DIR / "graft_explore.py").write_text(_TP4_SOURCE, encoding="utf-8")
+(_TP_DIR / "graft_emission.py").write_text(_TP5_SOURCE, encoding="utf-8")
 if str(_TP_DIR) not in sys.path:
     sys.path.insert(0, str(_TP_DIR))
 
@@ -285,6 +302,10 @@ _temod = _importlib.import_module("graft_explore")
 _te_status = _temod.install()
 print("[explore]", _te_status)
 assert _te_status == "explore: OK", "explore graft must be live, got: " + repr(_te_status)
+_tmmod = _importlib.import_module("graft_emission")
+_tm_status = _tmmod.install()
+print("[emission]", _tm_status)
+assert _tm_status == "emission: OK", "emission graft must be live, got: " + repr(_tm_status)
 print("[grafts] flags:", {k: v for k, v in os.environ.items() if k.startswith("TP")})
 print("[grafts] status:", _tpmod.status(), _tcmod.status(), _temod.status())
 '''
@@ -392,6 +413,7 @@ def _tp_phase_end(phase, game_runs):
         "graft_status": _tpmod.status(),
         "control_status": _tcmod.status(),
         "explore_status": _temod.status(),
+        "emission_status": _tmmod.status(),
         "wall_s": round(wall, 1),
         "games": games,
         "n_games": len(games),
@@ -532,6 +554,8 @@ def main(arm: str = "tp") -> None:
     graft2_src = GRAFT2_PY.read_text()
     graft4_src = GRAFT4_PY.read_text()
     fe_src = EXPLORER_PY.read_text()
+    graft5_src = GRAFT5_PY.read_text()
+    assert "def install() -> str:" in graft5_src
     assert "def install() -> str:" in graft_src and "def install() -> str:" in graft2_src
     assert "def install() -> str:" in graft4_src and "class FrontierExplorer" in fe_src
     assert "def time_guard_per_game_s" in graft_src
@@ -559,9 +583,10 @@ def main(arm: str = "tp") -> None:
 
     graft_cell_text = (GRAFT_CELL_HEAD + repr(graft_src) + "\n_TP2_SOURCE = " + repr(graft2_src)
                        + "\n_FE_SOURCE = " + repr(fe_src) + "\n_TP4_SOURCE = " + repr(graft4_src)
+                       + "\n_TP5_SOURCE = " + repr(graft5_src)
                        + "\nARM_NAME = " + repr(arm) + "\nREAD_RULE = " + repr(spec["read"]) + "\n"
                        + GRAFT_CELL_TAIL)
-    for src in (graft_src, graft2_src, graft4_src, fe_src):
+    for src in (graft_src, graft2_src, graft4_src, fe_src, graft5_src):
         assert repr(src) in graft_cell_text
     nb["cells"].insert(run_idx, code_cell(graft_cell_text))
     nb["cells"].insert(run_idx + 1, code_cell(TELEMETRY_CELL))

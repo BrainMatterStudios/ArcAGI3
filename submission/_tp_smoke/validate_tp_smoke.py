@@ -18,7 +18,7 @@ def main() -> int:
         "graft install asserted": 'assert _tp_status == "throughput: OK"' in joined,
         "two phases": joined.count(", GAMES_25, ") == 2,
         "phase env set": joined.count("'TP_ENABLE': ") == 2 and joined.count("'TP2_ENABLE': ") == 2 and joined.count("'TP4_ENABLE': ") == 2,
-        "all grafts install asserted": 'assert _tc_status == "control: OK"' in joined and 'assert _te_status == "explore: OK"' in joined,
+        "all grafts install asserted": 'assert _tc_status == "control: OK"' in joined and 'assert _te_status == "explore: OK"' in joined and 'assert _tm_status == "emission: OK"' in joined,
         "scored branch intact": "bm.games = _competition_games()" in joined and "KAGGLE_IS_COMPETITION_RERUN" in joined,
         "metrics scrape": "vllm:prefix_cache_hits_total" in joined,
         "phase begin/end wired": "_tp_phase_begin(_phase_name)" in joined and "_tp_phase_end(_phase_name" in joined,
