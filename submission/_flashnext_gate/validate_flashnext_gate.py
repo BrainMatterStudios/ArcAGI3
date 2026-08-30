@@ -104,6 +104,7 @@ EXPECTED_META = {
     "is_private": True,
     "machine_shape": "NvidiaRtxPro6000",
     "dataset_sources": [
+    'jcole75/arc3-qwen36-runtime-wheels',
         "sonphamorg/arc3-flashnext-serving-part-a-v1",
         "sonphamorg/arc3-flashnext-serving-part-b-v1",
         "sonphamorg/arc3-flashnext-serving-part-c-v1",
