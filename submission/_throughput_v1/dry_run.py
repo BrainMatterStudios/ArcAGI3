@@ -136,10 +136,12 @@ def main() -> int:
         "TP4_ENABLE": "1", "TP4_STALL_T3": "12", "TP4_BUDGET": "150",
         # Pack 5
         "TP5_ENABLE": "1", "TP5_ACT_FLOOR": "2",
+        "TP6_ENABLE": "1",
     })
 
     import arc_agi
     import graft_control as tc
+    import graft_economy as t6
     import graft_emission as tem
     import graft_explore as te
     import graft_throughput as tp
@@ -152,11 +154,13 @@ def main() -> int:
     print("[tp-dry]", tc.install())
     print("[tp-dry]", te.install())
     print("[tp-dry]", tem.install())
-    assert tp._STATE["installed"] and tc._STATE["installed"] and te._STATE["installed"] and tem._STATE["installed"]
+    print("[tp-dry]", t6.install())
+    assert tp._STATE["installed"] and tc._STATE["installed"] and te._STATE["installed"] and tem._STATE["installed"] and t6._STATE["installed"]
 
     counters = {"probe_games": 0, "probe_actions": 0, "prompts_with_probe": 0, "prompts_with_stall": 0,
                 "prompts_with_reset_note": 0, "diff_results": 0, "streak_halts": 0, "resets": 0,
-                "explorer_runs": 0, "explorer_actions": 0, "explorer_levels": 0, "prompts_with_explorer_note": 0}
+                "explorer_runs": 0, "explorer_actions": 0, "explorer_levels": 0, "prompts_with_explorer_note": 0,
+                "prompts_with_economy": 0}
 
     inner_run_explorer = te.run_explorer
 
@@ -189,6 +193,7 @@ def main() -> int:
         counters["prompts_with_stall"] += "STAGNATION WARNING" in text
         counters["prompts_with_reset_note"] += "RESET by the harness" in text
         counters["prompts_with_explorer_note"] += "model-free explorer took over" in text
+        counters["prompts_with_economy"] += "ACTION ECONOMY" in text
         return text
 
     agent_mod.ToolAgent._build_user_prompt = prompt
@@ -254,6 +259,7 @@ def main() -> int:
         "harness RESET tier fired": counters["prompts_with_reset_note"] >= 1,
         "summary rate-limited": MockBrain.summary_posts <= MockBrain.tool_posts // 4,
         "explorer fallback fired": counters["explorer_runs"] >= 1 and counters["prompts_with_explorer_note"] >= 1,
+        "economy block in prompts": counters["prompts_with_economy"] >= 10,
         "act floor armed at least once": any(getattr(a, "_tp5_calls_without_action", 0) >= 0 for a in []) or True,
         "tool posts": MockBrain.tool_posts >= 20,
     }
