@@ -37,7 +37,7 @@ def main() -> int:
 
     # 1. structural invariants -------------------------------------------------
     checks = {
-        "two phases": joined.count(", GAMES_25, ") == 2, GAMES_25, ") == 1,
+        "two phases": joined.count(", GAMES_25, ") == 2,
         "25 games listed once": joined.count("GAMES_25 = [") == 1,
         "grafts embedded + phase-gated": "def install() -> str:" in joined and '"TP_ENABLE": "0"' in joined and '"TP5_ENABLE": "1"' in joined,
         "27B gone: no model mount": ("foysalemonshanto" not in joined
