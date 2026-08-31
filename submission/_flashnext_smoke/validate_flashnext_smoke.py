@@ -69,7 +69,7 @@ def main() -> int:
         "phase begin/end wired": ("_fn_phase_begin(_phase_name)" in joined
                                   and "_fn_phase_end(_phase_name" in joined),
         "soft end 18600": "18600" in joined,
-        "per-game cap 7920": joined.count("7920") >= 2, GAMES_25, 7920)' in joined,
+        "per-game cap 7920": joined.count("7920") >= 2,
         "report + read rule": ("FLASHNEXT SMOKE READ" in joined
                                and "lev >= 1.3 or (zero <= 6 and lev >= 1.0)" in joined
                                and 'lev < 0.9' in joined),
