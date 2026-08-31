@@ -137,14 +137,20 @@ def main() -> int:
         # Pack 5
         "TP5_ENABLE": "1", "TP5_ACT_FLOOR": "2",
         "TP6_ENABLE": "1", "TP7_ENABLE": "1", "TP_TOOL_TIMEOUT": "45",
+        # TP8 durable-timeout, TP9 turn-pipeline, TP10 memory-spine (J9/F7:
+        # the committed integration proof must cover what actually flies)
+        "TP8_ENABLE": "1", "TP9_ENABLE": "1", "TP10_ENABLE": "1",
     })
 
     import arc_agi
     import graft_control as tc
     import graft_economy as t6
     import graft_deaths as t7
+    import graft_durable as t8
     import graft_emission as tem
     import graft_explore as te
+    import graft_memoryspine as t10
+    import graft_pipeline as t9
     import graft_throughput as tp
     from inference.agent import tool_agent as agent_mod
     from inference.framework import solver as solver_mod
@@ -157,7 +163,11 @@ def main() -> int:
     print("[tp-dry]", tem.install())
     print("[tp-dry]", t6.install())
     print("[tp-dry]", t7.install())
+    print("[tp-dry]", t8.install())
+    print("[tp-dry]", t9.install())
+    print("[tp-dry]", t10.install())
     assert tp._STATE["installed"] and tc._STATE["installed"] and te._STATE["installed"] and tem._STATE["installed"] and t6._STATE["installed"] and t7._STATE["installed"]
+    assert t8._STATE["installed"] and t9._STATE["installed"] and t10._STATE["installed"]
 
     counters = {"probe_games": 0, "probe_actions": 0, "prompts_with_probe": 0, "prompts_with_stall": 0,
                 "prompts_with_reset_note": 0, "diff_results": 0, "streak_halts": 0, "resets": 0,
@@ -246,6 +256,7 @@ def main() -> int:
                      "actions": sum(apl) if apl else len(run.history), "score": run.final_score,
                      "note": run.solver_note})
     print("[tp-dry] runs:", json.dumps(rows, indent=1))
+    print("[tp-dry] tp9:", {k: t9._STATE[k] for k in ("resumes_injected", "perturbations_injected", "retries_used")})
     print("[tp-dry] counters:", counters, "tool_posts:", MockBrain.tool_posts,
           "summary_posts:", MockBrain.summary_posts, "summary_thinking:", set(MockBrain.summary_thinking),
           f"wall={wall:.0f}s")
