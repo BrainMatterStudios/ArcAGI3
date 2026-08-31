@@ -98,7 +98,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 KERNEL = "ahmedmobasher86/arc3-v31-copy"
 EXPECTED_VERSION = 1
-EXPECTED_SCRIPT_VERSION_ID = "FILL_AFTER_COMMIT"
+EXPECTED_SCRIPT_VERSION_ID = "346312727"
 # sha256 over "\n".join(code-cell sources) — submission-ledger canonical method.
 # Attested 2026-08-31 ~15:35Z: remote v1 pull == local notebook == this hash.
 EXPECTED_HASH = "73f1dbbc121a7f2504c4942197a355b32487954a290ece4910797e36e99baba3"
@@ -128,11 +128,15 @@ MESSAGE = (
     "PUBLIC-LANE ADOPTION arc3-v31-copy: byte-copy of the public V31 notebook "
     "(romantamrazov/arc-real-agi-solution; team The AGI Boys, LB 2.66) — STOCK June agent code from Tufa's "
     "official share bundle (keithtyser/taaf-duck-qwen38-serving-v1) + official Qwen3.8-27B-FP8 repack, served "
-    "with fp8 KV cache, 262k max-model-len, native MTP-3 speculative + async scheduling, no-chunked-prefill, "
-    "server watchdog. Our duck38-v12 lacked ALL of these serving flags (65k len, bf16 KV, no MTP): the "
-    "1.4-vs-2.66 gap was serving config, not policy. READING RULE (pre-registered): the arm's public evidence "
-    "class is 2.2-2.8; >=2.2 = adoption confirmed, new floor; 1.5-2.2 = partial transfer, diff boot log vs the "
-    "public run; <1.3 = adoption FAILED (boot/serving) — pull the log before any conclusion."
+    "with fp8 KV cache, 262k max-model-len, native MTP-3 speculative + async scheduling, and server "
+    "health-monitor restarts. Our duck38-v12 lacked ALL of these serving flags (65k len, bf16 KV, no MTP): the "
+    "1.4-vs-2.66 gap was serving config, not policy. Commit svid 346312727 COMPLETE 08-31: offline 25-game "
+    "read local mean 4.50 / 1.12 levels-per-game / 7 zero-level (above 27B stock 0.84-1.04 AND Flash-Next "
+    "stock ~4.1); scored server confirmed running kv_cache_dtype=fp8 + mtp num_spec_tokens=3 + async_scheduling "
+    "(the no-chunk primary cannot boot on this model: 'chunked prefill required for mamba cache mode align' — "
+    "V22-fallback args are the 2.66-proven path). READING RULE (pre-registered): public evidence class 2.2-2.8, "
+    "local projection 2.2-2.65; >=2.2 = adoption confirmed, new floor; 1.5-2.2 = partial transfer, diff boot "
+    "log vs the public run; <1.3 = adoption FAILED (boot/serving) — pull the log before any conclusion."
 )
 
 

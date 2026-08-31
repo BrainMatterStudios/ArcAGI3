@@ -296,3 +296,31 @@ box; one in-family upgrade (primitive-ai mixed NVFP4-FP8 v2, +13% throughput, qu
 worth an A/B later; FP8 Flash-Next closed by arithmetic; 49k context fits (24 KiB/token).
 NOTE the lane implication: the 27B+MTP3 stack at 2.66 evidence-class now outranks
 Flash-Next's 1.88 anchor as the base to build on.
+
+## 14. 08-31 20:00 UTC — v31-copy commit read + servebench decomposition (both COMPLETE)
+
+**arc3-v31-copy commit (svid 346312727, 2h12m, RTX Pro 6000):** offline 25-game read
+**local mean 4.50, median 1.82, 28 levels = 1.12 lv/game, 7 zero-level, 2,733 actions.**
+Above 27B-stock (0.84-1.04 lv) AND above Flash-Next stock local (~4.1 mean). Server log
+confirms the scored args: kv_cache_dtype=fp8 + mtp num_spec_tokens=3 + async_scheduling +
+chunked prefill ON — i.e. the V22-fallback path, the exact "produced 2.66 LB" config.
+Local->LB ratios (1.7-2.06) project **2.2-2.65 LB**. Runner
+`scripts/submit_v31copy_20260901.py` fully attested (hash 73f1dbbc, svid 346312727),
+--mock green end-to-end incl. submit_gated honesty gate. ARMED-READY; needs Ahmed's go.
+
+**arc3-servebench27 (5-config sweep, no games):**
+- HARD: `--no-enable-chunked-prefill` CANNOT boot this model ("Chunked prefill is required
+  for mamba cache mode 'align'" — the 27B is hybrid/mamba-style too). The public "V31"
+  primary always failed; every 2.66-class run was the V22 args. Flag closed.
+- HARD (vLLM's own log): fp8 KV doubles KV capacity 199,136 -> 398,272 tokens (48.8 GiB).
+  bf16 KV at concurrency 28 with 30-50k prompts is massively over-subscribed -> queueing.
+- MTP3 vs fp8KV-only: +13% turns/min, long-prompt latency 326s -> 221s (-32%), 0/8 greedy
+  divergence. Async on top: +2% (noise, n~42).
+- INSTRUMENT CAVEAT (recorded so nobody trusts the wrong number): the A-baseline
+  "8.71 turns/min" is INVALID as a comparison — payload chars/token was miscalibrated
+  (~1.7 not 3.3), so l20k/xl28k buckets were really ~40k/~56k tokens and A (65536 cap)
+  rejected 56 of them with HTTP 400, completing only cheap requests. A-vs-rest turns/min
+  compares different request mixes. B/C/D (0 errors each) are mutually valid.
+- Flash-Next transfer implication unchanged: fp8-KV relief is 27B-specific (Flash-Next KV
+  is tiny); candidate transfers are max-num-seqs 22->28, async, MTP (native head), each
+  needing its own load-gen bench on the sonpham dev build.
