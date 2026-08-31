@@ -250,3 +250,49 @@ must be single-variable (TP7 deaths-protocol alone is the highest-prior candidat
 Flash-Next remains the best flyable arm.
 09-01 slot recommendation: byte-identical stock redraw (scripts/submit_flashnext_20260901.py,
 mock-tested, UNLAUNCHED — Ahmed's call).
+
+## 13. 08-31 15:20 UTC — THE SERVING-CONFIG GAP: public V31 lane (2.66 LB) adopted
+
+Ahmed surfaced a public notebook claiming >2: `romantamrazov/arc-real-agi-solution`
+(team **The AGI Boys — rank 22, LB 2.66**, verified in the full leaderboard CSV).
+Forensics on its exact bytes (pulled, diffed):
+
+- **Agent code is byte-identical to June stock** (diff vs `scratchpad/bundles/june_stock`
+  = 0 lines on tool_agent/prompts/solver). The prompt/tool policy is NOT the field's edge.
+- Its bundle is **Tufa's own official share** (`keithtyser/taaf-duck-qwen38-serving-v1`,
+  frozen from `jeroencottaar/taaf-kaggle-source-share`, 08-17, ARC3-Inference @ aa69123).
+- Model = the SAME checkpoint we fly (`foysalemonshanto/qwen3-8-27b-fp8-repacked-v1`,
+  official Qwen/Qwen3.8-27B-FP8).
+- **The whole delta vs our duck38-v12 is serving flags.** Our v12 patch swapped only the
+  model identity into the OLD June serving script: `VLLM_MAX_MODEL_LEN = 65536`, bf16 KV,
+  no MTP, no async scheduling, transformers from the wheelhouse. The 2.66 stack serves with:
+  `--kv-cache-dtype fp8`, `--max-model-len 262144`,
+  `--speculative-config {"method":"mtp","num_speculative_tokens":3}` (the repack's NATIVE
+  mtp.* tensors, validated at boot), `--async-scheduling`, `--no-enable-chunked-prefill`
+  (V31-only, unproven delta), transformers 5.8.0 + hf-hub 1.5.0 overlay, and a 15s-period
+  server health watchdog with staged restart. Their own comment: "Fallback = exact
+  MTP3+async serving that produced 2.66 LB."
+- ANALYZER_CONTEXT_WINDOW is 32768 in BOTH — the agent-side trim is unchanged; the win is
+  pure serving throughput/latency (fp8 KV halves KV memory at concurrency 28; MTP-3 +
+  async-scheduling raise decode throughput; we are prefill/throughput-bound per R8).
+- Conclusion (hard evidence, closes a 2-week miss): **our 1.4-vs-2.66 gap on the 27B was
+  serving config, not harness policy.** The 08-17 audit's "field 2.76 via newer public duck
+  bundles" was this lane; we never adopted it.
+
+**Staged (blocked on Ahmed's push — auto-mode classifier denies `kaggle kernels push`):**
+- `submission/_v31_copy/` — byte-copy kernel (`ahmedmobasher86/arc3-v31-copy`), same
+  sources/docker pin/machine shape. A GPU commit = boot proof + offline 25-game read of the
+  2.66 stack, no slot cost.
+- `scripts/submit_v31copy_20260901.py` — gated runner for the 09-01 00:01Z slot; refuses to
+  run until EXPECTED_HASH / EXPECTED_SCRIPT_VERSION_ID are attested from the commit.
+  Reading rule pre-registered in MESSAGE: >=2.2 adoption confirmed / 1.5-2.2 partial /
+  <1.3 boot failure.
+- TP8 durable-timeout graft (`submission/_throughput_v1/graft_durable.py` + tests, all 7
+  suites + dry_run green) — queued behind the adoption; next single-variable A/B belongs ON
+  the V31 stack, not on Flash-Next, if tonight confirms.
+
+Model re-scan (scratchpad/modelscan2/REPORT.md): Flash-Next NVFP4 stays best-fit for the
+box; one in-family upgrade (primitive-ai mixed NVFP4-FP8 v2, +13% throughput, quality tied)
+worth an A/B later; FP8 Flash-Next closed by arithmetic; 49k context fits (24 KiB/token).
+NOTE the lane implication: the 27B+MTP3 stack at 2.66 evidence-class now outranks
+Flash-Next's 1.88 anchor as the base to build on.
