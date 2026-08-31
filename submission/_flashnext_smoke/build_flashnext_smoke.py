@@ -76,12 +76,12 @@ MARK_RUN = "run_context = contextlib.nullcontext()"
 
 GRAFT_SRC_DIR = SUB / "_throughput_v1"
 GRAFT_FILES = ["graft_throughput.py", "graft_control.py", "frontier_explorer.py",
-               "graft_explore.py", "graft_emission.py", "graft_economy.py"]
+               "graft_explore.py", "graft_emission.py", "graft_economy.py", "graft_deaths.py"]
 
 GRAFT_CELL_HEAD = r'''# ==== graft install (tuned phase machinery; every flag phase-controlled) ====
 # All grafts install ONCE; behaviour is env-gated per phase (TP*_ENABLE).
 # Defaults here are ALL OFF — the stock phase runs first.
-for _flag in ("TP_ENABLE", "TP2_ENABLE", "TP4_ENABLE", "TP5_ENABLE", "TP6_ENABLE"):
+for _flag in ("TP_ENABLE", "TP2_ENABLE", "TP4_ENABLE", "TP5_ENABLE", "TP6_ENABLE", "TP7_ENABLE"):
     os.environ[_flag] = "0"
 os.environ["TP5_WM_FROM_REASONING"] = "1"
 os.environ["TP5_ACT_FLOOR"] = "3"
@@ -108,8 +108,10 @@ _tm = _il.import_module("graft_emission"); _st = _tm.install()
 assert _st == "emission: OK", _st
 _t6 = _il.import_module("graft_economy"); _st = _t6.install()
 assert _st == "economy: OK", _st
+_t7 = _il.import_module("graft_deaths"); _st = _t7.install()
+assert _st == "deaths: OK", _st
 print("[tuned] all grafts installed; enabled:",
-      {m.__name__.split("_")[1]: m.enabled() for m in (_tp, _tc, _te, _tm, _t6)})
+      {m.__name__.split("_")[1]: m.enabled() for m in (_tp, _tc, _te, _tm, _t6, _t7)})
 '''
 
 MARK_ATTEST = "attest: OK"
@@ -572,12 +574,16 @@ SMOKE_PHASES = [
     # tuned = neutral Pack-1 base + emission (act-floor, wm-from-reasoning) +
     # explorer fallback + action-economy prompt. Composed arm: the goal is a
     # >=3-LB submission today, attribution later.
+    # R8-forensics flag set: notes survive GAME_OVER + wm-from-reasoning
+    # (amnesia), death protocol (72.5% retry-replay), action economy, 90 s
+    # tool timeout (130 guillotined turns). Explorer (TP4) dropped — the bad
+    # loops run through CHANGING states where its trigger cannot fire.
     ("tuned", GAMES_25, {PER_GAME_S}, {{"TP_ENABLE": "1", "TP_TRIM_LOW_WATER": "1.0",
                                         "TP_CONTEXT_WINDOW": "0", "TP_YIELD_SECONDS": "-1",
                                         "TP_TOOL_STEPS": "-1", "TP_BATCH_CAP": "0",
-                                        "TP_KEEP_NOTES_ON_GAME_OVER": "1",
-                                        "TP2_ENABLE": "0", "TP4_ENABLE": "1",
-                                        "TP5_ENABLE": "1", "TP6_ENABLE": "1"}}),
+                                        "TP_KEEP_NOTES_ON_GAME_OVER": "1", "TP_TOOL_TIMEOUT": "90",
+                                        "TP2_ENABLE": "0", "TP4_ENABLE": "0",
+                                        "TP5_ENABLE": "1", "TP6_ENABLE": "1", "TP7_ENABLE": "1"}}),
 ]
 FN_PHASE_ERRORS = []
 FN_ALL_RUNS = []

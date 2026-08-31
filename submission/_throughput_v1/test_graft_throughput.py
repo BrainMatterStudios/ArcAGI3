@@ -23,7 +23,7 @@ sys.path.insert(0, str(_BUNDLE))
 
 import graft_throughput as tp  # noqa: E402
 
-FLAGS = ("TP_ENABLE", "TP_TRIM_LOW_WATER", "TP_CONTEXT_WINDOW", "TP_YIELD_SECONDS",
+FLAGS = ("TP_ENABLE", "TP_TRIM_LOW_WATER", "TP_CONTEXT_WINDOW", "TP_YIELD_SECONDS", "TP_TOOL_TIMEOUT",
          "TP_TOOL_STEPS", "TP_KEEP_NOTES_ON_GAME_OVER", "TP_BATCH_CAP")
 
 
@@ -236,6 +236,13 @@ class InitOverrideTests(_AgentMixin, unittest.TestCase):
     def test_22_zero_tool_steps_means_unlimited(self) -> None:
         os.environ["TP_TOOL_STEPS"] = "0"
         self.assertIsNone(self._agent()._tool_steps)
+
+    def test_24_tool_timeout_unclamped(self) -> None:
+        os.environ["TP_TOOL_TIMEOUT"] = "90"
+        self.assertEqual(self._agent()._python_timeout, 90)
+
+    def test_25_tool_timeout_stock_when_unset(self) -> None:
+        self.assertEqual(self._agent()._python_timeout, 30)
 
     def test_23_yield_zero_disables(self) -> None:
         os.environ["TP_YIELD_SECONDS"] = "0"

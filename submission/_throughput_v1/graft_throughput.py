@@ -104,6 +104,16 @@ def tool_steps() -> int:
         return DEFAULT_TOOL_STEPS
 
 
+def tool_timeout() -> int:
+    """Python sandbox timeout override; 0 = leave stock (clamped 30 s)."""
+    if not enabled():
+        return 0
+    try:
+        return max(0, int(_env("TP_TOOL_TIMEOUT", "0")))
+    except ValueError:
+        return 0
+
+
 def keep_notes_on_game_over() -> bool:
     if not enabled():
         return False
@@ -190,6 +200,12 @@ def _patch_init(cls: Any) -> None:
             ts = tool_steps()
             if ts >= 0:
                 self._tool_steps = None if ts == 0 else max(1, ts)
+            tt = tool_timeout()
+            if tt > 0:
+                # stock clamps LOCAL_ANALYZER_TOOL_TIMEOUT at 30 s; the measured
+                # cost on Flash-Next is ~130 guillotined turns per 11 games
+                # (R8 forensics) — actions execute but observations are lost.
+                self._python_timeout = max(1, tt)
         except Exception:  # noqa: BLE001
             pass
 
@@ -313,5 +329,6 @@ def status() -> dict[str, Any]:
         "yield_seconds": yield_seconds(),
         "tool_steps": tool_steps(),
         "keep_notes_on_game_over": keep_notes_on_game_over(),
+        "tool_timeout": tool_timeout(),
         "batch_cap": batch_cap(),
     }
