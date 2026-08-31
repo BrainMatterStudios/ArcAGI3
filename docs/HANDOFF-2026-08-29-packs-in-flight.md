@@ -222,3 +222,13 @@ Read against the pre-registered rule in the submission message. Next-slot candid
 >=1.45 → iterate the Flash-Next harness (efficiency: per-level action waste is the known drag);
 in-band → second flashnext draw AND/OR tp5em (svid 346075311, armed); <0.5 → pull the kernel log
 (serving failure) and fly tp5em while diagnosing.
+
+## 11. 08-31 09:22 UTC — FLASH-NEXT FIRST FLIGHT: 1.88, NEW ALL-TIME BEST
+
+Submission 55902917 scored **1.88 public** — re-banks the best (prior 1.74; 27B 12-draw mean 1.41).
+Pre-registered read: model-swap POSITIVE live. Rank 291 -> **249**/2651. LB top moved again overnight:
+cstl 7.51 (!), Franzen 4.05. Single draw; the arm's mean is unknown but the smoke projected ~2.2.
+09-01 runner prepared: `scripts/submit_flashnext_20260901.py` (byte-identical redraw #2, same svid
+346125566) — mock-tested, NOT launched (Ahmed's call). Parallel build queue: (a) flashnext + Pack 5
+emission (compose the two passing reads — needs a tp5-on-flashnext smoke first), (b) efficiency drag
+(per-level action waste), (c) serving tune (max_num_seqs 22 vs conc 28; context 24k).
