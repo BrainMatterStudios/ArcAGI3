@@ -324,3 +324,49 @@ Local->LB ratios (1.7-2.06) project **2.2-2.65 LB**. Runner
 - Flash-Next transfer implication unchanged: fp8-KV relief is 27B-specific (Flash-Next KV
   is tiny); candidate transfers are max-num-seqs 22->28, async, MTP (native head), each
   needing its own load-gen bench on the sonpham dev build.
+
+## 15. 08-31 21:00 UTC — FRESH EXPLORATION CONSOLIDATED (R9+R10+R11): the path-to-7 plan
+
+Three independent agents (trace forensics, field intel, schema-traces mining) converged.
+Full reports: docs/research-2026-08-31/R9-path-to-7-gap-analysis.md, R10-field-intel-7plus.md,
+R11-schema-traces-mining.md.
+
+ARITHMETIC (R9, formula reproduced against all 25 games): LB 7.0 requires local ~12-14
+(local->LB ~0.5) = efficiency-at-cap AND ~2.1 levels/game. Action volume already suffices
+(2,733 emitted vs 2,542 for a 2-level baseline profile) — actions land in wrong buckets.
+
+THE CONVERGED METHOD (R10: entire >=78% public tier, repos public since July; R11: Zanette-lab
+traces, verified 95.35%/98.98% mean RHAE): executable world model + validate-against-log
+before acting + search the MODEL (never the live game) + abort batch on first mispredicted
+frame + persistent notes/suggestion memory spine. BUT (R11): frontier runs cost 5.9h/game +
+4.4M output tokens on 1M context — wholesale copy impossible in a 2.2h/game 32k-context box;
+and full backtest-green world models will break at 27B (Opus needed ~190 edits/game).
+Adopt mechanisms, scoped down. cstl (7.51) = two anonymous SWEs, no public trail; Milestone 2
+forces prize-track open-sourcing by SEPT 30 — build absorption capacity.
+
+RANKED BUILD PLAN (single-variable A/Bs on the proven 27B V22 stack; grade by MECHANISM
+METRICS — acting-turn share, validated-plan share, actions-per-level — NOT local mean,
+which does not transfer across harnesses per three verified self-reports):
+1. TP9 TURN-PIPELINE REPAIR (R9 #1, our-stack-specific, invisible to external lanes, gates
+   everything): 48% of turns idle (60s yield discards whole turns; 13 vLLM read-timeouts;
+   r11l 6,000s deterministic livelock). Persist/resume truncated turns, livelock detector
+   (repeated-output hash -> perturbation), client-timeout retry. ~2x acting turns.
+2. TP10 MEMORY SPINE (R11 minimal A/B + R10 D3 + review's 43% zero-level memory gap):
+   notes.md persisted and re-injected every turn (4KB cap), `suggestion` note-to-self echoed
+   back verbatim, honest last-turn accounting ("committed N — executed M; MISPREDICTED").
+   Pure plumbing, no new 27B skill, fits 32k.
+3. TP11 FIRST-ATTEMPT DISCIPLINE (R9 #2): probe budget vs baseline estimate; mandatory
+   distilled replay plan after GAME_OVER; stop grinding buckets past ~2x baseline
+   (sp80 kept 0.07 of 4.76 pts DESPITE clearing).
+4. TP12 SCOPED MODEL-AND-SEARCH (R9 #3 / R10 D1-D2, scoped per R11): abort-on-surprise
+   batches with heuristic expectations; solve-in-sandbox nudge for exactly-solvable games
+   (sc25 = Lights-Out, hand-clicked 114 actions). NOT full backtest-green models at 27B.
+5. Global budget scheduler (park stuck games; freed decode raises all streams).
+6. FINE-TUNE (Ahmed's question, R11 verdict): method-lite LoRA viable — CoT stripped but
+   2.37M chars of genuine Claude narration + commit reasons; ~5,400 turn examples. Teaches
+   protocol/format, not frontier coding. Sequence AFTER TP10 lands; behind the serving gate
+   (no fine-tune has ever been served+scored); dataset UNLICENSED (email authors); preserve
+   mtp.* tensors through merge+requant.
+
+IN FLIGHT: v31-copy runner armed (pid 57314, fires 09-01 00:01Z, svid 346312727, projection
+2.2-2.65 LB). Ops note: disk was at 100% — agent purged uv/pip caches for ~12GB.
