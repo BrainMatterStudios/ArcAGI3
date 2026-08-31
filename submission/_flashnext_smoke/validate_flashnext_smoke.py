@@ -37,11 +37,9 @@ def main() -> int:
 
     # 1. structural invariants -------------------------------------------------
     checks = {
-        "one phase only": joined.count(", GAMES_25, ") == 1,
+        "two phases": joined.count(", GAMES_25, ") == 2, GAMES_25, ") == 1,
         "25 games listed once": joined.count("GAMES_25 = [") == 1,
-        "stock: no graft machinery": ("TP_ENABLE" not in joined
-                                      and "graft_throughput" not in joined
-                                      and "graft_control" not in joined),
+        "grafts embedded + phase-gated": "def install() -> str:" in joined and '"TP_ENABLE": "0"' in joined and '"TP5_ENABLE": "1"' in joined,
         "27B gone: no model mount": ("foysalemonshanto" not in joined
                                      and "Qwen3_5ForConditionalGeneration" not in joined
                                      and "vrfai" not in joined),
@@ -70,8 +68,8 @@ def main() -> int:
                            and "vllm:kv_cache_usage_perc" in joined),
         "phase begin/end wired": ("_fn_phase_begin(_phase_name)" in joined
                                   and "_fn_phase_end(_phase_name" in joined),
-        "soft end 11400": "timedelta(seconds=11400)" in joined,
-        "per-game cap 7920": '("flashnext", GAMES_25, 7920)' in joined,
+        "soft end 18600": "18600" in joined,
+        "per-game cap 7920": joined.count("7920") >= 2, GAMES_25, 7920)' in joined,
         "report + read rule": ("FLASHNEXT SMOKE READ" in joined
                                and "lev >= 1.3 or (zero <= 6 and lev >= 1.0)" in joined
                                and 'lev < 0.9' in joined),

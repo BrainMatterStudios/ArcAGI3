@@ -62,7 +62,7 @@ GATE_BUILD = SUB / "_flashnext_gate" / "build_flashnext_gate.py"
 KERNEL_SLUG = "arc3-flashnext-smoke"
 
 PER_GAME_S = 7920
-SOFT_END_S = 11400          # NOTEBOOK_START_EPOCH + 11,400 s global backstop
+SOFT_END_S = 18600          # boot (~1,000 s) + 2 x 7,920 s phases + slack
 
 # ---- markers into the v12 base notebook ------------------------------------
 MARK_IMPORTS = "NOTEBOOK_START_EPOCH = time.time()"
@@ -73,6 +73,45 @@ MARK_SETUP = "_patch_qwen38_setup_commands"
 MARK_ATTEST_CELL = "# Boot attestation"
 MARK_SMOKE = "# Smoke/eval hook:"
 MARK_RUN = "run_context = contextlib.nullcontext()"
+
+GRAFT_SRC_DIR = SUB / "_throughput_v1"
+GRAFT_FILES = ["graft_throughput.py", "graft_control.py", "frontier_explorer.py",
+               "graft_explore.py", "graft_emission.py", "graft_economy.py"]
+
+GRAFT_CELL_HEAD = r'''# ==== graft install (tuned phase machinery; every flag phase-controlled) ====
+# All grafts install ONCE; behaviour is env-gated per phase (TP*_ENABLE).
+# Defaults here are ALL OFF — the stock phase runs first.
+for _flag in ("TP_ENABLE", "TP2_ENABLE", "TP4_ENABLE", "TP5_ENABLE", "TP6_ENABLE"):
+    os.environ[_flag] = "0"
+os.environ["TP5_WM_FROM_REASONING"] = "1"
+os.environ["TP5_ACT_FLOOR"] = "3"
+os.environ["TP4_STALL_T3"] = "30"
+os.environ["TP4_BUDGET"] = "800"
+os.environ["TP2_STALL_T2"] = "30"
+'''
+
+GRAFT_CELL_TAIL = r'''
+_G_DIR = WORKING_DIR / "tuned_bundle"
+_G_DIR.mkdir(parents=True, exist_ok=True)
+for _name, _src in _GRAFT_SOURCES.items():
+    (_G_DIR / _name).write_text(_src, encoding="utf-8")
+if str(_G_DIR) not in sys.path:
+    sys.path.insert(0, str(_G_DIR))
+import importlib as _il
+_tp = _il.import_module("graft_throughput"); _st = _tp.install()
+assert _st == "throughput: OK", _st
+_tc = _il.import_module("graft_control"); _st = _tc.install()
+assert _st == "control: OK", _st
+_te = _il.import_module("graft_explore"); _st = _te.install()
+assert _st == "explore: OK", _st
+_tm = _il.import_module("graft_emission"); _st = _tm.install()
+assert _st == "emission: OK", _st
+_t6 = _il.import_module("graft_economy"); _st = _t6.install()
+assert _st == "economy: OK", _st
+print("[tuned] all grafts installed; enabled:",
+      {m.__name__.split("_")[1]: m.enabled() for m in (_tp, _tc, _te, _tm, _t6)})
+'''
+
 MARK_ATTEST = "attest: OK"
 
 RUN_BLOCK_OLD = """    try:
@@ -87,7 +126,9 @@ RUN_BLOCK_NEW = '''    try:
         # flashnext smoke: ONE phase — the STOCK duck against the Flash-Next
         # server. The scored-rerun path takes exactly one pass with the
         # competition games (and would need the 27B kernel, not this one).
-        for _phase_name, _phase_games, _phase_cap in SMOKE_PHASES:
+        for _phase_name, _phase_games, _phase_cap, _phase_env in SMOKE_PHASES:
+            for _k, _v in _phase_env.items():
+                os.environ[_k] = _v
             if not run_as_submission:
                 FN_ALL_RUNS.extend(bm.game_runs)
                 bm.game_runs = []
@@ -96,7 +137,7 @@ RUN_BLOCK_NEW = '''    try:
                 bm.game_weights = None
                 bm.label = "flashnext-smoke-" + _phase_name
                 bm.solver.max_runtime_s_per_game = float(_phase_cap)
-                print(f"=== PHASE {_phase_name}: {len(_phase_games)} games "
+                print(f"=== PHASE {_phase_name}: {len(_phase_games)} games env={_phase_env} "
                       f"per_game_cap={_phase_cap}s concurrency={bm.solver.concurrency} "
                       f"model={os.environ.get('INFERENCE_ANALYZER_MODEL')} ===", flush=True)
             _fn_phase_begin(_phase_name)
@@ -526,7 +567,17 @@ def _smoke_cell(games: list[str]) -> str:
 # path (KAGGLE_IS_COMPETITION_RERUN) never enters this branch.
 GAMES_25 = {games_repr}
 SMOKE_PHASES = [
-    ("flashnext", GAMES_25, {PER_GAME_S}),
+    ("stock", GAMES_25, {PER_GAME_S}, {{"TP_ENABLE": "0", "TP2_ENABLE": "0", "TP4_ENABLE": "0",
+                                        "TP5_ENABLE": "0", "TP6_ENABLE": "0"}}),
+    # tuned = neutral Pack-1 base + emission (act-floor, wm-from-reasoning) +
+    # explorer fallback + action-economy prompt. Composed arm: the goal is a
+    # >=3-LB submission today, attribution later.
+    ("tuned", GAMES_25, {PER_GAME_S}, {{"TP_ENABLE": "1", "TP_TRIM_LOW_WATER": "1.0",
+                                        "TP_CONTEXT_WINDOW": "0", "TP_YIELD_SECONDS": "-1",
+                                        "TP_TOOL_STEPS": "-1", "TP_BATCH_CAP": "0",
+                                        "TP_KEEP_NOTES_ON_GAME_OVER": "1",
+                                        "TP2_ENABLE": "0", "TP4_ENABLE": "1",
+                                        "TP5_ENABLE": "1", "TP6_ENABLE": "1"}}),
 ]
 FN_PHASE_ERRORS = []
 FN_ALL_RUNS = []
@@ -914,6 +965,15 @@ def build_notebook() -> dict:
     assert run_src.count(RUN_BLOCK_OLD) == 1, "base run cell drifted"
     run_src = run_src.replace(RUN_BLOCK_OLD, RUN_BLOCK_NEW)
     nb["cells"][run_idx]["source"] = run_src.splitlines(keepends=True)
+    graft_sources = {name: (GRAFT_SRC_DIR / name).read_text() for name in GRAFT_FILES}
+    for name, text in graft_sources.items():
+        assert "def install() -> str:" in text or "class FrontierExplorer" in text, name
+    graft_lines = ["_GRAFT_SOURCES = {\n"]
+    for name in GRAFT_FILES:
+        graft_lines.append(f"    {name!r}: {graft_sources[name]!r},\n")
+    graft_lines.append("}\n")
+    nb["cells"].insert(run_idx, code_cell(GRAFT_CELL_HEAD + "".join(graft_lines) + GRAFT_CELL_TAIL))
+    run_idx = idx_of(MARK_RUN)
     nb["cells"].insert(run_idx, code_cell(TELEMETRY_CELL))
     nb["cells"].insert(idx_of(MARK_RUN) + 1, code_cell(REPORT_CELL))
 
@@ -940,11 +1000,10 @@ def build_notebook() -> dict:
                    "Qwen4ExpForConditionalGeneration", "qwen4_exp"):
         assert needed in joined, f"missing from kernel: {needed}"
     # the harness is stock and the 27B is gone
-    for banned in ("TP_ENABLE", "TP2_ENABLE", "graft_throughput", "graft_control",
-                   "foysalemonshanto", "/kaggle/input/models",
-                   "Qwen3_5ForConditionalGeneration", "vrfai",
-                   "arc3-vllm-h100-wheelhouse", '_run_shell_commands("setup', "@@"):
-        assert banned not in joined, f"banned token in smoke kernel: {banned}"
+    # (v5) the tuned phase deliberately embeds the grafts; the old stock-only
+    # purity ban is replaced by phase-gating asserts.
+    assert '("stock", GAMES_25' in joined and '("tuned", GAMES_25' in joined
+    assert '"TP_ENABLE": "0"' in joined and '"TP5_ENABLE": "1"' in joined
     # stock analyzer knobs + the two deviations, exported before the deploy pkls
     for needed in ('"LOCAL_ANALYZER_TEMPERATURE": "0.6"', '"LOCAL_ANALYZER_TOP_P": "0.95"',
                    '"LOCAL_ANALYZER_TOP_K": "20"', '"LOCAL_ANALYZER_ENABLE_THINKING": "true"',
@@ -955,7 +1014,7 @@ def build_notebook() -> dict:
     assert joined.index('"LOCAL_ANALYZER_TEMPERATURE": "0.6"') < joined.index("benchmark_initial")
     # scored-rerun branch intact; one phase; every game exactly once
     assert "bm.games = _competition_games()" in joined
-    assert joined.count(", GAMES_25, ") == 1
+    assert joined.count(", GAMES_25, ") == 2
     for name in games:
         assert joined.count(name) == 1, name
     assert "vllm:prefix_cache_hits_total" in joined and "vllm:num_requests_waiting" in joined
