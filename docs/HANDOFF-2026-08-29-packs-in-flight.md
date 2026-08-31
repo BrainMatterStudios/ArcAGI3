@@ -213,3 +213,12 @@ Qwen3.8-Flash-Next NVFP4; commit smoke SMOKE-OK (boot 980 s, vc33 2 levels in a 
 Reading rule pre-registered in the submission message (new distribution; >=1.45 positive; >1.74 re-banks;
 <0.5 = suspect serving, pull the kernel log). tp5em (svid 346075311) and harvest #4 runners stay armed
 but UNLAUNCHED — candidates for 09-01 depending on the flashnext read.
+
+## 10. 08-31 — FLASH-NEXT FIRST FLIGHT SUBMITTED
+
+Submission **55902917**, 00:17:17 UTC (runner recovered from an external kill mid-settle: marker released
+per the no-submission rule, relaunched detached). 90-min watch clean. Score lands ~09:30 UTC.
+Read against the pre-registered rule in the submission message. Next-slot candidates by outcome:
+>=1.45 → iterate the Flash-Next harness (efficiency: per-level action waste is the known drag);
+in-band → second flashnext draw AND/OR tp5em (svid 346075311, armed); <0.5 → pull the kernel log
+(serving failure) and fly tp5em while diagnosing.
