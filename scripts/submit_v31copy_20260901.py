@@ -100,7 +100,8 @@ KERNEL = "ahmedmobasher86/arc3-v31-copy"
 EXPECTED_VERSION = 1
 EXPECTED_SCRIPT_VERSION_ID = "FILL_AFTER_COMMIT"
 # sha256 over "\n".join(code-cell sources) — submission-ledger canonical method.
-EXPECTED_HASH = "FILL_AFTER_COMMIT"
+# Attested 2026-08-31 ~15:35Z: remote v1 pull == local notebook == this hash.
+EXPECTED_HASH = "73f1dbbc121a7f2504c4942197a355b32487954a290ece4910797e36e99baba3"
 LOCAL_NOTEBOOK = REPO / "submission/_v31_copy/arc3-v31-copy.ipynb"
 COMPETITION = "arc-prize-2026-arc-agi-3"
 TARGET_UTC = datetime(2026, 9, 1, 0, 1, 0, tzinfo=timezone.utc)
