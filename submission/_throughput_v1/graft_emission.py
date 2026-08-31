@@ -123,8 +123,16 @@ def install() -> str:
                 if isinstance(message, dict):
                     content = agent_mod._normalize_message_content(message.get("content", ""))
                     if not agent_mod._extract_scientist_note(str(content or "")):
-                        reasoning = agent_mod._extract_reasoning_text(message)
-                        note = agent_mod._extract_scientist_note(str(reasoning or ""))
+                        reasoning = str(agent_mod._extract_reasoning_text(message) or "")
+                        # J10 re-verify (iv): a Next:/Suggestion: intent line in
+                        # the reasoning channel must not glue into stock fields —
+                        # route through TP10's strip when that graft is present.
+                        try:
+                            import graft_memoryspine as _tp10
+                            reasoning, _intent = _tp10.split_intent(reasoning)
+                        except Exception:  # noqa: BLE001
+                            pass
+                        note = agent_mod._extract_scientist_note(reasoning)
                         if note:
                             for key, value in note.items():
                                 if value:

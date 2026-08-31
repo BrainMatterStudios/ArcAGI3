@@ -86,6 +86,17 @@ class EmissionTests(unittest.TestCase):
         self.assertEqual(agent._summarized_knowledge["world_model"], "door needs key")
         self.assertEqual(agent._summarized_knowledge["current_plan"], "get the key first")
 
+    def test_02b_reasoning_intent_line_never_glues(self) -> None:
+        # J10 re-verify (iv): a Next: line in the reasoning channel must not be
+        # absorbed into stock fields by the labeled-block continuation rule.
+        agent = self._agent()
+        message = {"role": "assistant", "content": "",
+                   "reasoning": "World model: door needs key\nNext: try the red door"}
+        self._chat(agent, message)
+        wm = agent._summarized_knowledge.get("world_model", "")
+        self.assertEqual(wm, "door needs key")
+        self.assertNotIn("try the red door", wm)
+
     def test_03_assistant_channel_wins_when_present(self) -> None:
         agent = self._agent()
         message = {"role": "assistant", "content": "World model: from content",
