@@ -232,3 +232,21 @@ cstl 7.51 (!), Franzen 4.05. Single draw; the arm's mean is unknown but the smok
 346125566) — mock-tested, NOT launched (Ahmed's call). Parallel build queue: (a) flashnext + Pack 5
 emission (compose the two passing reads — needs a tp5-on-flashnext smoke first), (b) efficiency drag
 (per-level action waste), (c) serving tune (max_num_seqs 22 vs conc 28; context 24k).
+
+## 12. 08-31 14:53 UTC — tuned A/B read: TUNED LOSES; redraw recommended for 09-01
+
+Stock-vs-tuned on Flash-Next (25 games each, one boot):
+| phase | levels | zero | score | actions |
+|---|---|---|---|---|
+| stock | 1.20 | 5 | 4.35 | 240 |
+| tuned (TP5+TP6+TP7+keep-notes+90s timeout) | 0.92 | 8 | 2.89 | 257 |
+
+The composed pack is REJECTED (worse on every aggregate; ft09 2->0, tr87 3->0 vs partial wins
+tn36/bp35 0->1, lp85 2->3). Note also stock's second independent draw (1.20/4.35) confirms the
+first (1.16/3.87) — the stock arm's local mean is ~1.18 lv / ~4.1.
+Lessons: (a) composing four prompt-side interventions at once was the same mistake as Pack 1 —
+attribution impossible, and added per-turn prompt mass plausibly harms this model; (b) next reads
+must be single-variable (TP7 deaths-protocol alone is the highest-prior candidate); (c) stock
+Flash-Next remains the best flyable arm.
+09-01 slot recommendation: byte-identical stock redraw (scripts/submit_flashnext_20260901.py,
+mock-tested, UNLAUNCHED — Ahmed's call).
