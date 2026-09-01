@@ -165,7 +165,7 @@ def main() -> None:
 
     src = json.loads(SRC_NB.read_text())
     cells = src["cells"]
-    keep = {2: "WORKING_DIR =", 6: "_find_bundle_dir", 8: "setup_commands.json",
+    keep = {2: "WORKING_DIR =", 4: "arc_agi_3_wheels", 6: "_find_bundle_dir", 8: "setup_commands.json",
             10: "benchmark_initial.pkl", 12: "save_request_logs",
             14: "bm.games = _competition_games()"}
     boot = []
