@@ -98,7 +98,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 KERNEL = "ahmedmobasher86/arc3-v22-flight-tp9"
 EXPECTED_VERSION = 1
-EXPECTED_SCRIPT_VERSION_ID = "FILL_AFTER_COMMIT"
+EXPECTED_SCRIPT_VERSION_ID = "346574220"
 # sha256 over "\n".join(code-cell sources) — submission-ledger canonical method.
 # Local build hash 2026-09-01; re-attested against the remote v1 pull by main().
 EXPECTED_HASH = "26b5db7847c388db5bc4156209d2f247d80e0a7bfd237aaa64824140287aedcb"
