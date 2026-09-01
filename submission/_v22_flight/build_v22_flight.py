@@ -43,6 +43,10 @@ GRAFT_FILES = [
 ALL_FLAGS = ["TP_ENABLE", "TP2_ENABLE", "TP4_ENABLE", "TP5_ENABLE", "TP6_ENABLE",
              "TP7_ENABLE", "TP8_ENABLE", "TP9_ENABLE", "TP10_ENABLE"]
 ARMS = {"tp9": {"TP9_ENABLE": "1"}, "tp10": {"TP10_ENABLE": "1"}}
+# v3: install ONLY the arm's graft — the keithtyser bundle is pure June stock and
+# several other grafts wrap anim-fork-only seams (v2 died on graft_control's
+# _aggregate_action_batch_result). Both arm grafts verified to install on june_stock.
+ARM_FILES = {"tp9": ["graft_pipeline.py"], "tp10": ["graft_memoryspine.py"]}
 
 GRAFT_CELL_HEAD = '''# ==== graft install (A/B machinery; every flag phase-controlled) ====
 # All grafts install ONCE; behaviour is env-gated per phase. Defaults ALL OFF —
@@ -174,8 +178,8 @@ def main() -> None:
         assert marker in cell_src, f"cell {idx} missing marker {marker!r}"
         boot.append(cell_src)
 
-    sources = {name: (GRAFT_DIR / name).read_text() for name in GRAFT_FILES}
-    modules = [n[:-3] for n in GRAFT_FILES if n != "frontier_explorer.py"]
+    sources = {name: (GRAFT_DIR / name).read_text() for name in ARM_FILES[arm]}
+    modules = [n[:-3] for n in ARM_FILES[arm]]
     graft_cell = GRAFT_CELL_HEAD.format(flags=ALL_FLAGS, sources=repr(sources),
                                         modules=modules, arm_env=ARMS[arm])
     run_cell = None  # flight keeps the original run cell (kept as boot[-1])
