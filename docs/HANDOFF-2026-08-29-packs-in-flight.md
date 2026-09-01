@@ -370,3 +370,34 @@ which does not transfer across harnesses per three verified self-reports):
 
 IN FLIGHT: v31-copy runner armed (pid 57314, fires 09-01 00:01Z, svid 346312727, projection
 2.2-2.65 LB). Ops note: disk was at 100% — agent purged uv/pip caches for ~12GB.
+
+## 16. 09-01 10:06 UTC — v31-copy adoption scored: 1.71 (PARTIAL TRANSFER band)
+
+Submission 55927189 (byte-copy of the public V31/V22 stack, svid 346312727) scored
+**1.71** — pre-registered band 1.5-2.2 = partial transfer. Not adoption-confirmed
+(<2.2), below our 1.88 all-time best (Flash-Next), well below the copy source's 2.66.
+
+Reading (skeptical, in order of likelihood):
+1. **The 2.66 was a MAX-statistic, not a mean.** The AGI Boys' 2.66 is their best of 48
+   submissions; their notebook title claims only ">2". With CV 0.17-0.20 a config whose
+   single-draw mean is ~1.9-2.1 produces a 2.66 max over dozens of draws. Our 1.71 single
+   draw is fully consistent with that same distribution's mean. The adoption likely
+   transferred CORRECTLY and the 2.66 expectation was my mis-read of a max as a mean —
+   the reading rule should have been written against their DISTRIBUTION, not their best.
+2. Draw variance pure and simple: 1.71 vs an expected ~2.2 is within ~2 sd.
+3. Serving divergence in the scored rerun cannot be ruled in or out — the platform law
+   holds (kernels output returns the COMMIT run; no channel out of a scored rerun), so
+   there is no rerun log to diff. The commit run's server args were verified correct.
+Local->LB transfer this flight: 4.50 -> 1.71 = 0.38 (historical 0.49-0.59) — another
+data point that local means over-predict, consistent with R10's public-25 findings.
+
+Implications:
+- The 27B V22-serving stack draws ~1.7-2.1/draw — roughly AT our Flash-Next level, not
+  above it. Serving adoption bought variance-band parity, not a step. The step must come
+  from the HARNESS lane (TP9/TP10 A/Bs, staged and awaiting push) — consistent with R9/R10:
+  the 4-7.5 tier is harness work on the same models.
+- Leaderboard 10:06Z: cstl 7.51, Lord Han Solo 4.99, Tufa 4.71, THK 4.45, sonpham 4.42,
+  Franzen 4.05; new 3.4-3.9 entrants overnight. Top-17 bar keeps rising.
+- 09-02 slot options: (a) push TP9/TP10 A/Bs today on GPU (no slot cost), submit whichever
+  arm wins its mechanism read on the V22 stack; (b) if neither is ready/clean, redraw the
+  v31-copy (grow n on the new base). Decision after the A/B reads; Ahmed's call on pushes.
