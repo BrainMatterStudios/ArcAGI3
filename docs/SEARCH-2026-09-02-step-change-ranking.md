@@ -25,11 +25,20 @@ game, so nothing smaller is measurable with the instruments and ~60 slots that e
    PLAN: push at 2026-09-05 00:00 UTC, commit ≈2.5 h, attest per the judge's line list, fly the 09-05 slot
    (a submission any time on 09-05 UTC counts). Reading rule pre-registered in J-judge.md.
 2. Knob isolation on top of V14 by telemetry (reasoning chars/call, requests/game), not by score — after it flies.
-3. protocol-lite Stage-0 kill test (≤1 GPU-h, 0 slots; R-protocol.md) — when GPU is idle.
+3. ~~protocol-lite Stage-0 kill test~~ — RUN 09-02 on Modal (27B on H100, ~2.5 GPU-h, 0 slots): **LANE DEAD** under the pre-registered rule (1 of 3 green; tn36 12/12 genuine mechanics model, sk48 0/41 and cn04 0/18 with NO candidate file ever emitted — the model spends the entire 40k-token call inside thinking or emits EOS mid-thought; replicated under a coordinate-explicit encoding). Report: docs/research-2026-09-02/S0-stage0-kill-test.md.
 Dead (with the counter-evidence on record): memory-channel rebuild (same dead note exists in the 3.3 config);
 reasoning_effort medium (wrong direction); model swaps (no servable model beats the class; best-of-N plays
 impossible — arc_agi creates one play per game at scorecard open); TP9 lever (demoted by the crossover);
 throughput/action budget (2× actions ≈ +0.15 lv; our Flash-Next smoke did 2.85× actions for a worse score).
+
+## Stage-0 result (09-02 evening) and what it means for the regime axis
+The 27B CAN certify a backtest-green executable world model on a simple game (tn36) but never
+finishes deliberating on the harder ones within 40k output tokens, under either grid encoding.
+The binding constraint is thinking discipline/termination, not perception and not the harness. This
+is the same axis the serving-regime finding points at (long un-truncated calls help; but unbounded
+thinking on hard mechanics never terminates). Original-work candidates that follow from it: forced
+staged emission (hypothesis → code → test in separate short calls), and thinking-budget control per
+call stage — to be tested by telemetry on the Modal Flash-Next rig, not by 25-game score.
 
 ## Slot plan
 - 09-03 (tonight) and 09-04: redraws of committed versions only. Recommended: Flash-Next exact redraw
