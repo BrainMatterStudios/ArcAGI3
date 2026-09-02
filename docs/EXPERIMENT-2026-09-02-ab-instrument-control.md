@@ -123,6 +123,39 @@ phases); phase 2 overwrites phase 1's artifacts/transcripts but the model never 
 Judge's alternative for the NEXT round if this one is inconclusive: two B/A kernels instead
 of A/A + B/A tighten T's SE from 0.14 to 0.12 and give the boot-to-boot sd of D directly.
 
-## Results (to be filled AFTER completion; nothing above changes)
+## Results (filled AFTER completion; nothing above changed)
 
-_pending_
+### B/A kernel `arc3-v22-ba-tp9` — COMPLETE 14:58 UTC (svid in Kaggle; results in
+`submission/_v22_ab/results/arc3-v22-ba-tp9/ab_results.json`)
+
+| phase | position | score | lv/game | zero | actions | graft counters | pid | prefix-hit | requests | mean e2e |
+|---|---|---|---|---|---|---|---|---|---|---|
+| tp9 | 1 | 3.91 | 1.08 | 7 | 2,727 | resumes 708 / perturb 0 / retries 0 | 631->631 | 0.137 | 1,705 | 113 s |
+| stock | 2 | 5.66 | 1.20 | 6 | 2,798 | 0 / 0 / 0 | 631->631 | 0.151 | 1,786 | 108 s |
+
+Both phases VALID (arm fired in tp9, silent in stock; pid unchanged; no negative deltas;
+25/25 games each, all to the 7,920 s cap).
+
+**D_BA = +0.120 lv/game** (paired sd 0.88, SE 0.18, 95% CI [-0.23, +0.47]; 7 games up,
+3 down; score +1.74). Stock in position 2 beat TP9 in position 1.
+
+- **T = (D_AB - D_BA)/2 = +0.20** (SE ~0.13, CI ~[-0.06, +0.46]).
+- O' = (D_AB + D_BA)/2 = +0.32 (order-effect estimate from the two B-containing kernels;
+  pooled O_hat awaits the A/A).
+
+**Pre-registered verdict: R3 fires (D_BA >= +0.10) — TP9 is DEMOTED, not slot-worthy.**
+The original +0.52 is not reproduced with the order reversed; the point estimate of the
+true lever is +0.20 with an interval including 0, and the order effect estimate (+0.32) is
+larger than the lever estimate. The flat live pair (1.71 -> 1.72) needs no further
+explanation. Per the decision tree: TP9 does NOT fly tonight; the stock v31-copy redraw
+(svid 346312727) is the default arm, pending Ahmed's go.
+
+Boundary note (exploratory, labelled): D_BA sits 0.02 above the R3 threshold, well inside
+one SE of R4; the decision is the same under R4 (no TP9 flight), so the boundary does not
+change any action. Mechanism note (exploratory): in this kernel phase 2 had only a slightly
+higher prefix-hit rate (+0.014) and 4.5% lower mean latency, and 5% more completed
+requests — a warm cache is not obviously the carrier; TP9's resume injections (708) changed
+the request mix, so R5 stays A/A-only as pre-registered. Also notable: the livelock breaker
+and the retry path never fired in 25 games — only the resume behaviour was ever live.
+
+### A/A kernel `arc3-v22-aa` — _pending_
