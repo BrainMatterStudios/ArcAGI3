@@ -222,3 +222,29 @@ per arm from launch: 2.5-3 h (the runner's own cap is 2.5 h from the start of
   seconds; the last call of nearly every game fails with a read timeout and
   is counted server-side but not in the transcript — hence
   `/metrics requests >= transcript calls` (the test asserts that invariant).
+
+## RESULT — keith arm, 2026-09-02 21:21→23:34 UTC (Modal RTX PRO 6000, $≈7)
+
+Artifacts: offkaggle/results/20260902T2121-keith/20260902-232148-regime-keith/ (summary.txt,
+results.json, telemetry.json, requests_shim.jsonl, metrics proms, harness transcripts).
+
+| metric | Modal reproduction | keith V14 Kaggle commit (judge F4) |
+|---|---|---|
+| levels/game | **1.44** | 1.44 |
+| local score | 6.40 | 6.76 |
+| calls/game | 55.8 | 55 |
+| turns/game | 54.5 (yielded 43%) | 53 (49% yielded) |
+| reasoning chars/call mean / median | 3,173 / 1,962 | 3,406 / 2,206 |
+| e2e per call | 139.9 s | 142 s |
+| vLLM queue / inference | 120.9 s / 17.8 s | 124 s / 18 s |
+| gen tok/s aggregate | 235 | 249 |
+| MTP acceptance | 60.0% | 60% |
+| preemptions | 142 | 57 |
+| actions/game | 154 | ~148 |
+| zero-level games | 2 | 6 |
+
+Verdict: the public notebook's serving+analyzer regime is reproduced off-Kaggle with high
+fidelity on every cadence/latency/throughput metric. The rig is a valid instrument for
+single-knob regime experiments (read by telemetry; levels remain a noisy secondary).
+24 client post errors (1.7%) all recovered by the stock retry; 585 redirected posts (Modal
+proxy 303 flow) carried the bearer and completed.
