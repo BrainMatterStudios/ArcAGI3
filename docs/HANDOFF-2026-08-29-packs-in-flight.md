@@ -450,3 +450,15 @@ reading rules and tonight's slot decision tree are pre-registered in
 **docs/EXPERIMENT-2026-09-02-ab-instrument-control.md** — that file supersedes §17's
 recommendation. The amended fresh-session prompt (fact 3 corrected) is in
 docs/HANDOFF-2026-09-02-fresh-session-prompt.md. Ledger stale entries filled from the API.
+
+## 19. 09-02 16:17 UTC — Step-change search done; tonight = Flash-Next exact redraw; keith V14 copy queued for the quota reset
+
+Search deliverable: docs/SEARCH-2026-09-02-step-change-ranking.md (reports + judge in
+docs/research-2026-09-02/). #1 = byte-copy of keithtyser V14 (Flash-Next serving regime on stock
+code; forks drew 2.80/3.22/3.38 live; expected ≈2.7). Push refused: weekly GPU quota exhausted;
+`scripts/push_keith_copy_when_free.sh` (pid in logs/push_keith_copy.log) retries every 30 min and
+will start the commit at the reset (expected Sat 09-05 00:00 UTC) → attest per J-judge.md → fly 09-05
+with Ahmed's go. Ahmed approved the plan 16:15Z: the 09-03 slot is the Flash-Next EXACT REDRAW
+(`scripts/submit_flashnext_20260903.py`, armed 16:17Z, fires 00:01Z, svid 346125566, message carries
+the pre-registered rule: ≥2.4 weakens the serving-gap hypothesis; 1.5–2.4 in-band; <1.2 pull the log).
+09-04: redraw of a committed version or hold — decide after the 09-03 read.
