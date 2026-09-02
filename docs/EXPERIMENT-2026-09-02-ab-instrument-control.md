@@ -158,4 +158,43 @@ requests — a warm cache is not obviously the carrier; TP9's resume injections 
 the request mix, so R5 stays A/A-only as pre-registered. Also notable: the livelock breaker
 and the retry path never fired in 25 games — only the resume behaviour was ever live.
 
-### A/A kernel `arc3-v22-aa` — _pending_
+### A/A kernel `arc3-v22-aa` — COMPLETE 15:07 UTC (`submission/_v22_ab/results/arc3-v22-aa/ab_results.json`)
+
+| phase | position | score | lv/game | zero | actions | graft | pid | prefix-hit | requests | mean e2e |
+|---|---|---|---|---|---|---|---|---|---|---|
+| stock_a | 1 | 4.45 | 1.08 | 6 | 2,736 | 0/0/0 | 631->631 | 0.141 | 1,766 | 107.9 s |
+| stock_b | 2 | 4.58 | 1.20 | 6 | 2,570 | 0/0/0 | 631->631 | 0.147 | 1,756 | 107.6 s |
+
+Both phases VALID. **D_AA = +0.12 lv/game** (paired sd 1.17, SE 0.23, CI [-0.34, +0.58];
+10 games up, 7 down — identical bytes, identical server: re86 went 3 -> 0, sb26 1 -> 4).
+
+### Crossover verdict (all three kernels)
+
+| quantity | estimate | SE | 95% CI |
+|---|---|---|---|
+| T (TP9 effect) | +0.20 | 0.13 | [-0.05, +0.45] |
+| O_hat (order effect, pooled) | +0.25 | 0.12 | [+0.03, +0.48] |
+| T1 (TP9 in position 1) | 0.00 | ~0.29 | — |
+| T2 (TP9 in position 2) | +0.40 | ~0.30 | — |
+
+- **R1: ORDER EFFECT DETECTED** (O_hat's interval excludes 0, marginally). Every prior
+  single-order same-boot read is void as a lever measurement; all future A/Bs must be
+  counterbalanced (opposite-order pair) and nothing flies on a single-order read.
+- **R3 (from B/A): TP9 DEMOTED.** T = +0.20 with an interval including 0; the position-1
+  effect is exactly zero.
+- **R5: NO warm-cache signature.** Prefix-hit rate +0.006 and mean latency -0.3% between
+  stock phases — the prefix cache is NOT the carrier of the order effect. Whatever it is
+  (or if it is a 1-in-20 coincidence), resetting the cache would not fix it; only
+  counterbalancing does.
+
+**The finding that matters most (exploratory, but it is arithmetic on the data above):**
+the per-game paired sd of identical stock vs stock is ~1.2 levels — larger than the mean
+itself. A 25-vs-25 same-boot A/B therefore has a minimum detectable effect of roughly
++0.5 lv/game (~+45%). Combined with the live per-draw sd ~0.3 on a mean ~1.7, and ~60 slots
+left, **incremental harness levers of the size the ladder has been chasing (+10-30%)
+are unmeasurable both locally and live**. Only step changes (>= +0.5 lv/game locally,
+>= +1.0 on the LB) can be detected with the instruments and slots that exist. This is a
+constraint on WHAT to build, not just on how to measure it.
+
+**Tonight (09-03 00:01Z):** per the tree, the stock v31-copy redraw (runner
+`scripts/submit_v31copy_20260903.py`, mock green). Awaiting Ahmed's go; nothing launched.
