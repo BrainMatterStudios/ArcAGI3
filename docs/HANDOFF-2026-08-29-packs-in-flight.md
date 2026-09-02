@@ -437,3 +437,16 @@ Hieu Vy 4.11, Franzen 4.05; 3.85 tier thickening. Our 1.88 (Flash-Next) remains 
    UNSEEN-game comprehension gap, not the mechanics TP9 fixes — the schema-traces
    protocol lane (scoped model-and-search, TP12) and the Sept-30 open-sourcing absorption
    remain the step-change candidates.
+
+## 18. 09-02 10:04 UTC — Review of §13–§17: the same-boot instrument had no order control
+
+A fresh-session review of this whole log found that every same-boot A/B (`arc3-v22-ab-*`)
+ran stock in phase 1 and the graft in phase 2 with no stock-vs-stock control; the "+50%"
+TP9 read in §17 is therefore confounded with phase order (warm vLLM prefix cache/graphs),
+and the flight commit's 4.55 vs stock 4.50 was a warning the reading missed. Two control
+kernels were built, judged (SHIP-WITH-FIXES, fixes applied) and pushed 10:04Z:
+`arc3-v22-aa` (stock, stock) and `arc3-v22-ba-tp9` (tp9, stock). Design, estimators,
+reading rules and tonight's slot decision tree are pre-registered in
+**docs/EXPERIMENT-2026-09-02-ab-instrument-control.md** — that file supersedes §17's
+recommendation. The amended fresh-session prompt (fact 3 corrected) is in
+docs/HANDOFF-2026-09-02-fresh-session-prompt.md. Ledger stale entries filled from the API.
