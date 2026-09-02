@@ -401,3 +401,39 @@ Implications:
 - 09-02 slot options: (a) push TP9/TP10 A/Bs today on GPU (no slot cost), submit whichever
   arm wins its mechanism read on the V22 stack; (b) if neither is ready/clean, redraw the
   v31-copy (grow n on the new base). Decision after the A/B reads; Ahmed's call on pushes.
+
+## 17. 09-02 09:23 UTC — TP9 flight scored 1.72: local lever gains are NOT reaching the hidden set
+
+**Live draws, same 27B V22 stack:** stock 1.71 (sub 55927189) -> TP9 1.72 (sub 55950252).
+Flat, despite TP9's same-boot A/B win. Pre-registered band 1.7-2.2 = inconclusive single
+draw. But the PAIR is informative beyond the pre-registration:
+
+**The A/B evidence (local, public 25, same boot each):**
+| kernel | phase | score | levels | zero | actions |
+|---|---|---|---|---|---|
+| ab-tp9 | stock | 4.27 | 1.04 | 8 | 2,380 |
+| ab-tp9 | TP9 | 6.42 | 1.56 (+50%) | 3 | 2,924 |
+| ab-tp10 | stock | 7.14 | 1.36 | 8 | 3,635 |
+| ab-tp10 | TP10 | 7.24 | 1.48 (+9%) | 5 | 3,042 |
+Boot variance: identical stock bytes drew 4.27 and 7.14 -> SAME-BOOT LAW (only same-boot
+comparisons are readable locally). Flight commit read: 4.55 / 1.20lv / 6 zero, median 2.77.
+
+**Reading (skeptical):** a +50% local level gain producing +0.01 live is consistent with
+(a) draw variance masking a modest true live gain (sd ~0.3; a true ~2.0 mean drawing 1.72
+is within 1sd), and/or (b) the R10-verified pattern that public-25 gains do not transfer
+(85 of ~110 hidden games are unseen; their stall/timer profile may differ). NOT consistent
+with a large live gain. The lever is mechanism-verified but live-unproven.
+
+**Leaderboard 09:23Z:** cstl 7.51, Lord Han Solo 4.99, Tufa 4.71, sonpham 4.52, THK 4.45,
+Hieu Vy 4.11, Franzen 4.05; 3.85 tier thickening. Our 1.88 (Flash-Next) remains our best.
+
+**Recommendation for 09-03 (Ahmed's call):**
+1. Today on GPU (no slot): TP9+TP10 combined vs TP9-alone same-boot A/B (both levers have
+   independent positive local reads; composition now licensed).
+2. Tonight's slot: EITHER redraw the TP9 flight (grows live n on the lever, per the
+   pre-registration) OR fly combined if its A/B wins decisively. Default if unreachable:
+   TP9 redraw (byte-identical, svid 346574220 already attested).
+3. The deeper question the flat pair raises: the binding constraint live may be the
+   UNSEEN-game comprehension gap, not the mechanics TP9 fixes — the schema-traces
+   protocol lane (scoped model-and-search, TP12) and the Sept-30 open-sourcing absorption
+   remain the step-change candidates.
