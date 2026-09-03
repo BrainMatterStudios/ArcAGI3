@@ -300,3 +300,10 @@ commit runs 1.28–1.80): ≥ 48 levels (≥ +0.5 lv/game) = STEP candidate, car
 counterbalanced pair after the quota reset; 30–47 = no step, knob neutral-to-positive,
 report telemetry; < 30 = the yield's re-grounding matters, revert. One arm, n=1: any level
 reading is provisional; the telemetry direction is the durable output.
+
+**VOID — keith_yield180 launch of 01:51 UTC.** The container answering it was a **B200**
+(/arc3/identity gpu row "NVIDIA B200, 183359 MiB"), reached via the fallback added after the
+preemption; cadence at +10 min was 366 calls / 11 levels vs the base's 209 / 3 — a different
+GPU regime, not the knob. Killed at +12 min; B200 fallback REMOVED (rig runs RTX PRO 6000 only;
+if capacity is unavailable the arm waits or fails, never silently changes hardware). Relaunched
+on the RTX PRO 6000 with the same pre-registration.

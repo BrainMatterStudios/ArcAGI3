@@ -67,7 +67,7 @@ GPU_KIND = "RTX-PRO-6000"
 # Fallback GPU classes if no RTX PRO 6000 worker can be scheduled (09-03: a container was
 # preempted and the replacement waited on capacity). B200 is also Blackwell (native NVFP4);
 # a run on the fallback is recorded in /arc3/identity (nvidia-smi rows) and is a deviation.
-GPU_FALLBACK = ["B200"]
+GPU_FALLBACK: list[str] = []   # 09-03: a B200 fallback silently confounded a single-knob arm; fidelity first
 N_GPU = 1
 
 # --- model (KEITH_REGIME.md §1) --------------------------------------------
