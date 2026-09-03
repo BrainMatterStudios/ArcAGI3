@@ -234,6 +234,24 @@ def test_guards_and_auth_exemptions():
     assert "3.21x" in _regime()["expected_max_concurrency_line"]
 
 
+
+def test_kv_override_changes_only_the_kv_arg(monkeypatch=None):
+    import os
+    mfs.os.environ.pop(mfs.KV_OVERRIDE_KEY, None)
+    base = mfs.vllm_cmd("/m")
+    assert mfs.effective_profile_name() == mfs.PUBLIC25_VLLM_PROFILE_NAME
+    mfs.os.environ[mfs.KV_OVERRIDE_KEY] = str(10 * 2**30)
+    try:
+        over = mfs.vllm_cmd("/m")
+        assert mfs.effective_profile_name() == "kv10-bf16-mtp3-c8-cg32-OVERRIDE"
+        diff = [(a, b) for a, b in zip(base, over) if a != b]
+        assert diff == [("5368709120", str(10 * 2**30))], diff
+        assert len(base) == len(over)
+    finally:
+        mfs.os.environ.pop(mfs.KV_OVERRIDE_KEY, None)
+    print("PASS test_kv_override_changes_only_the_kv_arg")
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0

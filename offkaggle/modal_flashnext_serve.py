@@ -113,6 +113,29 @@ PUBLIC25_VLLM_PROFILE_ENV = {
     "TAAF_VLLM_MTP_TOKENS": "3",
     "TAAF_VLLM_OMP_THREADS": "1",
 }
+# 09-03 single-knob serving override: ARC3_KV_CACHE_MEMORY_BYTES (set on the deploy machine;
+# injected into the container as a secret env). Everything else in the profile is untouched.
+# Effective values are read at call time so the identity endpoint reports what actually ran.
+KV_OVERRIDE_KEY = "ARC3_KV_CACHE_MEMORY_BYTES"
+
+
+def effective_profile_env() -> dict[str, str]:
+    env = dict(PUBLIC25_VLLM_PROFILE_ENV)
+    override = os.environ.get(KV_OVERRIDE_KEY, "").strip()
+    if override:
+        int(override)  # must be an integer byte count
+        env["TAAF_VLLM_KV_CACHE_MEMORY_BYTES"] = override
+    return env
+
+
+def effective_profile_name() -> str:
+    env = effective_profile_env()
+    if env["TAAF_VLLM_KV_CACHE_MEMORY_BYTES"] == PUBLIC25_VLLM_PROFILE_ENV["TAAF_VLLM_KV_CACHE_MEMORY_BYTES"]:
+        return PUBLIC25_VLLM_PROFILE_NAME
+    gib = int(env["TAAF_VLLM_KV_CACHE_MEMORY_BYTES"]) / 2**30
+    return PUBLIC25_VLLM_PROFILE_NAME.replace("kv5-", f"kv{gib:g}-") + "-OVERRIDE"
+
+
 SPECULATIVE_CONFIG = json.dumps(
     {"method": "mtp", "num_speculative_tokens": 3}, separators=(",", ":"))
 
@@ -120,6 +143,7 @@ SPECULATIVE_CONFIG = json.dumps(
 def vllm_cmd(model_dir: str) -> list[str]:
     """Keith's serving_setup.server_command(), token for token
     (vllm-server-identity.json argv); only <model_dir> is host-specific."""
+    prof = effective_profile_env()
     return [
         IMAGE_PYTHON, "-m", "vllm.entrypoints.cli.main", "serve", model_dir,
         "--served-model-name", SERVED_MODEL_NAME,
@@ -130,7 +154,7 @@ def vllm_cmd(model_dir: str) -> list[str]:
         "--quantization", "modelopt_fp4",
         "--tensor-parallel-size", "1",
         "--distributed-executor-backend", "mp",
-        "--kv-cache-memory-bytes", PUBLIC25_VLLM_PROFILE_ENV["TAAF_VLLM_KV_CACHE_MEMORY_BYTES"],
+        "--kv-cache-memory-bytes", prof["TAAF_VLLM_KV_CACHE_MEMORY_BYTES"],
         "--max-model-len", str(VLLM_MAX_MODEL_LEN),
         "--max-num-seqs", PUBLIC25_VLLM_PROFILE_ENV["TAAF_VLLM_MAX_NUM_SEQS"],
         "--max-num-batched-tokens", PUBLIC25_VLLM_PROFILE_ENV["TAAF_VLLM_MAX_NUM_BATCHED_TOKENS"],
@@ -574,7 +598,8 @@ if modal is not None:
         cpu=CPU_CORES,
         memory=MEMORY_MIB,
         volumes={CACHE_DIR: hf_cache_vol},
-        secrets=[modal.Secret.from_name(SECRET_NAME)],
+        secrets=[modal.Secret.from_name(SECRET_NAME),
+                 modal.Secret.from_dict({KV_OVERRIDE_KEY: os.environ.get(KV_OVERRIDE_KEY, "")})],
         scaledown_window=IDLE_TIMEOUT_S,   # scale to zero after 15 min idle
         max_containers=MAX_CONTAINERS,     # never a surprise second GPU
         timeout=STARTUP_TIMEOUT_S,
@@ -606,8 +631,8 @@ if modal is not None:
         env = server_env()
         Path(SERVER_LOG).unlink(missing_ok=True)
         print(f"[{APP_NAME}] VLLM_START_COMMAND {json.dumps(cmd)}", flush=True)
-        print(f"[{APP_NAME}] PUBLIC25_VLLM_PROFILE name={PUBLIC25_VLLM_PROFILE_NAME} "
-              f"env={json.dumps(PUBLIC25_VLLM_PROFILE_ENV, sort_keys=True)}", flush=True)
+        print(f"[{APP_NAME}] PUBLIC25_VLLM_PROFILE name={effective_profile_name()} "
+              f"env={json.dumps(effective_profile_env(), sort_keys=True)}", flush=True)
         process = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True, bufsize=1)
         _tee_and_wait(process, SERVER_LOG)
@@ -617,8 +642,8 @@ if modal is not None:
             "hf_repo": HF_MODEL_REPO, "hf_revision": HF_MODEL_REVISION,
             "vllm_version_pinned": VLLM_VERSION, "image": VLLM_IMAGE,
             "image_amd64_digest": VLLM_IMAGE_AMD64_DIGEST,
-            "argv": cmd, "profile": PUBLIC25_VLLM_PROFILE_NAME,
-            "profile_env": PUBLIC25_VLLM_PROFILE_ENV,
+            "argv": cmd, "profile": effective_profile_name(),
+            "profile_env": effective_profile_env(),
             "runtime": ident, "host": inv,
             "ready_seconds": ready_s, "cold_start_seconds": time.time() - t_start,
             "started_epoch": t_start,

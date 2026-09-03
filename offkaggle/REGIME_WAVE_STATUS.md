@@ -340,3 +340,21 @@ Implication for the next knob: the queue is the throughput ceiling; the KV reser
 from ~3 to ~6–7 and roughly double calls/game WITHOUT truncation — untested in public; keith's
 own V10 (28 seqs, no KV cap) thrashed at 114 tok/s, so there is a sweet spot to find. That is a
 serving-profile arm (rig env override needed; ~$8 on the RTX PRO 6000).
+
+## PRE-REGISTERED — arm `kv10` (serving knob; launched 2026-09-03 ~04:40 UTC, before data)
+
+Knob: vLLM `--kv-cache-memory-bytes` 5 GiB → 10 GiB (rig override ARC3_KV_CACHE_MEMORY_BYTES,
+identity endpoint must report profile `kv10-bf16-mtp3-c8-cg32-OVERRIDE`); analyzer arm = keith
+(32768 / no cap), stock bytes, RTX PRO 6000 (verify gpu_rows before reading). Everything else
+identical to the base. Hypothesis: the regime is queue-bound (125 s queue / 18 s inference,
+~3 running streams from the 5 GiB reservation); doubling the reservation should roughly
+double running streams (expected startup line ≈ "Maximum concurrency … ~6.4x") and cut queue
+time, giving more untruncated calls per game. Risk on record: keith's V10 (28 seqs, no cap)
+thrashed at 114 tok/s; and the 10 GiB must fit beside the 79 GiB model load (~15 GiB free) —
+a boot failure or preemptions >> 53 is a valid negative.
+Reading rules: ENGAGEMENT = vLLM queue time per request < 80 s (base 121 s) AND calls/game
+> 70 (base 55.8); else the knob did not bind. Reasoning chars/call and length-cut share must
+stay within ±15% of the base (else the regime changed in kind, not just rate). Levels (base
+36): ≥ 48 = STEP candidate → Kaggle counterbalanced pair after the reset; 30–47 = no step
+(throughput alone is not the lever, consistent with the +0.15 lv budget arithmetic); < 30 =
+harmful (thrash/preemption) — check preemptions and TPOT. n=1; levels provisional.
