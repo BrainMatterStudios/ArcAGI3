@@ -358,3 +358,30 @@ stay within ±15% of the base (else the regime changed in kind, not just rate). 
 36): ≥ 48 = STEP candidate → Kaggle counterbalanced pair after the reset; 30–47 = no step
 (throughput alone is not the lever, consistent with the +0.15 lv budget arithmetic); < 30 =
 harmful (thrash/preemption) — check preemptions and TPOT. n=1; levels provisional.
+VOID: kv10 launch 05:31Z preempted at +12 min (Modal 'Container terminated due to preemption'); relaunched 05:53Z
+
+## RESULT — arm `kv10` (RTX PRO 6000 + profile kv10-…-OVERRIDE verified; 05:53→08:06 UTC)
+
+| metric | keith base (KV 5 GiB, 3.21x) | kv10 (KV 10 GiB, 6.42x) |
+|---|---|---|
+| levels / lv per game | 36 / 1.44 | **43 / 1.72** |
+| paired per-game Δlv | — | +0.28 (sd 1.22, SE 0.24; 6 up, 4 down) |
+| local score | 6.40 | **10.47** (ft09 WON 6/6 = 100 pts; sb26 1→4; ar25 2→4) |
+| zero-level games | 2 | 6 (bp35, cn04, m0r0, tn36 fell to 0; tn36 spent 1,132 actions) |
+| calls/game · turns/game | 55.8 · 54.5 | 82.2 · 80.0 |
+| reasoning chars/call mean / median | 3,173 / 1,962 | 3,050 / 1,810 (−4% / −8%) |
+| length-cut share | 0.4% | 0.4% |
+| client e2e/call | 139.9 s | 93.7 s |
+| vLLM queue / inference | 120.9 s / 17.8 s | 65.5 s / 27.2 s |
+| gen tok/s aggregate · TPOT | 235 · 12.5 ms | 342 · 18.8 ms |
+| preemptions | 142 | 4 |
+| actions/game | 154 | 243 |
+
+Pre-registered verdict: ENGAGED (queue < 80 s, calls/game > 70), regime unchanged in kind
+(reasoning within ±15%, truncation identical), levels 43 → **no step** (30–47 band): throughput
+without truncation is a modest positive (+0.28 lv/game, 1.2 SE), consistent with the
+loss-ledger's action-budget arithmetic (+0.15–0.27). The score jump (+64%) is concentrated in
+three games and includes one full clear; the zero-level count tripled — more calls also feed
+runaway games. Rider status: worth carrying as the FIRST counterbalanced Kaggle pair on top of
+the byte-copy base (same GPU, same free memory ⇒ same 6.42x), not a reason to alter the base.
+Modal cost this arm ≈ 2.5 h RTX PRO 6000 + the voided 12-min attempt.
