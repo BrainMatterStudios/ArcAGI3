@@ -19,6 +19,7 @@ What runs (mirrors the public keithtyser V14 notebook cell by cell):
   * ONE knob differs between the arms — the analyzer env:
       keith  : LOCAL_ANALYZER_CONTEXT_WINDOW=32768, LOCAL_ANALYZER_MAX_OUTPUT=0
       flight : LOCAL_ANALYZER_CONTEXT_WINDOW=24576, LOCAL_ANALYZER_MAX_OUTPUT=4096
+      keith_yield180 : keith + LOCAL_ANALYZER_YIELD_SECONDS=180 (original single-knob arm)
     (everything else in the analyzer env is identical: sampling 0.6/0.95/20,
     thinking on, 60 s yield, tool steps unlimited, multimodal current_grid x4).
 
@@ -145,7 +146,10 @@ FLIGHT_ANALYZER_ENV = {
     "LOCAL_ANALYZER_CONTEXT_WINDOW": "24576",
     "LOCAL_ANALYZER_MAX_OUTPUT": "4096",
 }
-ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV}
+# 09-03 original single-knob arm on the keith base: the 60 s turn yield (which cuts ~43% of the
+# base's turns) raised to 180 s; everything else identical to `keith`.
+KEITH_YIELD180_ENV = {**KEITH_ANALYZER_ENV, "LOCAL_ANALYZER_YIELD_SECONDS": "180"}
+ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV}
 ARMS = tuple(ARM_ENV)
 RUNTIME_ENV_KEYS = ("LOCAL_ANALYZER_BASE_URL", "OPENAI_BASE_URL", "LOCAL_ANALYZER_API_KEY")
 
@@ -291,7 +295,7 @@ def verify_imports() -> None:
     want_out = int(os.environ["LOCAL_ANALYZER_MAX_OUTPUT"])
     assert ta._LOCAL_ANALYZER_CONTEXT_WINDOW == want_ctx, ta._LOCAL_ANALYZER_CONTEXT_WINDOW
     assert ta._LOCAL_ANALYZER_MAX_OUTPUT == want_out, ta._LOCAL_ANALYZER_MAX_OUTPUT
-    assert ta._LOCAL_ANALYZER_YIELD_SECONDS == 60.0
+    assert ta._LOCAL_ANALYZER_YIELD_SECONDS == float(os.environ["LOCAL_ANALYZER_YIELD_SECONDS"]), ta._LOCAL_ANALYZER_YIELD_SECONDS
     assert ta._LOCAL_ANALYZER_TOOL_STEPS == 0
     assert (ta._LOCAL_ANALYZER_TEMPERATURE, ta._LOCAL_ANALYZER_TOP_P, ta._LOCAL_ANALYZER_TOP_K) == (0.6, 0.95, 20)
     assert ta._LOCAL_ANALYZER_ENABLE_THINKING is True

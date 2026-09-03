@@ -284,3 +284,19 @@ lv/game on identical serving — +0.56 lv/game, at the local MDE, but the teleme
 zero-level games) is large and consistent across every mark. Our Kaggle Flash-Next flight
 (24576/4096, 22 seqs, no MTP) ALSO differed in serving; this arm shows the analyzer knob by
 itself explains most of the regime difference. n=1 arm each; treat levels as secondary.
+
+## PRE-REGISTERED — arm `keith_yield180` (launched 2026-09-03 ~02:00 UTC, before data)
+
+Knob: LOCAL_ANALYZER_YIELD_SECONDS 60 → 180 on the keith base; everything else identical
+(32768 / no cap, same serving profile, stock bytes). Hypothesis under test: the regime's gain
+is per-call depth; the 60 s yield truncates 43% of the base's turns, so fewer interruptions
+should give fewer, longer, more complete turns. Counter-hypothesis on record (08-30 session):
+the 60 s yield does useful re-grounding and removing it hurts.
+Reading rules (telemetry primary): yielded-turn share (base 43%) must fall below 20% for the
+knob to have engaged; calls/game (base 55.8) expected to fall; reasoning chars/call (base
+3,173 / 1,962) expected to rise; length-cut share and no-tool-call share reported. Levels
+(base 36 / 1.44 per game, cross-boot local sd ≈ 0.3 lv on this base per the three public
+commit runs 1.28–1.80): ≥ 48 levels (≥ +0.5 lv/game) = STEP candidate, carry to a Kaggle
+counterbalanced pair after the quota reset; 30–47 = no step, knob neutral-to-positive,
+report telemetry; < 30 = the yield's re-grounding matters, revert. One arm, n=1: any level
+reading is provisional; the telemetry direction is the durable output.
