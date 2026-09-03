@@ -462,3 +462,18 @@ with Ahmed's go. Ahmed approved the plan 16:15Z: the 09-03 slot is the Flash-Nex
 (`scripts/submit_flashnext_20260903.py`, armed 16:17Z, fires 00:01Z, svid 346125566, message carries
 the pre-registered rule: ≥2.4 weakens the serving-gap hypothesis; 1.5–2.4 in-band; <1.2 pull the log).
 09-04: redraw of a committed version or hold — decide after the 09-03 read.
+
+## 20. 09-03 09:26 UTC — Flash-Next exact redraw scored 1.94 (in-band; new best by 0.06); Modal regime axis closed at ~+0.3 lv
+
+Sub 55970756 (byte-identical to 55902917's 1.88) → **1.94**. Pre-registered band 1.5–2.4 =
+in-band: our slow-serving Flash-Next profile draws ~1.9 (n=2: 1.88, 1.94), the tier's public
+profile (keithtyser V14 forks) draws 2.8–3.4. Serving-gap hypothesis stands.
+Overnight on the Modal RTX PRO 6000 rig (offkaggle/REGIME_WAVE_STATUS.md): base regime
+reproduced (1.44 lv/game, telemetry == the public commit run); flight analyzer caps → 0.88
+(the caps ARE the gap); yield 180 s → 1.36 (neutral, queue-bound); KV 10 GiB → 1.72 (+0.28 ±
+0.24, no step; first full win ft09; zero-level games 2→6). Stage-0 (27B on H100): frontier
+protocol lane DEAD by rule (1/3 green; thinking never terminates on hard games).
+Plan: byte-copy of keith V14 commits automatically at the Sat 00:00Z quota reset → attest →
+fly 09-05 (Ahmed's go). Then the first counterbalanced Kaggle pair = kv10 on that base.
+Original candidates still standing: thinking-termination control; runaway-game containment.
+09-04 slot: no committed version worth a slot beyond redraws — Ahmed's call (hold or redraw).
