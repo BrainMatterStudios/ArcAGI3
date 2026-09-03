@@ -385,3 +385,23 @@ three games and includes one full clear; the zero-level count tripled — more c
 runaway games. Rider status: worth carrying as the FIRST counterbalanced Kaggle pair on top of
 the byte-copy base (same GPU, same free memory ⇒ same 6.42x), not a reason to alter the base.
 Modal cost this arm ≈ 2.5 h RTX PRO 6000 + the voided 12-min attempt.
+
+## PRE-REGISTERED — arm `keith_retry` (fresh-mind level retry; written before launch, 09-03 ~10:15 UTC)
+
+Knob: graft_retry installed in memory on the keith base (RETRY_ENABLE=1, K=3× human baseline,
+ABS=200, COOLDOWN=150, MAX=2 per level); stock bytes sha unchanged; serving = keith profile
+(KV 5 GiB) on the RTX PRO 6000 (verify identity). Hypothesis: stuck levels are one wrong
+hypothesis pursued to the clock (loss-ledger); a level RESET plus explicit abandonment of the
+stale note plus a forced alternative-hypothesis step clears more stuck levels; each cleared
+level unlocks a fresh bucket. Counter-hypothesis on record: budget-based triggers cannot tell
+"wrong hypothesis" from "slow correct execution"; resets cost actions and may cut a level that
+was about to clear (08-27: depth-by-budget dead; 08-30: retry-replay accounted for 46% of
+blown-level actions).
+Reading rules: ENGAGEMENT = retries fired ≥ 15 across the 25 games (else the trigger did not
+bind at K=3). Primary telemetry: levels cleared AFTER a retry fired on that level
+([RETRY-CLEAR]) — ≥ 6 = the mechanism works; 1–5 = weak; 0 = dead. Secondary: actions in
+never-clearing buckets (base ≈ 60%), zero-level games (base 2), calls/game and reasoning
+per call must stay within ±15% of the base (else the regime changed in kind). Levels (base
+36): ≥ 48 = STEP candidate → counterbalanced Kaggle pair on the byte-copy base after 09-05;
+30–47 = no step (report [RETRY-CLEAR] count as the durable output); < 30 = harmful (resets
+destroying progress) — count levels lost after a retry. n=1; levels provisional.
