@@ -248,3 +248,39 @@ fidelity on every cadence/latency/throughput metric. The rig is a valid instrume
 single-knob regime experiments (read by telemetry; levels remain a noisy secondary).
 24 client post errors (1.7%) all recovered by the stock retry; 585 redirected posts (Modal
 proxy 303 flow) carried the bearer and completed.
+
+## RESULT — flight arm, 2026-09-02 23:34→01:47 UTC (same server session; LAST ~35 MIN DEGRADED)
+
+Artifacts: offkaggle/results/20260902T2334-flight/20260903-013417-regime-flight/. At 01:13 UTC the
+Modal container was PREEMPTED ("Container terminated due to preemption") and the replacement
+waited on RTX PRO 6000 capacity at the 128 GiB request; 48 client 500s, all in the last ~35 min.
+Rig fix committed (96 GiB request, B200 fallback, 6 h cap). Read the matched-time marks, not the
+final totals, for this arm.
+
+### Single-knob comparison (same serving, same stock bytes; knob = analyzer window/output cap)
+
+| metric | keith (32768 / no cap) | flight (24576 / 4096) |
+|---|---|---|
+| levels (25 games) — final | 36 (1.44/game) | 22 (0.88/game; degraded tail) |
+| levels at matched +100 min | 32 | 20 |
+| local score | 6.40 | 2.34 |
+| calls/game | 55.8 | 79.5 |
+| reasoning chars/call mean / median | 3,173 / 1,962 | 2,361 / 1,337 |
+| finish=length calls | 6 (0.4%) | 38 (1.9%) |
+| client e2e/call | 139.9 s | 97.9 s |
+| prompt tok/call | 20,061 | 12,595 |
+| actions/game | 154 | 189 |
+| turns yielded on 60 s | 43% | 48% |
+| zero-level games | 2 | 8 |
+
+Matched-time trajectory (levels): flight LEADS for the first 30 min (10 vs 5 at +14 min; 14 vs 10
+at +30) — more, faster calls clear the easy first levels sooner — then STALLS: 17 vs 22 at +50,
+20 vs 31 at +90, 20 vs 32 at +98 (both pre-preemption). The capped regime converts the second
+hour into actions (+23%) without levels; the uncapped regime keeps clearing.
+
+Reading: the analyzer caps alone (24576/4096 vs 32768/none) move this base from 0.88 to 1.44
+lv/game on identical serving — +0.56 lv/game, at the local MDE, but the telemetry shift
+(+43% calls, −32% reasoning per call, 6× more length-truncated calls, +23% actions, 4× the
+zero-level games) is large and consistent across every mark. Our Kaggle Flash-Next flight
+(24576/4096, 22 seqs, no MTP) ALSO differed in serving; this arm shows the analyzer knob by
+itself explains most of the regime difference. n=1 arm each; treat levels as secondary.
