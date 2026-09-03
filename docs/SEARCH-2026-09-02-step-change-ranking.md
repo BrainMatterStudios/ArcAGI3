@@ -47,8 +47,11 @@ Base reproduced (1.44 lv/game, telemetry matches the public commit run). Single 
 - KV reservation 5→10 GiB (6.42x streams) → 1.72 (+0.28 ± 0.24): no step; modest throughput
   gain, first full win (ft09), but zero-level games 2→6. Rider for a counterbalanced Kaggle pair.
 Conclusion so far: the serving axis on this base is worth ~+0.3 lv/game at most; the step from
-1.4 to the 4–7 tier is not in serving knobs. Remaining original candidates: staged emission /
-thinking-termination control (Stage-0 finding), and runaway-game containment (kv10 finding).
+1.4 to the 4–7 tier is not in serving knobs. - fresh-mind level retry (graft_retry, K=2.5, note-only dose) → 5 retries, 0/5 cleared after
+  retry, 1 collision lost a level: unsupported. The stuck-bucket set is unstable across draws.
+Remaining original candidate: staged emission / thinking-termination control (Stage-0
+finding) — no rig experiment designed yet; the stronger-dose retry variant is on record but
+not recommended.
 
 ## Slot plan
 - 09-03 (tonight) and 09-04: redraws of committed versions only. Recommended: Flash-Next exact redraw
