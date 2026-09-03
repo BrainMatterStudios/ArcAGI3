@@ -40,6 +40,16 @@ thinking on hard mechanics never terminates). Original-work candidates that foll
 staged emission (hypothesis → code → test in separate short calls), and thinking-budget control per
 call stage — to be tested by telemetry on the Modal Flash-Next rig, not by 25-game score.
 
+## Regime-axis results on the Modal rig (09-02/03; offkaggle/REGIME_WAVE_STATUS.md)
+Base reproduced (1.44 lv/game, telemetry matches the public commit run). Single knobs on it:
+- analyzer caps 24576/4096 (our flight) → 0.88 lv/game: the caps ARE the regime difference.
+- yield 60→180 s → 1.36: neutral; latency is queue-dominated (125 s queue / 18 s inference).
+- KV reservation 5→10 GiB (6.42x streams) → 1.72 (+0.28 ± 0.24): no step; modest throughput
+  gain, first full win (ft09), but zero-level games 2→6. Rider for a counterbalanced Kaggle pair.
+Conclusion so far: the serving axis on this base is worth ~+0.3 lv/game at most; the step from
+1.4 to the 4–7 tier is not in serving knobs. Remaining original candidates: staged emission /
+thinking-termination control (Stage-0 finding), and runaway-game containment (kv10 finding).
+
 ## Slot plan
 - 09-03 (tonight) and 09-04: redraws of committed versions only. Recommended: Flash-Next exact redraw
   (runner scripts/submit_flashnext_20260903.py; grows n on the field's base model under our serving,
