@@ -20,10 +20,15 @@ What runs (mirrors the public keithtyser V14 notebook cell by cell):
       keith  : LOCAL_ANALYZER_CONTEXT_WINDOW=32768, LOCAL_ANALYZER_MAX_OUTPUT=0
       flight : LOCAL_ANALYZER_CONTEXT_WINDOW=24576, LOCAL_ANALYZER_MAX_OUTPUT=4096
       keith_yield180 : keith + LOCAL_ANALYZER_YIELD_SECONDS=180 (original single-knob arm)
+      keith_retry    : keith + graft_retry (submission/_throughput_v1/graft_retry.py,
+                       the fresh-mind level retry) installed IN MEMORY at wave
+                       start, flags RETRY_ENABLE=1 K=3 ABS=200 COOLDOWN=150 MAX=2
     (everything else in the analyzer env is identical: sampling 0.6/0.95/20,
     thinking on, 60 s yield, tool steps unlimited, multimodal current_grid x4).
 
-Nothing in the agent is edited or monkey-patched. Two hooks live OUTSIDE it:
+Nothing in the agent's BYTES is edited (the stock tree sha is asserted for every
+arm); a graft arm rebinds ToolAgent methods in memory after the import. Two
+hooks live OUTSIDE the agent for every arm:
   1. `HarnessSolver.analyzer_factory` (a documented solver field) builds the
      stock ToolAgent with exactly `_make_analyzer`'s arguments and tags the
      game thread so requests can be attributed to a game.
@@ -149,8 +154,20 @@ FLIGHT_ANALYZER_ENV = {
 # 09-03 original single-knob arm on the keith base: the 60 s turn yield (which cuts ~43% of the
 # base's turns) raised to 180 s; everything else identical to `keith`.
 KEITH_YIELD180_ENV = {**KEITH_ANALYZER_ENV, "LOCAL_ANALYZER_YIELD_SECONDS": "180"}
-ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV}
+# 09-03 fresh-mind level retry arm: the keith base + graft_retry installed in memory at
+# wave start (ARM_GRAFTS). The RETRY_* keys are the graft's own flags, read at call time:
+# a level RESET + "FRESH MIND" prompt block once a level's action bucket reaches
+# K x its human baseline (ABS actions when the engine hides baselines), at most MAX
+# per level, COOLDOWN actions apart. Everything else identical to `keith`.
+RETRY_ENV_KEYS = ("RETRY_ENABLE", "RETRY_K", "RETRY_ABS", "RETRY_COOLDOWN", "RETRY_MAX")
+KEITH_RETRY_ENV = {**KEITH_ANALYZER_ENV, "RETRY_ENABLE": "1", "RETRY_K": "3", "RETRY_ABS": "200",
+                   "RETRY_COOLDOWN": "150", "RETRY_MAX": "2"}
+ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV,
+           "keith_retry": KEITH_RETRY_ENV}
 ARMS = tuple(ARM_ENV)
+# grafts (submission/_throughput_v1/<name>.py, install() -> "<name>: OK") an arm installs in memory
+ARM_GRAFTS = {"keith_retry": ("graft_retry",)}
+GRAFT_DIR = REPO / "submission/_throughput_v1"
 RUNTIME_ENV_KEYS = ("LOCAL_ANALYZER_BASE_URL", "OPENAI_BASE_URL", "LOCAL_ANALYZER_API_KEY")
 
 # The judge's reference read of keith's V14 commit run (docs/research-2026-09-02/J-judge.md F4).
@@ -179,6 +196,9 @@ TELEMETRY_DEFINITIONS = {
     "actions_per_call": "len(game_run.history) / calls.",
     "e2e_s (client)": "requests.post wall time incl. redirect legs, from the client shim.",
     "e2e_s (vllm)": "vllm:e2e_request_latency_seconds_sum/count delta from /metrics.",
+    "retries_fired": "graft_retry level retries = count of '[RETRY] game=..' marker lines the graft "
+                     "wrote into the transcript (one per harness-issued level RESET + FRESH MIND turn).",
+    "retry_clears": "count of '[RETRY-CLEAR] game=..' marker lines = retried levels that later cleared.",
 }
 
 # ---------------------------------------------------------------------------
@@ -233,7 +253,20 @@ def arm_analyzer_env(arm: str) -> dict[str, str]:
     return dict(ARM_ENV[arm])
 
 
-def install_env(arm: str, base_url: str, token: str, out_dir: Path) -> dict[str, str]:
+def parse_knobs(items: list[str] | None) -> dict[str, str]:
+    """--knob KEY=VALUE overrides (recorded in results.json; meant for dry runs
+    and pre-registered sweeps, never silently)."""
+    out: dict[str, str] = {}
+    for item in items or []:
+        key, sep, value = item.partition("=")
+        if not sep or not key.strip():
+            raise ValueError(f"--knob expects KEY=VALUE, got {item!r}")
+        out[key.strip()] = value.strip()
+    return out
+
+
+def install_env(arm: str, base_url: str, token: str, out_dir: Path,
+                knobs: dict[str, str] | None = None) -> dict[str, str]:
     """Process env BEFORE any harness import (tool_agent reads its
     _LOCAL_ANALYZER_* constants at import time; ONLY_RESET_LEVELS must precede
     arcengine). Returns the recorded (token-free) env."""
@@ -241,8 +274,11 @@ def install_env(arm: str, base_url: str, token: str, out_dir: Path) -> dict[str,
         del os.environ[key]              # clean slate; keith's TAAF_VLLM_* are serving-side
     for key in ("OPENROUTER_API_KEY", "OPENAI_API_KEY"):
         os.environ.pop(key, None)        # tool_agent._headers fallback chain — only ours
+    for key in RETRY_ENV_KEYS + ("RETRY_CLEAR_HISTORY",):
+        os.environ.pop(key, None)        # a graft flag inherited from the shell must never leak into a stock arm
     os.environ.update(PROCESS_ENV)
     env = arm_analyzer_env(arm)
+    env.update(knobs or {})
     os.environ.update(env)
     os.environ.update({
         "LOCAL_ANALYZER_BASE_URL": base_url,
@@ -299,6 +335,38 @@ def verify_imports() -> None:
     assert ta._LOCAL_ANALYZER_TOOL_STEPS == 0
     assert (ta._LOCAL_ANALYZER_TEMPERATURE, ta._LOCAL_ANALYZER_TOP_P, ta._LOCAL_ANALYZER_TOP_K) == (0.6, 0.95, 20)
     assert ta._LOCAL_ANALYZER_ENABLE_THINKING is True
+
+
+def install_grafts(arm: str) -> dict[str, str]:
+    """Install the arm's in-memory grafts AFTER the stock imports are verified.
+    Each graft's install() rebinds ToolAgent methods (no file is touched, so
+    assert_stock_tree still holds). Returns {graft: install status}."""
+    names = ARM_GRAFTS.get(arm, ())
+    if not names:
+        return {}
+    if str(GRAFT_DIR) not in sys.path:
+        sys.path.insert(0, str(GRAFT_DIR))
+    statuses: dict[str, str] = {}
+    for name in names:
+        mod = __import__(name)
+        status = mod.install()
+        if not status.endswith(": OK"):
+            raise RuntimeError(f"graft {name} did not install: {status}")
+        statuses[name] = status
+    return statuses
+
+
+def graft_status(arm: str) -> dict[str, dict]:
+    """Each installed graft's status() counters (telemetry)."""
+    out: dict[str, dict] = {}
+    for name in ARM_GRAFTS.get(arm, ()):
+        mod = sys.modules.get(name)
+        if mod is not None and hasattr(mod, "status"):
+            try:
+                out[name] = mod.status()
+            except Exception as exc:  # noqa: BLE001
+                out[name] = {"error": f"{type(exc).__name__}: {exc}"}
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -717,7 +785,14 @@ def parse_transcript(text: str) -> dict:
             t["outcome"] = "request_error"
         elif "error" in msgs:
             t["outcome"] = "error"
-    return {"turns": turns, "calls": calls, "analyzer_status_config": status_cfg}
+    retry_markers = {"retries_fired": len(_RETRY_MARK.findall(text)),
+                     "retry_clears": len(_RETRY_CLEAR_MARK.findall(text))}
+    return {"turns": turns, "calls": calls, "analyzer_status_config": status_cfg, "retry_markers": retry_markers}
+
+
+# graft_retry marker lines (written under a "[HARNESS RETRY]" transcript section)
+_RETRY_MARK = re.compile(r"^\[RETRY\] game=\S+ level=\d+ actions=\d+", re.M)
+_RETRY_CLEAR_MARK = re.compile(r"^\[RETRY-CLEAR\] game=\S+ level=\d+ actions=", re.M)
 
 
 def _stats(values: list[float]) -> dict:
@@ -762,6 +837,8 @@ def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None
         "wallclock_s": wallclock_s,
         "calls_per_hour": _div(n_calls, (wallclock_s or 0) / 3600.0) if wallclock_s else None,
         "analyzer_status_config": parsed["analyzer_status_config"],
+        "retries_fired": parsed["retry_markers"]["retries_fired"],
+        "retry_clears": parsed["retry_markers"]["retry_clears"],
     }
     if shim_records:
         ok = [r for r in shim_records if r.get("status") == 200]
@@ -813,6 +890,10 @@ def aggregate_telemetry(per_game: dict[str, dict]) -> dict:
         "actions_total": tot_actions,
         "actions_per_game": tot_actions / n,
         "actions_per_call": _div(tot_actions, tot_calls),
+        "retries_total": sum(g.get("retries_fired") or 0 for g in games),
+        "retries_per_game": sum(g.get("retries_fired") or 0 for g in games) / n,
+        "retry_clears_total": sum(g.get("retry_clears") or 0 for g in games),
+        "games_with_retry": sum(1 for g in games if (g.get("retries_fired") or 0) > 0),
     }
 
 
@@ -1195,17 +1276,27 @@ def render_summary(result: dict, telemetry: dict) -> str:
         f"prefix hit {_pct(md.get('prefix_cache_hit_rate'))} | finished {md.get('request_success_by_reason')}",
         f"  REF keith V14 commit: 55 calls/game, reasoning 3406/2206, 53 turns/game, e2e 142 s, queue 124 s, "
         f"MTP 60%, 1.44 lv/game, 6.76 pts",
-        "  game            lv/n    act  calls turns reas_mean  len%  notool%  e2e_s   score  state",
     ]
+    grafts = result.get("grafts") or {}
+    if grafts.get("installed") or agg.get("retries_total"):
+        knobs = {k: env.get(k) for k in RETRY_ENV_KEYS if env.get(k) is not None}
+        lines.append(
+            f"  RETRY  fired {agg.get('retries_total')} ({_fmt(agg.get('retries_per_game'), 2)}/game) | "
+            f"levels cleared after retry {agg.get('retry_clears_total')} | games with retry {agg.get('games_with_retry')} | "
+            f"grafts {grafts.get('installed')} | flags {knobs}")
+    if result.get("knob_overrides"):
+        lines.append(f"  KNOB OVERRIDES (not the pinned arm env): {result['knob_overrides']}")
+    lines.append("  game            lv/n    act  calls turns reas_mean  len%  notool%  e2e_s   score  retry  state")
     for gid, g in sorted(telemetry.get("per_game", {}).items()):
         r = g.get("reasoning_chars") or {}
         c = (g.get("client") or {}).get("e2e_s") or {}
+        retry_col = f"{g.get('retries_fired') or 0}/{g.get('retry_clears') or 0}"
         lines.append(
             f"  {gid:14s} {str(g.get('levels_completed')) + '/' + str(g.get('number_of_levels')):>5} "
             f"{_fmt(g.get('actions_total')):>6} {g.get('calls'):>5} {g.get('turns'):>5} "
             f"{_fmt(r.get('mean'), 0):>9} {_pct(g.get('length_finish_share')):>6} "
-            f"{_pct(g.get('no_tool_call_share')):>7} {_fmt(c.get('mean')):>6} {_fmt(g.get('score'), 2):>7}  "
-            f"{(result.get('states') or {}).get(gid, '')}")
+            f"{_pct(g.get('no_tool_call_share')):>7} {_fmt(c.get('mean')):>6} {_fmt(g.get('score'), 2):>7} "
+            f"{retry_col:>6}  {(result.get('states') or {}).get(gid, '')}")
     return "\n".join(lines) + "\n"
 
 
@@ -1218,7 +1309,8 @@ class Wave:
         self.wave_cap_s, self.dry_run, self.progress_every_s = wave_cap_s, dry_run, progress_every_s
         self.result: dict = {"schema_version": 1, "arm": arm, "dry_run": dry_run, "status": "init",
                              "base_url": base_url, "served_model": SERVED_MODEL_NAME,
-                             "wave_cap_s": wave_cap_s, "game_ids": list(game_ids)}
+                             "wave_cap_s": wave_cap_s, "game_ids": list(game_ids),
+                             "grafts": {"installed": {}, "status": {}}}
         self.bm = None
         self.target = None
         self.shim = RequestShim(out_dir / "requests_shim.jsonl")
@@ -1355,6 +1447,8 @@ class Wave:
         telemetry = build_telemetry(self.out_dir / "transcripts", rows, shim_records)
         telemetry["arm"] = self.arm
         telemetry["dry_run"] = self.dry_run
+        self.result["grafts"]["status"] = graft_status(self.arm)   # the graft's own counters (retry_log, skips, ...)
+        telemetry["grafts"] = self.result["grafts"]
         cfgs = [g.get("analyzer_status_config") for g in telemetry["per_game"].values() if g.get("analyzer_status_config")]
         telemetry["aggregate"]["analyzer_status_config_first"] = cfgs[0] if cfgs else None
         (self.out_dir / "telemetry.json").write_text(json.dumps(telemetry, indent=1, default=str) + "\n")
@@ -1399,7 +1493,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--skip-preflight", action="store_true")
     p.add_argument("--preflight-timeout", type=float, default=2400.0)
     p.add_argument("--progress-every", type=float, default=120.0)
+    p.add_argument("--knob", action="append", default=None, metavar="KEY=VALUE",
+                   help="override one analyzer/graft env key (repeatable; recorded in results.json as "
+                        "knob_overrides — the run is then NOT the pinned arm env)")
     args = p.parse_args(argv)
+    knobs = parse_knobs(args.knob)
 
     per_game_s = args.per_game_s if args.per_game_s is not None else (
         DRY_RUN_PER_GAME_S if args.dry_run else GEOMETRY["max_runtime_s_per_game"])
@@ -1425,11 +1523,17 @@ def main(argv: list[str] | None = None) -> int:
     stock = assert_stock_tree()
     print(f"[regime] stock agent tree sha {stock['agent_tree_sha256'][:16]}… == june_stock pin "
           f"({stock['agent_files']} files); framework {stock['framework_tree_sha256'][:16]}…", flush=True)
-    recorded_env = install_env(args.arm, base_url, token, out_dir)
+    recorded_env = install_env(args.arm, base_url, token, out_dir, knobs)
     install_paths()
     verify_imports()
     print(f"[regime] arm {args.arm}: CONTEXT_WINDOW={recorded_env['LOCAL_ANALYZER_CONTEXT_WINDOW']} "
           f"MAX_OUTPUT={recorded_env['LOCAL_ANALYZER_MAX_OUTPUT']} (import-time constants verified)", flush=True)
+    if knobs:
+        print(f"[regime] KNOB OVERRIDES {knobs} — this run is not the pinned {args.arm} env", flush=True)
+    grafts = install_grafts(args.arm)          # in memory only; the stock tree sha above still holds
+    if grafts:
+        flags = {k: recorded_env.get(k) for k in RETRY_ENV_KEYS}
+        print(f"[regime] grafts installed: {grafts} (flags {flags})", flush=True)
 
     endpoint = None
     if not args.skip_preflight:
@@ -1438,6 +1542,9 @@ def main(argv: list[str] | None = None) -> int:
     wave = Wave(arm=args.arm, base_url=base_url, token=token, out_dir=out_dir, game_ids=game_ids,
                 per_game_s=per_game_s, concurrency=args.concurrency, wave_cap_s=wave_cap_s,
                 dry_run=args.dry_run, progress_every_s=args.progress_every)
+    wave.result["grafts"]["installed"] = grafts
+    if knobs:
+        wave.result["knob_overrides"] = knobs
     wave.setup(recorded_env, stock, endpoint)
     status = wave.run()
     if mock is not None:

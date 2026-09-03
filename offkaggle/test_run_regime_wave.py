@@ -121,12 +121,44 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert diff == {"LOCAL_ANALYZER_CONTEXT_WINDOW", "LOCAL_ANALYZER_MAX_OUTPUT"}, diff
     assert (rw.KEITH_ANALYZER_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"], rw.KEITH_ANALYZER_ENV["LOCAL_ANALYZER_MAX_OUTPUT"]) == ("32768", "0")
     assert (rw.FLIGHT_ANALYZER_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"], rw.FLIGHT_ANALYZER_ENV["LOCAL_ANALYZER_MAX_OUTPUT"]) == ("24576", "4096")
-    assert rw.ARMS == ("keith", "flight", "keith_yield180")
+    assert rw.ARMS == ("keith", "flight", "keith_yield180", "keith_retry")
     # the original single-knob arm differs from the keith base on exactly the yield key
     d2 = {k for k in set(rw.KEITH_ANALYZER_ENV) | set(rw.KEITH_YIELD180_ENV)
           if rw.KEITH_ANALYZER_ENV.get(k) != rw.KEITH_YIELD180_ENV.get(k)}
     assert d2 == {"LOCAL_ANALYZER_YIELD_SECONDS"}, d2
     assert rw.KEITH_YIELD180_ENV["LOCAL_ANALYZER_YIELD_SECONDS"] == "180"
+    # the retry arm differs from the keith base on exactly the graft's RETRY_* flags
+    d3 = {k for k in set(rw.KEITH_ANALYZER_ENV) | set(rw.KEITH_RETRY_ENV)
+          if rw.KEITH_ANALYZER_ENV.get(k) != rw.KEITH_RETRY_ENV.get(k)}
+    assert d3 == set(rw.RETRY_ENV_KEYS) == {"RETRY_ENABLE", "RETRY_K", "RETRY_ABS", "RETRY_COOLDOWN", "RETRY_MAX"}, d3
+    assert {k: rw.KEITH_RETRY_ENV[k] for k in rw.RETRY_ENV_KEYS} == {
+        "RETRY_ENABLE": "1", "RETRY_K": "3", "RETRY_ABS": "200", "RETRY_COOLDOWN": "150", "RETRY_MAX": "2"}
+    assert rw.ARM_GRAFTS == {"keith_retry": ("graft_retry",)}
+    for arm in ("keith", "flight", "keith_yield180"):
+        assert not any(k.startswith("RETRY_") for k in rw.ARM_ENV[arm]), arm   # stock arms carry no graft flag
+
+
+def test_install_env_never_leaks_graft_flags_into_a_stock_arm():
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["RETRY_ENABLE"] = "1"          # stale shell state
+        try:
+            rec = rw.install_env("keith", "http://127.0.0.1:9/v1", "t", Path(tmp))
+            assert "RETRY_ENABLE" not in os.environ and "RETRY_ENABLE" not in rec
+            rec = rw.install_env("keith_retry", "http://127.0.0.1:9/v1", "t", Path(tmp))
+            assert os.environ["RETRY_ENABLE"] == "1" and rec["RETRY_K"] == "3"
+            rec = rw.install_env("keith_retry", "http://127.0.0.1:9/v1", "t", Path(tmp), {"RETRY_ABS": "7"})
+            assert os.environ["RETRY_ABS"] == "7" and rec["RETRY_ABS"] == "7" and rec["RETRY_K"] == "3"
+            assert rec["LOCAL_ANALYZER_API_KEY"] == "<redacted>" and "t" != os.environ["LOCAL_ANALYZER_API_KEY"][:0]
+        finally:
+            for k in rw.RETRY_ENV_KEYS:
+                os.environ.pop(k, None)
+    assert rw.parse_knobs(["A=1", "B = x=y"]) == {"A": "1", "B": "x=y"}
+    try:
+        rw.parse_knobs(["novalue"])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("bad knob accepted")
 
 
 # --- 2. geometry + game list == the keith notebook -------------------------
@@ -306,6 +338,48 @@ def test_extractor_on_synthetic_transcript():
     assert tel["client"]["errors"] == 1 and tel["client"]["max_tokens_sent"] == [4096, None]
     agg = rw.aggregate_telemetry({"g": tel})
     assert agg["calls_per_game"] == 3 and agg["yielded_turn_share"] == 1 / 3
+    assert tel["retries_fired"] == 0 and tel["retry_clears"] == 0
+    assert agg["retries_total"] == 0 and agg["games_with_retry"] == 0 and agg["retry_clears_total"] == 0
+
+
+RETRY_TRANSCRIPT = SYNTHETIC_TRANSCRIPT + """
+[HARNESS RETRY]
+[RETRY] game=tu93-0768757b level=1 actions=57 baseline=19 threshold=57 retry=1/2 action_num=58
+
+--- analysis_step=3 | action=58 | 10:03:00 | tool-agent ---
+[SYSTEM PROMPT]
+sys
+[USER PROMPT]
+next
+FRESH MIND (harness level retry 1/2): ...
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 2
+[THINKING]
+ab
+[ANALYZER STATUS]
+model: m
+step_executed: True
+message: Step executed.
+
+[HARNESS RETRY]
+[RETRY-CLEAR] game=tu93-0768757b level=1 actions=70 retries=1
+
+"""
+
+
+def test_extractor_counts_retry_markers():
+    tel = rw.telemetry_for_game(RETRY_TRANSCRIPT, actions_total=70)
+    assert tel["retries_fired"] == 1 and tel["retry_clears"] == 1
+    assert tel["calls"] == 4 and tel["turns"] == 4          # the marker sections do not disturb turn/call parsing
+    assert tel["turn_outcomes"]["step_executed"] == 2
+    agg = rw.aggregate_telemetry({"a": tel, "b": rw.telemetry_for_game(SYNTHETIC_TRANSCRIPT)})
+    assert agg["retries_total"] == 1 and agg["retries_per_game"] == 0.5
+    assert agg["retry_clears_total"] == 1 and agg["games_with_retry"] == 1
+    # a "[RETRY]" mention inside model text is not a marker (anchored at line start with the field shape)
+    assert rw.telemetry_for_game("hello [RETRY] game=x\n[RETRY] not a marker\n")["retries_fired"] == 0
 
 
 # --- 5. /metrics parsing ---------------------------------------------------
@@ -391,6 +465,54 @@ def test_analyzer_factory_equals_stock_make_analyzer():
         assert probe["geo"]["max_actions_per_game"] is None and probe["geo"]["save_request_logs"] is False
 
 
+_GRAFT_PROBE = r'''
+import json, os, sys
+sys.path.insert(0, __HERE__)
+import run_regime_wave as rw
+from pathlib import Path
+out = Path(__TMP__)
+env = rw.install_env("keith_retry", "http://127.0.0.1:9/v1", "probe-token", out)
+rw.install_paths()
+rw.verify_imports()
+from inference.agent import tool_agent as ta
+before = (ta.ToolAgent.analyze, ta.ToolAgent._build_user_prompt)
+grafts = rw.install_grafts("keith_retry")
+after = (ta.ToolAgent.analyze, ta.ToolAgent._build_user_prompt)
+stock = rw.assert_stock_tree()                       # bytes untouched after the in-memory install
+bm, target = rw.load_bundle(out)
+factory = rw.make_tagging_analyzer_factory(bm.solver)
+class _G:
+    class game_run: game_id = "tu93-0768757b"
+agent = factory(_G(), 0)
+print(json.dumps({"grafts": grafts, "rebound": [a is not b for a, b in zip(before, after)],
+                  "stock_attr": [hasattr(after[0], "_retry_stock"), hasattr(after[1], "_retry_stock")],
+                  "chain": [after[0]._retry_stock is before[0], after[1]._retry_stock is before[1]],
+                  "sha": stock["agent_tree_sha256"], "status": rw.graft_status("keith_retry"),
+                  "env": {k: os.environ.get(k) for k in rw.RETRY_ENV_KEYS},
+                  "fingerprint": rw.analyzer_config_fingerprint(agent),
+                  "keith_grafts": rw.install_grafts("keith")}))
+'''
+
+
+def test_retry_arm_installs_graft_in_memory_and_keeps_stock_bytes():
+    with tempfile.TemporaryDirectory() as tmp:
+        code = _GRAFT_PROBE.replace("__HERE__", repr(str(HERE))).replace("__TMP__", repr(tmp))
+        r = subprocess.run([PYTHON, "-c", code], capture_output=True, text=True, cwd=str(REPO), timeout=300)
+        assert r.returncode == 0, r.stderr[-2000:]
+        probe = json.loads(r.stdout.strip().splitlines()[-1])
+    assert probe["grafts"] == {"graft_retry": "retry: OK"}
+    assert probe["rebound"] == [True, True] and probe["stock_attr"] == [True, True] and probe["chain"] == [True, True]
+    assert probe["sha"] == rw.STOCK_AGENT_TREE_SHA256          # the graft patches in memory; the tree sha holds
+    st = probe["status"]["graft_retry"]
+    assert st["installed"] and st["enabled"] and (st["k"], st["abs"], st["cooldown"], st["max"]) == (3.0, 200, 150, 2)
+    assert st["retries_fired"] == 0 and st["retry_log"] == []
+    assert probe["env"] == {k: rw.KEITH_RETRY_ENV[k] for k in rw.RETRY_ENV_KEYS}
+    # the analyzer the factory builds is still the keith-configured ToolAgent
+    fp = probe["fingerprint"]
+    assert fp["context_budget_tokens"] == 31744 and fp["max_output_tokens"] is None and fp["yield_seconds"] == 60.0
+    assert probe["keith_grafts"] == {}                         # stock arms install nothing
+
+
 # --- 7. end-to-end dry run (mock vLLM, two games, ~15 s) --------------------
 
 
@@ -447,6 +569,64 @@ def test_dry_run_end_to_end():
         summary = (out / "summary.txt").read_text()
         assert "REGIME WAVE  arm=flight  status=done" in summary and "CONTEXT_WINDOW=24576" in summary
         assert summary.count("\n") < 45, "summary must fit one screen"
+        assert "RETRY" not in summary.split("\n  game")[0]     # stock arm: no retry line
+        assert res["grafts"] == {"installed": {}, "status": {}}
+        assert tel["aggregate"]["retries_total"] == 0 and tel["grafts"]["installed"] == {}
+
+
+def test_dry_run_keith_retry_arm_end_to_end():
+    """keith_retry through the runner on the loopback mock: the graft installs
+    in memory, the stock sha still holds, and with shrunk knobs the retry
+    fires on the real engine and reaches telemetry.json / summary.txt."""
+    with tempfile.TemporaryDirectory() as tmp:
+        r = subprocess.run([PYTHON, str(HERE / "run_regime_wave.py"), "--dry-run", "--arm", "keith_retry",
+                            "--games", "tu93,ft09", "--per-game-s", "14", "--wave-cap-s", "60",
+                            "--progress-every", "60", "--out", tmp,
+                            "--knob", "RETRY_K=0.2", "--knob", "RETRY_ABS=4", "--knob", "RETRY_COOLDOWN=3"],
+                           capture_output=True, text=True, cwd=str(REPO), timeout=300)
+        assert r.returncode == 0, (r.returncode, r.stderr[-3000:], r.stdout[-3000:])
+        runs = list(Path(tmp).glob("*-regime-keith_retry-dry"))
+        assert len(runs) == 1, runs
+        out = runs[0]
+        res = json.loads((out / "results.json").read_text())
+        tel = json.loads((out / "telemetry.json").read_text())
+        assert res["status"] == "done" and res["arm"] == "keith_retry"
+        assert res["stock"]["agent_tree_sha256"] == rw.STOCK_AGENT_TREE_SHA256
+        assert res["grafts"]["installed"] == {"graft_retry": "retry: OK"}
+        assert res["knob_overrides"] == {"RETRY_K": "0.2", "RETRY_ABS": "4", "RETRY_COOLDOWN": "3"}
+        assert res["analyzer_env"]["RETRY_ENABLE"] == "1" and res["analyzer_env"]["RETRY_MAX"] == "2"
+        assert res["analyzer_env"]["LOCAL_ANALYZER_CONTEXT_WINDOW"] == "32768"      # still the keith window
+        cfg = tel["aggregate"]["analyzer_status_config_first"]
+        assert cfg == {"max_output_tokens": "server default", "context_budget_tokens": "31744", "yield_seconds": "60.0"}, cfg
+        st = res["grafts"]["status"]["graft_retry"]
+        agg = tel["aggregate"]
+        assert st["retries_fired"] >= 1, st
+        assert agg["retries_total"] == st["retries_fired"] == len(st["retry_log"])   # transcript markers == graft counters
+        assert agg["games_with_retry"] >= 1
+        assert all(rec["baseline"] is not None for rec in st["retry_log"])          # offline engine exposes baselines
+        assert all(rec["retry"] <= 2 for rec in st["retry_log"])
+        per = tel["per_game"]
+        assert sum(g["retries_fired"] for g in per.values()) == agg["retries_total"]
+        for gid in ("tu93-0768757b", "ft09-0d8bbf25"):
+            text = (out / "transcripts" / f"{gid}_p0.txt").read_text()
+            assert text.count("FRESH MIND (harness level retry") == per[gid]["retries_fired"]
+            assert text.count("[HARNESS RETRY]\n[RETRY] game=") == per[gid]["retries_fired"]
+        # the RESETs are in the harness's own action record (benchmark.json history)
+        bench = json.loads((out / "benchmark.json").read_text())
+        hist_resets = 0
+        for run in bench.get("game_runs", []):
+            for rec in run.get("history", []):
+                act = rec.get("action") if isinstance(rec, dict) else None
+                name = (act or {}).get("id") if isinstance(act, dict) else act
+                if str(name).upper().endswith("RESET") or name == 0:
+                    hist_resets += 1
+        assert hist_resets >= st["retries_fired"], (hist_resets, st["retries_fired"])
+        summary = (out / "summary.txt").read_text()
+        assert "REGIME WAVE  arm=keith_retry" in summary and "RETRY  fired" in summary and "KNOB OVERRIDES" in summary
+        assert summary.count("\n") < 45
+        for path in out.rglob("*"):
+            if path.is_file() and path.suffix in (".json", ".txt", ".prom", ".jsonl", ".log"):
+                assert "dry-run-token" not in path.read_text(encoding="utf-8", errors="replace"), path
 
 
 # --- runner -----------------------------------------------------------------
