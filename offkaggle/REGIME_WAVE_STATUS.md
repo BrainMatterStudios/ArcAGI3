@@ -307,3 +307,36 @@ preemption; cadence at +10 min was 366 calls / 11 levels vs the base's 209 / 3 �
 GPU regime, not the knob. Killed at +12 min; B200 fallback REMOVED (rig runs RTX PRO 6000 only;
 if capacity is unavailable the arm waits or fails, never silently changes hardware). Relaunched
 on the RTX PRO 6000 with the same pre-registration.
+
+## RESULT — arm `keith_yield180` (RTX PRO 6000 verified via /arc3/identity; 02:02→04:15 UTC)
+
+| metric | keith base (yield 60) | keith_yield180 |
+|---|---|---|
+| levels / lv per game | 36 / 1.44 | 34 / 1.36 |
+| local score | 6.40 | 5.30 |
+| paired per-game Δlv | — | −0.08 (sd 0.69; 4 up, 5 down) |
+| turns yielded | 43.2% | 30.4% |
+| calls/game · turns/game · calls/turn | 55.8 · 54.5 · 1.02 | 54.0 · 39.0 · 1.39 |
+| reasoning chars/call mean / median | 3,173 / 1,962 | 3,321 / 2,011 |
+| length-cut share | 0.4% | 0.4% |
+| client e2e/call | 139.9 s | 144.9 s |
+| vLLM queue / inference per request | 120.9 s / 17.8 s | 125.4 s / 18.4 s |
+| actions/game | 154 | 133 |
+| zero-level games | 2 | 4 |
+
+Pre-registered verdict: the engagement criterion (yielded share < 20%) was NOT met (30%);
+levels 34 fall in the 30–47 "no step, neutral" band. Reasoning per call did not change.
+
+What the arm actually revealed (the durable output): per-call latency in this regime is
+**queue-dominated** — ~125 s of the ~145 s per request is vLLM queue wait, ~18 s is inference
+(3 running streams, ~21 waiting, set by the 5 GiB KV reservation ⇒ "3.21x" concurrency).
+The 60 s yield therefore does not truncate reasoning at all; it simply returns the turn while
+the request waits in queue, and the next turn re-issues it. Reasoning length is set by the
+model, not by the yield. The regime's structure is: each game gets one full-context,
+untruncated call every ~145 s; the "interruption" story is wrong, the "no truncation +
+32k window" story (the flight-arm comparison) is the one the data supports.
+Implication for the next knob: the queue is the throughput ceiling; the KV reservation
+(5 GiB → e.g. 10–12 GiB of the ~15 GiB free after model load) would raise running streams
+from ~3 to ~6–7 and roughly double calls/game WITHOUT truncation — untested in public; keith's
+own V10 (28 seqs, no KV cap) thrashed at 114 tok/s, so there is a sweet spot to find. That is a
+serving-profile arm (rig env override needed; ~$8 on the RTX PRO 6000).
