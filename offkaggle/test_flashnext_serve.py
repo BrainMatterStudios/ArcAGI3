@@ -221,7 +221,7 @@ def test_guards_and_auth_exemptions():
     r = _regime()["modal_guards"]
     assert mfs.IDLE_TIMEOUT_S == r["idle_timeout_s"] == 900
     assert 2 <= mfs.IDLE_TIMEOUT_S <= 20 * 60          # Modal's scaledown_window bounds
-    assert mfs.MAX_LIFETIME_S == r["max_lifetime_s"] == 4 * 3600
+    assert mfs.MAX_LIFETIME_S == r["max_lifetime_s"] == 6 * 3600
     assert mfs.MAX_CONTAINERS == r["max_containers"] == 1
     assert mfs.MEMORY_MIB == r["memory_mib"]
     assert mfs.MEMORY_MIB * 1024**2 >= _regime()["min_host_available_bytes"] == mfs.MIN_HOST_AVAILABLE_BYTES

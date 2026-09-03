@@ -64,6 +64,10 @@ SECRET_NAME = "arc3-vllm-token"        # modal secret create arc3-vllm-token TOK
 # "T4 L4 A10 L40S A100 A100-40GB A100-80GB RTX-PRO-6000 H100 H200 B200 B300".
 # Pricing page: "Nvidia RTX PRO 6000 $0.000842 / sec" (~$3.03/h).
 GPU_KIND = "RTX-PRO-6000"
+# Fallback GPU classes if no RTX PRO 6000 worker can be scheduled (09-03: a container was
+# preempted and the replacement waited on capacity). B200 is also Blackwell (native NVFP4);
+# a run on the fallback is recorded in /arc3/identity (nvidia-smi rows) and is a deviation.
+GPU_FALLBACK = ["B200"]
 N_GPU = 1
 
 # --- model (KEITH_REGIME.md §1) --------------------------------------------
@@ -251,9 +255,9 @@ PROXY_UPSTREAM_TIMEOUT_S = 3600
 
 # --- cost guards ---------------------------------------------------------
 IDLE_TIMEOUT_S = int(os.environ.get("ARC3_IDLE_TIMEOUT_S", "900"))            # 15 min
-MAX_LIFETIME_S = int(os.environ.get("ARC3_MAX_LIFETIME_S", str(4 * 3600)))    # 4 h
+MAX_LIFETIME_S = int(os.environ.get("ARC3_MAX_LIFETIME_S", str(6 * 3600)))    # 6 h (two 2.2 h arms + cold start)
 MAX_CONTAINERS = 1
-MEMORY_MIB = 131072              # 128 GiB request (Keith's gate: >= 64 GiB available; Kaggle host 189 GB)
+MEMORY_MIB = 98304               # 96 GiB request (Keith's gate: >= 64 GiB available; 128 GiB starved scheduling on 09-03)
 MIN_HOST_AVAILABLE_BYTES = 64 * 1024**3   # serving_setup.py:191
 CPU_CORES = 8.0
 
@@ -566,7 +570,7 @@ if modal is not None:
 
     @app.function(
         image=runtime_image,
-        gpu=f"{GPU_KIND}:{N_GPU}",
+        gpu=[f"{GPU_KIND}:{N_GPU}", *[f"{g}:{N_GPU}" for g in GPU_FALLBACK]],
         cpu=CPU_CORES,
         memory=MEMORY_MIB,
         volumes={CACHE_DIR: hf_cache_vol},

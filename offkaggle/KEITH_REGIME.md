@@ -257,9 +257,9 @@ From PROV `persisted_analyzer_environment` — what the Duck harness sends to th
   "min_host_available_bytes": 68719476736,
   "modal_guards": {
     "idle_timeout_s": 900,
-    "max_lifetime_s": 14400,
+    "max_lifetime_s": 21600,
     "max_containers": 1,
-    "memory_mib": 131072
+    "memory_mib": 98304
   }
 }
 ```
