@@ -382,6 +382,60 @@ def test_extractor_counts_retry_markers():
     assert rw.telemetry_for_game("hello [RETRY] game=x\n[RETRY] not a marker\n")["retries_fired"] == 0
 
 
+# --- 4b. serving identity gate ---------------------------------------------
+
+_RECORDED_IDENTITY = {   # shape of GET /arc3/identity as recorded in offkaggle/results/*/results.json
+    "app": "arc3-flashnext", "profile": "kv5-bf16-mtp3-c8-cg32", "gpu": "RTX-PRO-6000",
+    "host": {"cpu_count": 24, "gpu_rows": ["0, NVIDIA RTX PRO 6000 Blackwell Server Edition, 97887 MiB, 580.95.05, 12.0"]},
+}
+
+
+def test_identity_gate():
+    ok = rw.check_identity(_RECORDED_IDENTITY, rw.DEFAULT_EXPECT_PROFILE)
+    assert ok["profile_ok"] is True and ok["gpu_ok"] is True and ok["profile"] == "kv5-bf16-mtp3-c8-cg32"
+    assert rw.DEFAULT_EXPECT_PROFILE == "kv5-bf16-mtp3-c8-cg32" and rw.EXPECT_GPU_SUBSTRING == "RTX PRO 6000"
+    # the 09-03 kv10 override identity must be refused by default ...
+    kv10 = {**_RECORDED_IDENTITY, "profile": "kv10-bf16-mtp3-c8-cg32-OVERRIDE"}
+    try:
+        rw.check_identity(kv10, rw.DEFAULT_EXPECT_PROFILE)
+    except RuntimeError as e:
+        assert "SERVING PROFILE MISMATCH" in str(e) and "kv10-bf16-mtp3-c8-cg32-OVERRIDE" in str(e) and "--expect-profile" in str(e)
+    else:
+        raise AssertionError("kv10 override profile accepted")
+    # ... and accepted only when asked for explicitly
+    assert rw.check_identity(kv10, "kv10-bf16-mtp3-c8-cg32-OVERRIDE")["profile_ok"] is True
+    # wrong / missing GPU rows
+    for rows in (["0, NVIDIA A100-SXM4-80GB, 81920 MiB, 550.0, 8.0"], [], ["nvidia-smi unavailable: FileNotFoundError"]):
+        bad = {**_RECORDED_IDENTITY, "host": {"gpu_rows": rows}}
+        try:
+            rw.check_identity(bad, rw.DEFAULT_EXPECT_PROFILE)
+        except RuntimeError as e:
+            assert "GPU MISMATCH" in str(e), str(e)
+        else:
+            raise AssertionError(f"gpu rows {rows} accepted")
+    # no identity payload at all -> refuse (never silent)
+    for payload in (None, {}):
+        try:
+            rw.check_identity(payload, rw.DEFAULT_EXPECT_PROFILE)
+        except RuntimeError as e:
+            assert "IDENTITY UNAVAILABLE" in str(e)
+        else:
+            raise AssertionError("missing identity accepted")
+
+
+def test_dry_run_refuses_wrong_serving_profile():
+    with tempfile.TemporaryDirectory() as tmp:
+        r = subprocess.run([PYTHON, str(HERE / "run_regime_wave.py"), "--dry-run", "--arm", "keith",
+                            "--games", "tu93", "--per-game-s", "5", "--wave-cap-s", "20", "--out", tmp,
+                            "--mock-profile", "kv10-bf16-mtp3-c8-cg32-OVERRIDE"],
+                           capture_output=True, text=True, cwd=str(REPO), timeout=300)
+        assert r.returncode != 0
+        assert "SERVING PROFILE MISMATCH" in (r.stderr + r.stdout)
+        assert "kv10-bf16-mtp3-c8-cg32-OVERRIDE" in (r.stderr + r.stdout)
+        runs = list(Path(tmp).glob("*-regime-keith-dry"))
+        assert runs and not (runs[0] / "results.json").exists()      # refused before the wave started
+
+
 # --- 5. /metrics parsing ---------------------------------------------------
 
 
@@ -476,8 +530,10 @@ rw.install_paths()
 rw.verify_imports()
 from inference.agent import tool_agent as ta
 before = (ta.ToolAgent.analyze, ta.ToolAgent._build_user_prompt)
+env = rw.install_env("keith_retry", "http://127.0.0.1:9/v1", "probe-token", out, {"RETRY_K": "2.5"})  # the launch shape
 grafts = rw.install_grafts("keith_retry")
 after = (ta.ToolAgent.analyze, ta.ToolAgent._build_user_prompt)
+knob_status = rw.graft_status("keith_retry")["graft_retry"]
 stock = rw.assert_stock_tree()                       # bytes untouched after the in-memory install
 bm, target = rw.load_bundle(out)
 factory = rw.make_tagging_analyzer_factory(bm.solver)
@@ -488,6 +544,8 @@ print(json.dumps({"grafts": grafts, "rebound": [a is not b for a, b in zip(befor
                   "stock_attr": [hasattr(after[0], "_retry_stock"), hasattr(after[1], "_retry_stock")],
                   "chain": [after[0]._retry_stock is before[0], after[1]._retry_stock is before[1]],
                   "sha": stock["agent_tree_sha256"], "status": rw.graft_status("keith_retry"),
+                  "knob": {"k": knob_status["k"], "env_k": os.environ.get("RETRY_K"), "rec_k": env.get("RETRY_K"),
+                           "abs": knob_status["abs"]},
                   "env": {k: os.environ.get(k) for k in rw.RETRY_ENV_KEYS},
                   "fingerprint": rw.analyzer_config_fingerprint(agent),
                   "keith_grafts": rw.install_grafts("keith")}))
@@ -504,9 +562,11 @@ def test_retry_arm_installs_graft_in_memory_and_keeps_stock_bytes():
     assert probe["rebound"] == [True, True] and probe["stock_attr"] == [True, True] and probe["chain"] == [True, True]
     assert probe["sha"] == rw.STOCK_AGENT_TREE_SHA256          # the graft patches in memory; the tree sha holds
     st = probe["status"]["graft_retry"]
-    assert st["installed"] and st["enabled"] and (st["k"], st["abs"], st["cooldown"], st["max"]) == (3.0, 200, 150, 2)
+    assert st["installed"] and st["enabled"] and (st["abs"], st["cooldown"], st["max"]) == (200, 150, 2)
     assert st["retries_fired"] == 0 and st["retry_log"] == []
-    assert probe["env"] == {k: rw.KEITH_RETRY_ENV[k] for k in rw.RETRY_ENV_KEYS}
+    # --knob RETRY_K=2.5 applied by install_env BEFORE install_grafts, recorded, and read by the graft
+    assert probe["knob"] == {"k": 2.5, "env_k": "2.5", "rec_k": "2.5", "abs": 200}, probe["knob"]
+    assert probe["env"] == {**{k: rw.KEITH_RETRY_ENV[k] for k in rw.RETRY_ENV_KEYS}, "RETRY_K": "2.5"}
     # the analyzer the factory builds is still the keith-configured ToolAgent
     fp = probe["fingerprint"]
     assert fp["context_budget_tokens"] == 31744 and fp["max_output_tokens"] is None and fp["yield_seconds"] == 60.0
@@ -570,6 +630,10 @@ def test_dry_run_end_to_end():
         assert "REGIME WAVE  arm=flight  status=done" in summary and "CONTEXT_WINDOW=24576" in summary
         assert summary.count("\n") < 45, "summary must fit one screen"
         assert "RETRY" not in summary.split("\n  game")[0]     # stock arm: no retry line
+        ic = res["endpoint"]["identity_check"]
+        assert ic["profile"] == rw.DEFAULT_EXPECT_PROFILE and ic["profile_ok"] is True and ic["gpu_ok"] is True
+        assert "RTX PRO 6000" in ic["gpu_rows"][0] and res["expect_profile"] == rw.DEFAULT_EXPECT_PROFILE
+        assert "IDENTITY profile 'kv5-bf16-mtp3-c8-cg32'" in summary and "ok=True" in summary
         assert res["grafts"] == {"installed": {}, "status": {}}
         assert tel["aggregate"]["retries_total"] == 0 and tel["grafts"]["installed"] == {}
 
@@ -595,6 +659,11 @@ def test_dry_run_keith_retry_arm_end_to_end():
         assert res["grafts"]["installed"] == {"graft_retry": "retry: OK"}
         assert res["knob_overrides"] == {"RETRY_K": "0.2", "RETRY_ABS": "4", "RETRY_COOLDOWN": "3"}
         assert res["analyzer_env"]["RETRY_ENABLE"] == "1" and res["analyzer_env"]["RETRY_MAX"] == "2"
+        assert res["analyzer_env"]["RETRY_K"] == "0.2" and res["analyzer_env"]["RETRY_ABS"] == "4"   # knobs in the recorded env
+        arm_env = json.loads((out / "arm_env.json").read_text())
+        assert arm_env["RETRY_K"] == "0.2"
+        assert res["grafts"]["status"]["graft_retry"]["k"] == 0.2                                   # ...and seen by the graft
+        assert "'RETRY_K': '0.2'" in (out / "summary.txt").read_text()
         assert res["analyzer_env"]["LOCAL_ANALYZER_CONTEXT_WINDOW"] == "32768"      # still the keith window
         cfg = tel["aggregate"]["analyzer_status_config_first"]
         assert cfg == {"max_output_tokens": "server default", "context_budget_tokens": "31744", "yield_seconds": "60.0"}, cfg

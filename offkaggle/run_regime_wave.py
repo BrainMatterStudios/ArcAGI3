@@ -84,6 +84,11 @@ TOKEN_FILE = Path.home() / ".config/arc3/vllm_token"
 
 SERVED_MODEL_NAME = "Qwen/Qwen3.8-Flash-Next-NVFP4"
 DEFAULT_BASE_URL = "https://a-m-mobasher--arc3-flashnext-serve.modal.run/v1"
+# The serving profile every scored arm must run on (modal_flashnext_serve.PUBLIC25_VLLM_PROFILE_NAME)
+# and the GPU it must run on. Asserted against GET /arc3/identity in preflight — the two
+# 09-03 runs on this endpoint ran on the kv10 override; that must never again be silent.
+DEFAULT_EXPECT_PROFILE = "kv5-bf16-mtp3-c8-cg32"
+EXPECT_GPU_SUBSTRING = "RTX PRO 6000"
 
 # Pins (computed 2026-09-02; test_run_regime_wave.py re-derives them from the
 # trees and, when the session scratchpad is present, from keith's dataset copy).
@@ -524,10 +529,38 @@ def _root_url(base_url: str) -> str:
     return base[:-3] if base.endswith("/v1") else base
 
 
-def preflight(base_url: str, token: str, deadline_s: float) -> dict:
+def check_identity(identity, expected_profile: str, gpu_substring: str = EXPECT_GPU_SUBSTRING) -> dict:
+    """Hard gate on the endpoint's /arc3/identity: the serving profile and the
+    GPU rows must be what the arm was pre-registered on. Raises RuntimeError
+    with the observed values otherwise; returns the recorded check."""
+    if not isinstance(identity, dict) or not identity:
+        raise RuntimeError(
+            "ENDPOINT IDENTITY UNAVAILABLE: GET /arc3/identity returned no payload, so the serving "
+            f"profile cannot be attested (expected {expected_profile!r} on {gpu_substring!r}). Refusing to run.")
+    profile = identity.get("profile")
+    rows = list(((identity.get("host") or {}).get("gpu_rows")) or [])
+    gpu_ok = any(gpu_substring in str(r) for r in rows)
+    check = {"profile": profile, "expected_profile": expected_profile, "profile_ok": profile == expected_profile,
+             "gpu_rows": rows, "expected_gpu_substring": gpu_substring, "gpu_ok": gpu_ok}
+    if not check["profile_ok"]:
+        raise RuntimeError(
+            f"SERVING PROFILE MISMATCH: endpoint reports profile {profile!r}, this run expects "
+            f"{expected_profile!r} (the 09-03 keith/kv10 runs were silently on 'kv10-bf16-mtp3-c8-cg32-OVERRIDE'). "
+            f"Redeploy the endpoint on the expected profile, or pass --expect-profile {profile!r} to run on it "
+            f"DELIBERATELY (it is recorded in results.json).")
+    if not gpu_ok:
+        raise RuntimeError(
+            f"GPU MISMATCH: endpoint host gpu_rows={rows!r} do not contain {gpu_substring!r}; "
+            "a run on the fallback GPU is not comparable to the pre-registered arms. Refusing to run.")
+    return check
+
+
+def preflight(base_url: str, token: str, deadline_s: float,
+              expected_profile: str = DEFAULT_EXPECT_PROFILE) -> dict:
     """/v1/models unauthenticated (the exempt route; also wakes a scaled-to-zero
     container), /metrics with the bearer (proves auth + the telemetry route),
-    one tiny non-thinking completion (proves the chat route end to end)."""
+    one tiny non-thinking completion (proves the chat route end to end), then
+    GET /arc3/identity and ASSERT the serving profile + GPU (check_identity)."""
     import requests  # noqa: PLC0415
     base = base_url.rstrip("/")
     deadline = time.monotonic() + deadline_s
@@ -566,13 +599,23 @@ def preflight(base_url: str, token: str, deadline_s: float) -> dict:
     print(f"[regime] authenticated completion OK: {content[:40]!r} "
           f"(redirect legs: {len(r.history)})", flush=True)
     identity = None
+    identity_error = None
     try:
         ri = requests.get(f"{_root_url(base)}/arc3/identity", headers=hdr, timeout=120)
         if ri.status_code == 200:
             identity = ri.json()
-    except Exception:  # noqa: BLE001
+        else:
+            identity_error = f"HTTP {ri.status_code}"
+    except Exception as exc:  # noqa: BLE001
         identity = None
-    return {"models": models, "identity": identity, "preflight_redirect_legs": len(r.history)}
+        identity_error = f"{type(exc).__name__}: {str(exc)[:160]}"
+    if identity is None:
+        print(f"[regime] /arc3/identity unavailable ({identity_error})", flush=True)
+    identity_check = check_identity(identity, expected_profile)     # raises on mismatch — never silent
+    print(f"[regime] identity OK: profile={identity_check['profile']!r} gpu_rows={identity_check['gpu_rows']}",
+          flush=True)
+    return {"models": models, "identity": identity, "identity_check": identity_check,
+            "preflight_redirect_legs": len(r.history)}
 
 
 def fetch_metrics(base_url: str, token: str) -> str | None:
@@ -962,10 +1005,12 @@ class MockVLLM:
     exercise the harness's follow-up path; the rest call `python` with a
     real `action(...)`."""
 
-    def __init__(self, token: str, served_model: str = SERVED_MODEL_NAME, latency_s: float = 0.25) -> None:
+    def __init__(self, token: str, served_model: str = SERVED_MODEL_NAME, latency_s: float = 0.25,
+                 profile: str = DEFAULT_EXPECT_PROFILE) -> None:
         import http.server  # noqa: PLC0415
         self.token = token
         self.served_model = served_model
+        self.profile = profile          # what the mock's /arc3/identity reports (the preflight gate reads it)
         self.latency_s = latency_s
         self.lock = threading.Lock()
         self.state = {"calls": 0, "redirected": 0, "poll_with_auth": 0, "poll_without_auth": 0,
@@ -1023,7 +1068,10 @@ class MockVLLM:
                     self._reply(200, mock.metrics_text().encode(), "text/plain; version=0.0.4")
                     return
                 if path == "/arc3/identity":
-                    self._reply(200, json.dumps({"mock": True, "served_model_name": mock.served_model}).encode())
+                    self._reply(200, json.dumps({
+                        "mock": True, "served_model_name": mock.served_model, "profile": mock.profile,
+                        "host": {"gpu_rows": [f"0, NVIDIA RTX PRO 6000 Blackwell Server Edition (mock), "
+                                              f"97887 MiB, 580.95.05, 12.0"]}}).encode())
                     return
                 self._reply(404, b'{"error":"not found"}')
 
@@ -1240,11 +1288,15 @@ def render_summary(result: dict, telemetry: dict) -> str:
     ct = agg.get("client_completion_tokens_pooled") or {}
     cp = agg.get("client_prompt_tokens_pooled") or {}
     geo = result.get("geometry", {})
+    ic = (result.get("endpoint") or {}).get("identity_check") or {"profile": None, "expected_profile": result.get("expect_profile"),
+                                                                  "profile_ok": "SKIPPED", "gpu_ok": "SKIPPED", "gpu_rows": None}
     tpot_ms = (md.get("tpot_mean_s") * 1000.0) if md.get("tpot_mean_s") is not None else None
     lines = [
         f"REGIME WAVE  arm={result['arm']}  status={result['status']}  dry_run={result['dry_run']}  "
         f"games={tot.get('games')}  wall={_fmt((result.get('wall_s') or 0) / 3600.0, 2)} h",
         f"  endpoint {result.get('base_url')}  model {result.get('served_model')}",
+        f"  IDENTITY profile {ic.get('profile')!r} (expected {ic.get('expected_profile')!r}, ok={ic.get('profile_ok')}) | "
+        f"gpu ok={ic.get('gpu_ok')} {ic.get('gpu_rows')}",
         f"  geometry conc {geo.get('concurrency')} | {_fmt(geo.get('max_runtime_s_per_game'), 0)} s/game | "
         f"analyzer_timeout {_fmt(geo.get('analyzer_timeout'), 0)} | max_actions {geo.get('max_actions_per_game')} | "
         f"wave cap {_fmt(result.get('wave_cap_s'), 0)} s | public25 geometry: {geo.get('matches_public25')}",
@@ -1490,7 +1542,13 @@ def main(argv: list[str] | None = None) -> int:
                    help=f"whole-wave cap (default {WAVE_CAP_S:.0f}; dry-run {DRY_RUN_WAVE_CAP_S:.0f})")
     p.add_argument("--dry-run", action="store_true", help="loopback mock vLLM; no network")
     p.add_argument("--mock-latency-s", type=float, default=0.25)
-    p.add_argument("--skip-preflight", action="store_true")
+    p.add_argument("--skip-preflight", action="store_true",
+                   help="also skips the serving-profile/GPU identity gate (recorded as skipped)")
+    p.add_argument("--expect-profile", default=DEFAULT_EXPECT_PROFILE,
+                   help=f"serving profile /arc3/identity must report (default {DEFAULT_EXPECT_PROFILE}); "
+                        "the run refuses to start on any other profile")
+    p.add_argument("--mock-profile", default=None,
+                   help="dry-run only: the profile the mock identity reports (to exercise the gate)")
     p.add_argument("--preflight-timeout", type=float, default=2400.0)
     p.add_argument("--progress-every", type=float, default=120.0)
     p.add_argument("--knob", action="append", default=None, metavar="KEY=VALUE",
@@ -1512,7 +1570,8 @@ def main(argv: list[str] | None = None) -> int:
 
     mock = None
     if args.dry_run:
-        mock = MockVLLM(token, latency_s=args.mock_latency_s).start()
+        mock = MockVLLM(token, latency_s=args.mock_latency_s,
+                        profile=args.mock_profile or args.expect_profile).start()
         base_url = mock.base_url
         print(f"[regime] DRY RUN: mock vLLM on {base_url} (303 legs every 3rd call, text-only every 7th)", flush=True)
     else:
@@ -1537,12 +1596,19 @@ def main(argv: list[str] | None = None) -> int:
 
     endpoint = None
     if not args.skip_preflight:
-        endpoint = preflight(base_url, token, args.preflight_timeout)
+        endpoint = preflight(base_url, token, args.preflight_timeout, expected_profile=args.expect_profile)
+    else:
+        print(f"[regime] WARNING --skip-preflight: serving profile NOT attested (expected {args.expect_profile!r})",
+              flush=True)
+        endpoint = {"identity": None, "identity_check": {"skipped": True, "expected_profile": args.expect_profile,
+                                                          "profile": None, "profile_ok": "SKIPPED", "gpu_ok": "SKIPPED",
+                                                          "gpu_rows": None}}
 
     wave = Wave(arm=args.arm, base_url=base_url, token=token, out_dir=out_dir, game_ids=game_ids,
                 per_game_s=per_game_s, concurrency=args.concurrency, wave_cap_s=wave_cap_s,
                 dry_run=args.dry_run, progress_every_s=args.progress_every)
     wave.result["grafts"]["installed"] = grafts
+    wave.result["expect_profile"] = args.expect_profile
     if knobs:
         wave.result["knob_overrides"] = knobs
     wave.setup(recorded_env, stock, endpoint)

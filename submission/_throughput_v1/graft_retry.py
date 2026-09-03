@@ -408,19 +408,28 @@ def render_block(info: dict[str, Any]) -> str:
 
 def fire(agent: Any, st: RetryState, sess: Any, info: dict[str, Any], *, agent_mod: Any, arcengine: Any,
          transcript_path: Path | None) -> bool:
-    """Issue the RESET through the normal action path and arm the fresh-mind turn."""
+    """Arm the fresh-mind turn, then issue the RESET through the normal action path.
+
+    ORDER MATTERS (judge finding): every piece of bookkeeping that stops a
+    re-fire — st.fires, the cooldown anchor, the [RETRY] marker, the module
+    counters, the pending block — is committed BEFORE session._execute_action.
+    solver._execute_action commits the engine move first and only then writes
+    the runtime state / viewer payload (solver.py:694-731); if one of those
+    writes raises, the wrapper swallows it, and a post-hoc bookkeeping order
+    would leave the level armed to RESET again next turn. Returns True when the
+    engine call returned normally.
+    """
     knowledge = getattr(agent, "_summarized_knowledge", None)
-    quote = quote_note(knowledge)
-    action = arcengine.ActionInput(id=arcengine.GameAction.RESET, data={})
-    sess._execute_action(action, batch_index=1, batch_size=1, generated_tokens=0)
     idx = int(info["level_index"])
+    actions = int(info["actions"])
     st.fires[idx] = st.fires.get(idx, 0) + 1
-    st.last_fire_actions[idx] = _actions_on_level(sess, idx) or (int(info["actions"]) + 1)
+    st.last_fire_actions[idx] = actions + 1          # the RESET lands in this level's bucket
+    info["action_num"] = None
     try:
-        info["action_num"] = int(getattr(sess, "action_count", 0) or 0)
+        info["action_num"] = int(getattr(sess, "action_count", 0) or 0) + 1
     except Exception:  # noqa: BLE001
-        info["action_num"] = None
-    info["quote"] = quote
+        pass
+    info["quote"] = quote_note(knowledge)
     info["k"] = retry_k()
     info["max"] = retry_max()
     # (a) suppress the carried level-scoped note; cross_level_notes survives
@@ -442,6 +451,17 @@ def fire(agent: Any, st: RetryState, sess: Any, info: dict[str, Any], *, agent_m
         _STATE["retries_fired"] += 1
         _STATE["retry_log"].append({k: info[k] for k in ("game", "level", "actions", "baseline", "threshold",
                                                             "retry", "action_num")})
+    action = arcengine.ActionInput(id=arcengine.GameAction.RESET, data={})
+    try:
+        sess._execute_action(action, batch_index=1, batch_size=1, generated_tokens=0)
+    except Exception as exc:  # noqa: BLE001
+        # The engine may already have committed the RESET (history + bucket)
+        # before a runtime-state/viewer write failed; the bookkeeping above
+        # already stands, so this level cannot re-fire on the next turn.
+        _skip("reset_error")
+        _write_marker(agent_mod, transcript_path,
+                      f"[RETRY-ERROR] game={info['game']} level={info['level']} {type(exc).__name__}: {str(exc)[:160]}")
+        return False
     return True
 
 
@@ -501,8 +521,11 @@ def install() -> str:
                 if sess is not None:
                     check_clears(st, sess, agent_mod=agent_mod, transcript_path=transcript_path)
                     info = should_fire(st, sess, arcengine, kwargs.get("should_stop"))
-                    if info is not None and fire(self, st, sess, info, agent_mod=agent_mod, arcengine=arcengine,
-                                                 transcript_path=transcript_path):
+                    if info is not None:
+                        fire(self, st, sess, info, agent_mod=agent_mod, arcengine=arcengine,
+                             transcript_path=transcript_path)
+                        # read the LIVE session either way: a swallowed write error after
+                        # the engine committed the RESET still moved action_count
                         action_num = int(getattr(sess, "action_count", action_num) or action_num)
                         valid_actions = _engine_action_names(sess.game, arcengine)
             except Exception:  # noqa: BLE001

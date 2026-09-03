@@ -543,6 +543,69 @@ class RetryTests(unittest.TestCase):
         self.assertEqual(len(self._resets(sess_b)), 1)               # fresh per-level budget
         self.assertEqual(agent._retry.runtime_dir, other.parent)
 
+    # ------------------------------- 18 bookkeeping precedes the engine call
+    def test_18_partial_failure_after_engine_commit_cannot_refire(self) -> None:
+        """solver._execute_action commits the engine move, then writes runtime
+        state / viewer payload; if that write raises (swallowed by the wrapper)
+        the level must already be marked as retried — no second RESET next turn."""
+        agent = self._agent()
+        sess = self._session(baselines=(20, 30, 40))
+        sess.set_level_actions(0, 60)
+        real_execute = sess._execute_action
+
+        def commit_then_raise(action, **kw):
+            real_execute(action, **kw)                       # engine committed: history + bucket moved
+            raise OSError("viewer payload write failed")
+
+        sess._execute_action = commit_then_raise
+        captured = {}
+
+        def stock(s, sp, an, **k):  # noqa: ANN001
+            captured["action_num"] = an
+            captured["prompt"] = s._build_user_prompt(an, valid_actions=k.get("valid_actions"))
+            return self.agent_mod.AnalyzerTurnResult(step_executed=True)
+
+        self._turn(agent, sess, stock=stock)
+        self.assertEqual(len(self._resets(sess)), 1)
+        self.assertEqual(sess.game.game_run.actions_per_level[0], 61)
+        st = agent._retry
+        self.assertEqual(st.fires, {0: 1})
+        self.assertEqual(st.last_fire_actions, {0: 61})       # cooldown anchor recorded pre-call
+        self.assertEqual(tr._STATE["retries_fired"], 1)
+        self.assertEqual(tr._STATE["skips"].get("reset_error"), 1)
+        self.assertEqual(captured["action_num"], 61)          # live session count even after the error
+        self.assertIn("FRESH MIND", captured["prompt"])       # the block still rides the next prompt
+        text = self.transcript.read_text()
+        self.assertIn("[RETRY] game=tu93-test level=1 actions=60", text)
+        self.assertIn("[RETRY-ERROR] game=tu93-test level=1 OSError", text)
+        # next turn: same bucket, still over threshold, inside cooldown -> no re-fire
+        sess._execute_action = real_execute
+        sess.last_engine_action = "UP"
+        self._turn(agent, sess)
+        self.assertEqual(len(self._resets(sess)), 1)
+        self.assertEqual(tr._STATE["retries_fired"], 1)
+        self.assertEqual(self.transcript.read_text().count("[RETRY] game="), 1)
+
+    def test_19_marker_and_state_written_before_execute_action(self) -> None:
+        agent = self._agent()
+        sess = self._session(baselines=(20, 30, 40))
+        sess.set_level_actions(0, 60)
+        real_execute = sess._execute_action
+        seen = {}
+
+        def observe(action, **kw):
+            st = agent._retry
+            seen["fires"] = dict(st.fires)
+            seen["anchor"] = dict(st.last_fire_actions)
+            seen["counter"] = tr._STATE["retries_fired"]
+            seen["marker"] = "[RETRY] game=tu93-test level=1 actions=60" in self.transcript.read_text()
+            seen["pending"] = st.fresh_pending is not None
+            return real_execute(action, **kw)
+
+        sess._execute_action = observe
+        self._turn(agent, sess)
+        self.assertEqual(seen, {"fires": {0: 1}, "anchor": {0: 61}, "counter": 1, "marker": True, "pending": True})
+
     # ---------------------------------------------------------------- 17 status
     def test_17_status_shape(self) -> None:
         os.environ["RETRY_K"] = "2"

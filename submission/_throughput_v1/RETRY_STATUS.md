@@ -202,3 +202,34 @@ and `grafts.status.graft_retry` (the graft's own `retry_log`, `skips`).
 Token: `~/.config/arc3/vllm_token` (read into memory only). Pinned arm env =
 `keith` + `RETRY_ENABLE=1 RETRY_K=3 RETRY_ABS=200 RETRY_COOLDOWN=150 RETRY_MAX=2`;
 do not pass `--knob` for the scored read.
+
+## 7. Judge fixes applied (2026-09-03, SHIP-WITH-FIXES)
+
+1. **Serving-identity gate** (`offkaggle/run_regime_wave.py`): `preflight()` now
+   fetches `/arc3/identity` and calls `check_identity()`, which raises unless
+   `identity["profile"] == --expect-profile` (default `kv5-bf16-mtp3-c8-cg32`)
+   AND some `identity["host"]["gpu_rows"]` entry contains `RTX PRO 6000`; a
+   missing identity payload also refuses. The check (profile, expected, ok flags,
+   gpu_rows) is recorded in `results.json:endpoint.identity_check`, `expect_profile`
+   is recorded, and the summary carries an `IDENTITY` line. `--skip-preflight`
+   records the check as SKIPPED and warns. The dry-run mock reports the expected
+   profile (`--mock-profile` exercises the refusal). Tests: `test_identity_gate`
+   (recorded shape passes; the kv10 override, wrong/absent GPU rows, and a missing
+   payload are refused), `test_dry_run_refuses_wrong_serving_profile` (end to end).
+2. **Bookkeeping before the engine call** (`graft_retry.fire()`): `st.fires`, the
+   cooldown anchor, `retries_fired`/`retry_log`, the `[RETRY]` marker, the note
+   wipe and the pending block are all committed BEFORE `session._execute_action(RESET)`;
+   an exception from the engine call is caught, counted (`skips.reset_error`),
+   marked `[RETRY-ERROR] …` in the transcript, and the wrapper still refreshes
+   `action_num`/`valid_actions` from the live session. Tests 18 (commit-then-raise
+   cannot re-fire next turn) and 19 (state + marker observed inside the engine
+   call) added; 19/19 on both bundles; real-engine dry run PASS 11/11.
+3. **Knob-driven arm**: `--knob KEY=VALUE` is applied by `install_env()` before
+   `install_grafts()`; the graft reads env at call time. Recorded in
+   `results.json:knob_overrides`, `analyzer_env`, `arm_env.json`, the summary
+   `RETRY … flags {…}` line and a `KNOB OVERRIDES` line. Verified by the in-memory
+   probe (`RETRY_K=2.5` → `graft_retry.status()["k"] == 2.5`) and a dry run with
+   `--knob RETRY_K=2.5` (tu93 baseline 19 → threshold 48, no fire in 27 actions;
+   vc33 baseline 7 → threshold 18, fired 2). Launch shape:
+   `... --arm keith_retry --knob RETRY_K=2.5 ...` (the run is then labelled as not
+   the pinned arm env).
