@@ -410,3 +410,25 @@ this arm did not. Paired per-game Δlv vs the keith base and local score reporte
 (a RESET can only lower a level's efficiency; the bucket is never refunded). Levels total is
 NOT a verdict metric for this arm (25-game paired sd ≈ 1.2 lv; the mechanism touches ≤ 9
 levels). Calls/game and reasoning/call must stay within ±15% of the base. n=1.
+
+## RESULT — arm `keith_retry` (K=2.5, note-only dose; RTX PRO 6000 + kv5 asserted; 10:14→12:27 UTC)
+
+| metric | keith base | keith_retry |
+|---|---|---|
+| retries fired | — | **5** (r11l L3 @133/51, sk48 L1 @154/61, cd82 L2 @21/8, sp80 L1 @182/39, sb26 L2 @95/28) |
+| levels cleared after a retry | — | **0 / 5** |
+| collision cost (retried level the base had cleared, lost here) | — | 1 (sp80 L1: base 1 → 0) |
+| levels / lv per game | 36 / 1.44 | 40 / 1.60 (paired Δ +0.16, sd 0.92, SE 0.19; 8 up, 5 down — NOT a verdict metric) |
+| local score | 6.40 | 8.62 |
+| zero-level games | 2 | 4 |
+| calls/game · actions/game | 55.8 · 154 | 51.7 · 119 |
+| reasoning chars/call mean / median | 3,173 / 1,962 | 3,493 / 2,299 (+10% / +17%) |
+
+Pre-registered verdict: ENGAGEMENT NOT MET (5 < 6): the stuck-bucket set differs draw to
+draw (the judge's 9 predicted triggers came from the base draw; this draw produced 5). PRIMARY
+= 0 of 5 retried levels cleared afterwards — the note-only fresh-mind dose did not flip any
+stuck level in this draw; one retry destroyed a level the base cleared. The mechanism as
+dosed is unsupported. Remaining variant on record (not run): stronger dose — clear chat
+history / quote the last reasoning tail — but 0/5 with a note-only dose is not encouraging,
+and the per-draw stuck set is itself unstable, so the trigger is chasing noise. Recommendation:
+do not spend more on this lever unless Ahmed wants the stronger-dose arm explicitly.
