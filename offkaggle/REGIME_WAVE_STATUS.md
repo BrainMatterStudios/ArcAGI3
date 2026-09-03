@@ -386,22 +386,27 @@ runaway games. Rider status: worth carrying as the FIRST counterbalanced Kaggle 
 the byte-copy base (same GPU, same free memory ⇒ same 6.42x), not a reason to alter the base.
 Modal cost this arm ≈ 2.5 h RTX PRO 6000 + the voided 12-min attempt.
 
-## PRE-REGISTERED — arm `keith_retry` (fresh-mind level retry; written before launch, 09-03 ~10:15 UTC)
+## PRE-REGISTERED — arm `keith_retry` (fresh-mind level retry) — REVISED after the judge, before launch (09-03 ~10:50 UTC)
 
-Knob: graft_retry installed in memory on the keith base (RETRY_ENABLE=1, K=3× human baseline,
-ABS=200, COOLDOWN=150, MAX=2 per level); stock bytes sha unchanged; serving = keith profile
-(KV 5 GiB) on the RTX PRO 6000 (verify identity). Hypothesis: stuck levels are one wrong
-hypothesis pursued to the clock (loss-ledger); a level RESET plus explicit abandonment of the
-stale note plus a forced alternative-hypothesis step clears more stuck levels; each cleared
-level unlocks a fresh bucket. Counter-hypothesis on record: budget-based triggers cannot tell
-"wrong hypothesis" from "slow correct execution"; resets cost actions and may cut a level that
-was about to clear (08-27: depth-by-budget dead; 08-30: retry-replay accounted for 46% of
-blown-level actions).
-Reading rules: ENGAGEMENT = retries fired ≥ 15 across the 25 games (else the trigger did not
-bind at K=3). Primary telemetry: levels cleared AFTER a retry fired on that level
-([RETRY-CLEAR]) — ≥ 6 = the mechanism works; 1–5 = weak; 0 = dead. Secondary: actions in
-never-clearing buckets (base ≈ 60%), zero-level games (base 2), calls/game and reasoning
-per call must stay within ±15% of the base (else the regime changed in kind). Levels (base
-36): ≥ 48 = STEP candidate → counterbalanced Kaggle pair on the byte-copy base after 09-05;
-30–47 = no step (report [RETRY-CLEAR] count as the durable output); < 30 = harmful (resets
-destroying progress) — count levels lost after a retry. n=1; levels provisional.
+The first draft (K=3; retries ≥ 15; RETRY-CLEAR ≥ 6; levels ≥ 48) was withdrawn unlaunched:
+the judge computed from the base arm that only 7 stuck buckets exceed 3× baseline, so those
+thresholds were unreachable by construction. Also the rig was still deployed with the kv10
+override; it is redeployed at KV 5 GiB and the runner now asserts profile + GPU in preflight.
+
+Knob: graft_retry on the keith base, RETRY_K=2.5 (ABS 200, COOLDOWN 150, MAX 2), serving =
+keith profile kv5 on the RTX PRO 6000 (asserted). Dose is NOTE-ONLY (the quoted "abandoned
+hypothesis" is the labelled world-model note, updated on ~11% of turns; chat history kept) —
+a stronger dose (quote the last reasoning tail / clear history) is the follow-up arm if this
+one engages but does not flip levels.
+Predicted trigger set from the base arm at K=2.5 (9 stuck buckets): sc25 L2, tn36 L3, sb26 L2,
+cd82 L2, wa30 L2, sp80 L2, su15 L2 (the seven ≥ 3×) plus two more between 2.5× and 3×; plus
+2 COLLISIONS — levels the base CLEARED past the threshold (tn36 L1 at 136 vs 96; r11l L1 at
+101 vs 66) that this graft would reset first.
+Reading rules: ENGAGEMENT = retries fired ≥ 6. PRIMARY = the per-(game, level) outcome table
+on every retried level: cleared after retry ([RETRY-CLEAR]) vs not; ≥ 3 clears among ~9 fires
+= mechanism works (carry to a stronger-dose arm and a Kaggle pair); 1–2 = weak; 0 = dead.
+COLLISION COST reported in every band: retried (game, level) pairs that the base cleared and
+this arm did not. Paired per-game Δlv vs the keith base and local score reported alongside
+(a RESET can only lower a level's efficiency; the bucket is never refunded). Levels total is
+NOT a verdict metric for this arm (25-game paired sd ≈ 1.2 lv; the mechanism touches ≤ 9
+levels). Calls/game and reasoning/call must stay within ±15% of the base. n=1.
