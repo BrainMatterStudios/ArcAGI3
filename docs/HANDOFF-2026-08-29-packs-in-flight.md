@@ -477,3 +477,13 @@ Plan: byte-copy of keith V14 commits automatically at the Sat 00:00Z quota reset
 fly 09-05 (Ahmed's go). Then the first counterbalanced Kaggle pair = kv10 on that base.
 Original candidates still standing: thinking-termination control; runaway-game containment.
 09-04 slot: no committed version worth a slot beyond redraws — Ahmed's call (hold or redraw).
+
+## 21. 09-04 09:26 UTC — Flash-Next redraw #3 scored 1.78 (in-band); our slow profile is pinned at ~1.87
+
+Sub 55996715 → 1.78. The Flash-Next-under-our-profile distribution is now n=3: 1.88, 1.94, 1.78
+(mean 1.87, sd 0.08 — tighter than the 27B family's 0.17-0.30). The public-profile forks sit at
+2.8–3.4; the gap is the analyzer caps + serving regime, reproduced on Modal (0.88 vs 1.44
+lv/game on the same server). 09-03 Modal program closed: yield neutral, KV10 +0.28 (no step),
+fresh-mind retry unsupported (5 fires, 0/5 clears), Stage-0 lane dead. Next: the byte-copy of
+keithtyser V14 commits automatically at Sat 09-05 00:00 UTC (scripts/push_keith_copy_when_free.sh)
+→ attest per J-judge.md → fly 09-05 on Ahmed's go. Then kv10 as the first counterbalanced pair.
