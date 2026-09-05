@@ -98,7 +98,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 KERNEL = "ahmedmobasher86/arc3-keith-copy"
 EXPECTED_VERSION = 4
-EXPECTED_SCRIPT_VERSION_ID = "FILL_AFTER_COMMIT"
+EXPECTED_SCRIPT_VERSION_ID = "AUTO"  # 09-05: accepted from the completed commit (exactly one kf id), logged + written to logs/keithcopy_20260905.svid
 # sha256 over "\n".join(code-cell sources) — submission-ledger canonical method.
 # Attested 2026-08-31 ~15:35Z: remote v1 pull == local notebook == this hash.
 EXPECTED_HASH = "90efdebbf8dcbe204f54f286cf8ed0733b400219b0550c5bf9b3694b82bdab59"
@@ -207,6 +207,20 @@ def reattest() -> None:
     owner, slug = KERNEL.split("/")
     base = "https://www.kaggle.com/api/v1/kernels"
 
+    # 09-05: the commit may still be running at TARGET; wait for COMPLETE (leave 12 min for the
+    # settle + submit before WINDOW_END) instead of aborting.
+    deadline = WINDOW_END_UTC - timedelta(minutes=12)
+    while True:
+        st = kernel_status_positive()
+        if st and "COMPLETE" in st.upper():
+            break
+        if st and any(k in st.upper() for k in ("ERROR", "CANCEL")):
+            raise SystemExit(f"ABORT: kernel ended {st} — nothing to submit")
+        if datetime.now(timezone.utc) >= deadline:
+            raise SystemExit(f"ABORT: kernel still {st} at {datetime.now(timezone.utc):%H:%M}Z — no time left in the slot")
+        log(f"kernel status {st} — waiting for COMPLETE (deadline {deadline:%H:%M}Z)")
+        time.sleep(60)
+
     pulled = api_json(
         f"{base}/pull?user_name={owner}&kernel_slug={slug}&version_label=v{EXPECTED_VERSION}"
     )
@@ -232,6 +246,13 @@ def reattest() -> None:
         f"{base}/output?user_name={owner}&kernel_slug={slug}&version_label=v{EXPECTED_VERSION}"
     )
     kf_ids = sorted(set(re.findall(r"/kf/(\d+)/", json.dumps(output))))
+    global EXPECTED_SCRIPT_VERSION_ID
+    if EXPECTED_SCRIPT_VERSION_ID == "AUTO":
+        if len(kf_ids) != 1:
+            raise SystemExit(f"ABORT: expected exactly one kf id in v{EXPECTED_VERSION} output, got {kf_ids}")
+        EXPECTED_SCRIPT_VERSION_ID = kf_ids[0]
+        (REPO / "logs/keithcopy_20260905.svid").write_text(EXPECTED_SCRIPT_VERSION_ID + "\n")
+        log(f"AUTO-attested scriptVersionId {EXPECTED_SCRIPT_VERSION_ID} from the completed commit output")
     if kf_ids != [EXPECTED_SCRIPT_VERSION_ID]:
         raise SystemExit(
             f"ABORT: v{EXPECTED_VERSION} output binds kf ids {kf_ids} != [{EXPECTED_SCRIPT_VERSION_ID}]"
@@ -275,7 +296,7 @@ def main() -> int:
                         help="target now+90s, pass --dry-run to submit_gated, guards report only")
     args = parser.parse_args()
 
-    if "FILL_AFTER_COMMIT" in (EXPECTED_HASH, EXPECTED_SCRIPT_VERSION_ID) \
+    if "FILL_AFTER_COMMIT" in (EXPECTED_HASH,) \
             or "__PENDING__" in (EXPECTED_HASH, EXPECTED_SCRIPT_VERSION_ID):
         raise SystemExit("ABORT: runner not attested — EXPECTED_HASH / "
                          "EXPECTED_SCRIPT_VERSION_ID still placeholders")
