@@ -487,3 +487,20 @@ lv/game on the same server). 09-03 Modal program closed: yield neutral, KV10 +0.
 fresh-mind retry unsupported (5 fires, 0/5 clears), Stage-0 lane dead. Next: the byte-copy of
 keithtyser V14 commits automatically at Sat 09-05 00:00 UTC (scripts/push_keith_copy_when_free.sh)
 → attest per J-judge.md → fly 09-05 on Ahmed's go. Then kv10 as the first counterbalanced pair.
+
+## 22. 09-05 23:24 UTC — keith V14 byte-copy FLEW (sub 56042273) after a mount-layout fight
+
+The 00:13Z auto-push (v1) and a re-push (v2) both ERRORed at t=7s: on this account's GPU sessions
+Kaggle sometimes mounts inputs in the SHORT layout (/kaggle/input/<slug>, no competitions/ or
+datasets/<owner>/ prefixes) — the 08-15 lesson again. v3 (wait for the long-form path) proved the
+mount never appears; v4 resolves the competition root in either layout and waits for a non-empty
+wheels dir (install cell + one path in the run cell are the ONLY deviations from the public V14).
+Both of the account's GPU sessions were held by rsna-knee-train kernels; Ahmed stopped one
+(standing rule now: ONE GPU session at a time, never stop non-ARC kernels). v4 commit
+(svid 347562879, hash 90efdebb…) COMPLETE 23:14Z: profile kv5, "105,202 tokens / 3.21x" line
+identical to keith's, 243 tok/s, 0 restarts, 25/25 audit, LOCAL 42 levels (1.68/game) score 10.42
+(keith's own commit: 1.44 / 6.76). Runner auto-attested + submitted 23:24Z with Ahmed's explicit go.
+READING RULE (pre-registered in the message): baseline family n=3 mean 1.87; field draws
+2.80/3.22/3.38; >=2.4 transfer confirmed (new base); 1.9–2.4 partial (diff telemetry); <1.9 not
+byte-equivalent in effect (pull the commit log). Score ~08:30–10:30Z 09-06.
+Next: kv10 rider as the first counterbalanced pair on this base (Modal: +0.28 lv, first full win).
