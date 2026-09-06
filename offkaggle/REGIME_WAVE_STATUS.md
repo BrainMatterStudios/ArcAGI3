@@ -539,3 +539,12 @@ despite 145 s queued calls. The 180 s arm (34 lv) only allowed ~1 extra call (ca
 (base 36): ≥ 48 → STEP candidate (fly as a one-env-var change after a judge pass); 40–47 →
 positive, redraw; < 40 → dead. Risk on record: long turns starve other games of the 3.21x
 server (queue grows); read e2e, calls/game and zero-level games.
+
+## RESULT — half-concurrency geometry wave (conc 14, 3960 s/game; 20:35→22:51 UTC)
+
+32 levels (1.28/game) vs base 36; score 6.12 vs 6.40; zero-level games 6 vs 2; calls/game 56.8;
+e2e 68 s (engaged on latency) but yields 37% (NOT engaged: < 25% required) and calls/turn 1.15 —
+the 68 s call still exceeds the 60 s turn budget, so turns still end after one call. DEAD by rule.
+Mechanistic reading: what the wall instrument exploited was calls faster than the turn budget
+(16–20 s vs 60 s → 1.66 calls/turn), not shorter games. The live-legal version of that is the
+turn budget itself (yield 900 s), now running at the live geometry.
