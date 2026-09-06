@@ -452,3 +452,11 @@ counts and launch commands in `submission/_throughput_v1/EVID_STATUS.md`. NOT la
   >= 80 % of wall turns); summary `AID` and `DRAWS` lines, `evid`/`hypo`/`wall%` columns.
 * Dry runs of all three arms with `--games cd82,dc22,lf52 --draws 2 --per-game-s 60` PASS
   (6 runs each; [EVID] on 350/350 executed turns, [HYPO] on 361/361 turns, UPSCALE 8 attested).
+
+## fp8-KV boot smoke (09-06, judge item 3) — FAILED to boot
+
+`--kv-cache-dtype fp8` on this pinned nightly (0.1.dev20073+g8e685d198, RadixArk NVFP4 + PLE patch):
+EngineCore initialization failed ("vLLM exited rc=1 before ready"); the worker's root-cause line
+was not captured (Modal's log tail had scrolled). The zero-byte ×2-streams idea is CLOSED unless a
+future rider run captures the root cause from the start of the boot log (~$0.5). Rig redeployed at
+the base profile (kv5, auto); KV dtype override stays available via ARC3_KV_CACHE_DTYPE.
