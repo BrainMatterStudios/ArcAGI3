@@ -170,6 +170,7 @@ FLIGHT_ANALYZER_ENV = {
 # 09-03 original single-knob arm on the keith base: the 60 s turn yield (which cuts ~43% of the
 # base's turns) raised to 180 s; everything else identical to `keith`.
 KEITH_YIELD180_ENV = {**KEITH_ANALYZER_ENV, "LOCAL_ANALYZER_YIELD_SECONDS": "180"}
+KEITH_YIELD900_ENV = {**KEITH_ANALYZER_ENV, "LOCAL_ANALYZER_YIELD_SECONDS": "900"}  # 09-06: within-turn multi-step at the live cadence
 # 09-03 fresh-mind level retry arm: the keith base + graft_retry installed in memory at
 # wave start (ARM_GRAFTS). The RETRY_* keys are the graft's own flags, read at call time:
 # a level RESET + "FRESH MIND" prompt block once a level's action bucket reaches
@@ -191,7 +192,7 @@ KEITH_HYPO_ENV = {**KEITH_ANALYZER_ENV, "HYPO_ENABLE": "1"}
 #      call time (64x64 grid -> 512x512 px PNG instead of 256x256; 16-px patches x 2 merge = 32 px per
 #      vision token -> 256 tokens/image instead of 64)
 KEITH_UP8_ENV = {**KEITH_ANALYZER_ENV, "MULTIMODAL_UPSCALE": "8"}
-ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV,
+ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV, "keith_yield900": KEITH_YIELD900_ENV,
            "keith_retry": KEITH_RETRY_ENV, "keith_evid": KEITH_EVID_ENV, "keith_hypo": KEITH_HYPO_ENV,
            "keith_up8": KEITH_UP8_ENV}
 ARMS = tuple(ARM_ENV)

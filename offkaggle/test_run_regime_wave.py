@@ -121,7 +121,7 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert diff == {"LOCAL_ANALYZER_CONTEXT_WINDOW", "LOCAL_ANALYZER_MAX_OUTPUT"}, diff
     assert (rw.KEITH_ANALYZER_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"], rw.KEITH_ANALYZER_ENV["LOCAL_ANALYZER_MAX_OUTPUT"]) == ("32768", "0")
     assert (rw.FLIGHT_ANALYZER_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"], rw.FLIGHT_ANALYZER_ENV["LOCAL_ANALYZER_MAX_OUTPUT"]) == ("24576", "4096")
-    assert rw.ARMS == ("keith", "flight", "keith_yield180", "keith_retry", "keith_evid", "keith_hypo", "keith_up8")
+    assert rw.ARMS == ("keith", "flight", "keith_yield180", "keith_yield900", "keith_retry", "keith_evid", "keith_hypo", "keith_up8")
     # the original single-knob arm differs from the keith base on exactly the yield key
     d2 = {k for k in set(rw.KEITH_ANALYZER_ENV) | set(rw.KEITH_YIELD180_ENV)
           if rw.KEITH_ANALYZER_ENV.get(k) != rw.KEITH_YIELD180_ENV.get(k)}

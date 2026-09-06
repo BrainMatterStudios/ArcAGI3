@@ -508,8 +508,10 @@ base → not a step; rider status needs the mechanism counts (deferred). HYPO �
 worse). UP8 — live but no advantage → dead. CLOCK CUE — refuted (long clock passes dc22 2/2).
 THE FINDING: at the queue-free cadence (e2e ~16-20 s, yields ~5%) the unmodified base passes dc22's
 wall 4/4 within 60 calls; in the queued live regime (e2e ~145 s, yields 43-49%) it passed 0/4 with
-the same call count. Yielded turns are not productive turns (the harness re-issues the turn; see
-tool_agent yield path) — the queued regime delivers roughly half the productive calls per game.
+the same call count. CORRECTION (tool_agent.py:1777-1785, 1904, 1969): a yield never discards a response — the 60 s turn
+budget is checked between steps, so with 145 s calls EVERY turn ends after ONE call (calls/turn 1.02)
+and the within-turn analysis→act tool loop never runs; queue-free, turns average 1.66 calls. The
+mechanism is within-turn multi-step continuity, not wasted compute.
 Cadence, not the clock and not any prompt aid, is what moved a deterministic wall.
 
 ## PRE-REGISTERED — "half-concurrency" geometry wave (launched 09-06 ~20:05 UTC, before data)
@@ -527,3 +529,13 @@ max_runtime_s_per_game 7920→3960) after a judge pass; 40–47 → positive-not
 (counterbalance: run it FIRST next session); < 40 → the cadence effect does not survive the
 shorter per-game time → dead; per-game VOID rules as before (errors, preemptions, truncation >1%).
 Secondary: zero-level games (base 2), calls/game, actions/game, reasoning/call within ±15%.
+
+## PRE-REGISTERED — `keith_yield900` at the LIVE geometry (queued behind the half-concurrency wave)
+
+Knob: LOCAL_ANALYZER_YIELD_SECONDS 60 → 900 (= analyzer_timeout) on the keith base, conc 28,
+7920 s — a one-env-var live-legal change that lets a turn run several calls (analysis → act)
+despite 145 s queued calls. The 180 s arm (34 lv) only allowed ~1 extra call (calls/turn 1.39);
+900 s allows ~6. RULES: ENGAGEMENT = calls/turn ≥ 2.0 AND yielded share < 15%. PRIMARY levels
+(base 36): ≥ 48 → STEP candidate (fly as a one-env-var change after a judge pass); 40–47 →
+positive, redraw; < 40 → dead. Risk on record: long turns starve other games of the 3.21x
+server (queue grows); read e2e, calls/game and zero-level games.
