@@ -1,0 +1,24 @@
+REGIME WAVE  arm=keith_evid  status=done  dry_run=False  games=6  wall=0.64 h
+  endpoint https://a-m-mobasher--arc3-flashnext-serve.modal.run/v1  model Qwen/Qwen3.8-Flash-Next-NVFP4
+  IDENTITY profile 'kv5-bf16-mtp3-c8-cg32' (expected 'kv5-bf16-mtp3-c8-cg32', ok=True) | gpu ok=True ['0, NVIDIA RTX PRO 6000 Blackwell Server Edition, 97887 MiB, 580.95.05, 12.0']
+  geometry conc 3 | 1500 s/game | analyzer_timeout 900 | max_actions None | max_calls 60 | wave cap 9000 s | public25 geometry: False
+  stock agent sha 74ab69105240 (== june_stock pin) | framework f68b6850b242 | pkls pinned
+  ARM KNOB  CONTEXT_WINDOW=32768  MAX_OUTPUT=0  UPSCALE=4 ([256, 256] px, ~64 vision tok/img derived)  (yield 60 s, temp 0.6/0.95/20, thinking true); harness-reported {'max_output_tokens': 'server default', 'context_budget_tokens': '31744', 'yield_seconds': '60.0'}
+  SCORE 4.49 total | levels 6 (1.00/game) | actions 917 (153/game) | zero-level games 2 | states {'gave_up': 6}
+  CADENCE calls/game 59.5 | turns/game 39.2 | distinct steps/game 36.3 | actions/call 2.57 | calls/turn 1.52
+  REASONING chars/call mean 3515 median 2368 p90 7783 (n=357) | no-tool-call share 1.4% | length-finish share 0.6% | finish {'tool_calls': 352, 'length': 2, 'stop': 3}
+  TURNS step-executed 90.2% | yielded 9.8% | outcomes {'step_executed': 212, 'yielded': 23}
+  CLIENT e2e/call mean 17.9 s median 13.4 s p90 34.3 s | prompt tok/call 20700 | completion tok/call 1367 | redirected posts 0 | post errors 0
+  VLLM   requests 357 | e2e mean 17.2 s | queue 0.0 s | inference 17.1 s | TPOT 11.0 ms | gen tok/req 1367 | gen tok/s 211 | MTP accept 57.0% | preemptions 0 | prefix hit - | finished {'abort': 0.0, 'error': 0.0, 'length': 2.0, 'repetition': 0.0, 'stop': 355.0}
+  REF keith V14 commit: 55 calls/game, reasoning 3406/2206, 53 turns/game, e2e 142 s, queue 124 s, MTP 60%, 1.44 lv/game, 6.76 pts
+  AID    [EVID] 212 (35.3/run) level flags 6 | engagement wall 100.0% (133/133) all 100.0% || [HYPO] 0 (0.0/run) | engagement wall 0.0% (0/153) all 0.0% | grafts {'graft_evidence': 'evidence: OK'} | flags {'EVID_ENABLE': '1', 'EVID_MAX_ENTRIES': '40', 'EVID_MAX_CHARS': '1500', 'EVID_TRACE': '1'}
+  WALL   attempts 2/6 (L2 reached 4; attempt = L2 with >= 30 calls left) | passes 2 (level 3 reached) | void 1 {'cd82-fb555c5d_p1': ['length_finish_share=0.035']} | calls@L2 {'cd82-fb555c5d_p0': None, 'cd82-fb555c5d_p1': 31, 'dc22-fdcac232_p0': 16, 'dc22-fdcac232_p1': None, 'lf52-271a04aa_p0': 32, 'lf52-271a04aa_p1': 13} | UPTAKE wall 7.8% (12/153) all 9.4%
+  FIRST-CALL prompt_tokens (n_messages==2) mean 4059 n=6 [4059..4060] | keith baseline ~4050 | delta +9 | UPSCALE=4: up8 expects ≈ +192 (+0 => processor downscaled = no-op; >> => geometry differs)
+  DRAWS 2 | levels per (game, draw): {'cd82-fb555c5d': [0, 2], 'dc22-fdcac232': [2, 0], 'lf52-271a04aa': [1, 1]}
+  run               lv/n    act  calls turns reas_mean  len%  notool%  e2e_s   score  retry  evid  hypo  wall%  upt%  c@L2 att void  state
+  cd82-fb555c5d_p0    0/6    121    60    46      3301      -       -   16.2    0.00    0/0    45     0 100.0%  4.3%  None   -    -  gave_up
+  cd82-fb555c5d_p1    2/6    104    57    38      5710   3.5%    5.3%   26.0    9.97    0/0    31     0 100.0%  0.0%    31   - VOID  gave_up
+  dc22-fdcac232_p0    2/6    160    60    36      2628      -       -   14.9   14.29    0/0    33     0 100.0%  7.1%    16   Y    -  gave_up
+  dc22-fdcac232_p1    0/6    134    60    27      4718      -       -   21.6    0.00    0/0    21     0 100.0% 11.1%  None   -    -  gave_up
+  lf52-271a04aa_p0   1/10    135    60    53      1910      -    1.7%   12.8    0.84    0/0    52     0 100.0%  3.8%    32   -    -  gave_up
+  lf52-271a04aa_p1   1/10    263    60    35      2931      -    1.7%   16.1    1.82    0/0    30     0 100.0% 17.2%    13   Y    -  gave_up

@@ -491,3 +491,39 @@ CADENCE (queue-free / no yields) carries the effect, the clock does not; dc22 0/
 the CLOCK CUE carries it → build a "clock compression" graft (report a compressed time_remaining to
 the model; harness timing untouched) as the next single-knob arm on the full 25-game geometry.
 Mixed (1 pass) → one more round each.
+
+## RESULT — 3-wall instrument (5 arms, 16:34→19:51 UTC, ≈$15)
+
+Walls cd82 L2 / dc22 L2 / lf52 L2, 2 draws each, conc 3, 60 calls, RTX PRO 6000 kv5 (identity OK all arms).
+| arm | cd82 lv | dc22 lv | lf52 lv | valid passes | uptake | reasoning/call |
+|---|---|---|---|---|---|---|
+| base, 1500 s clock | 2(void) / 0 | **2 / 2** | 1 / 1 | 2 (+1 void) | — | 3040 |
+| base, 7920 s clock | 1 / 1 | **2 / 2** | 1 / 1 | 2 (dc22 p0 reached L2 at call 32 → not an "attempt" but passed) | — | 3245 |
+| evid | 0 / 2(void) | 2 / 0 | 1 / 1 | 1 (+1 void) | 7.8% | 3515 |
+| hypo | 1 / 2(void) | 1 / 0 | 1(void) / 1 | 0 | 0.8% | 4533 |
+| up8 (attested +201 tok) | 2(void) / 1 | 1 / 0 | 2 / 1 | 1 (+1 void) | — | 3346 |
+Historical full-length base (5 runs, 55 calls/game, queued, 43% yields): these walls 0/14.
+VERDICTS (pre-registered): EVID — not engaged (uptake < 30%), no pass advantage over the same-geometry
+base → not a step; rider status needs the mechanism counts (deferred). HYPO — dead (uptake 0.8%,
+worse). UP8 — live but no advantage → dead. CLOCK CUE — refuted (long clock passes dc22 2/2).
+THE FINDING: at the queue-free cadence (e2e ~16-20 s, yields ~5%) the unmodified base passes dc22's
+wall 4/4 within 60 calls; in the queued live regime (e2e ~145 s, yields 43-49%) it passed 0/4 with
+the same call count. Yielded turns are not productive turns (the harness re-issues the turn; see
+tool_agent yield path) — the queued regime delivers roughly half the productive calls per game.
+Cadence, not the clock and not any prompt aid, is what moved a deterministic wall.
+
+## PRE-REGISTERED — "half-concurrency" geometry wave (launched 09-06 ~20:05 UTC, before data)
+
+Hypothesis: the live loss is queue-induced yield waste. Live-legal fix with the SAME 9 h budget:
+run games at concurrency 14 for 3,960 s each (110 games / 14 = 8 waves × 1.1 h = 8.8 h) instead
+of 28 × 7,920 s (4 waves × 2.2 h). Expected: queue ≈ half (3.21x KV vs 14 waiting instead of 28),
+e2e ≈ 70-80 s, yields ≈ 15-25%, productive calls per game ≥ the current 55 in half the time; and
+74% of clears happen in the first hour anyway (loss-ledger-2).
+Rig arm: `keith --concurrency 14 --per-game-s 3960 --games all` (two batches of 14 + 11, ≈2.2 h
+wall, ≈$9), read against the 25-game base (36 levels, 1.44/game; 55.8 calls, 43% yields).
+RULES: ENGAGEMENT = yielded share < 25% AND client e2e < 90 s. PRIMARY = levels: ≥ 48 → STEP
+candidate → fly on Kaggle as a two-constant change of the flown v4 notebook (concurrency 28→14,
+max_runtime_s_per_game 7920→3960) after a judge pass; 40–47 → positive-not-step, one more draw
+(counterbalance: run it FIRST next session); < 40 → the cadence effect does not survive the
+shorter per-game time → dead; per-game VOID rules as before (errors, preemptions, truncation >1%).
+Secondary: zero-level games (base 2), calls/game, actions/game, reasoning/call within ±15%.
