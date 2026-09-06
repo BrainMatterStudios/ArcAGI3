@@ -117,6 +117,7 @@ PUBLIC25_VLLM_PROFILE_ENV = {
 # injected into the container as a secret env). Everything else in the profile is untouched.
 # Effective values are read at call time so the identity endpoint reports what actually ran.
 KV_OVERRIDE_KEY = "ARC3_KV_CACHE_MEMORY_BYTES"
+KV_DTYPE_OVERRIDE_KEY = "ARC3_KV_CACHE_DTYPE"   # 09-06: judge item — fp8 KV = 2x streams for 0 bytes, if the runtime supports it
 
 
 def effective_profile_env() -> dict[str, str]:
@@ -125,15 +126,22 @@ def effective_profile_env() -> dict[str, str]:
     if override:
         int(override)  # must be an integer byte count
         env["TAAF_VLLM_KV_CACHE_MEMORY_BYTES"] = override
+    dt = os.environ.get(KV_DTYPE_OVERRIDE_KEY, "").strip()
+    if dt:
+        assert dt in ("auto", "fp8", "fp8_e4m3", "fp8_e5m2"), dt
+        env["TAAF_VLLM_KV_CACHE_DTYPE"] = dt
     return env
 
 
 def effective_profile_name() -> str:
     env = effective_profile_env()
-    if env["TAAF_VLLM_KV_CACHE_MEMORY_BYTES"] == PUBLIC25_VLLM_PROFILE_ENV["TAAF_VLLM_KV_CACHE_MEMORY_BYTES"]:
+    if env == PUBLIC25_VLLM_PROFILE_ENV:
         return PUBLIC25_VLLM_PROFILE_NAME
     gib = int(env["TAAF_VLLM_KV_CACHE_MEMORY_BYTES"]) / 2**30
-    return PUBLIC25_VLLM_PROFILE_NAME.replace("kv5-", f"kv{gib:g}-") + "-OVERRIDE"
+    name = PUBLIC25_VLLM_PROFILE_NAME.replace("kv5-", f"kv{gib:g}-")
+    if env["TAAF_VLLM_KV_CACHE_DTYPE"] != "auto":
+        name = name.replace("-bf16-", f"-{env['TAAF_VLLM_KV_CACHE_DTYPE']}-")
+    return name + "-OVERRIDE"
 
 
 SPECULATIVE_CONFIG = json.dumps(
@@ -144,7 +152,7 @@ def vllm_cmd(model_dir: str) -> list[str]:
     """Keith's serving_setup.server_command(), token for token
     (vllm-server-identity.json argv); only <model_dir> is host-specific."""
     prof = effective_profile_env()
-    return [
+    cmd = [
         IMAGE_PYTHON, "-m", "vllm.entrypoints.cli.main", "serve", model_dir,
         "--served-model-name", SERVED_MODEL_NAME,
         "--host", VLLM_HOST,
@@ -171,6 +179,9 @@ def vllm_cmd(model_dir: str) -> list[str]:
         "--disable-uvicorn-access-log",
         "--uvicorn-log-level", "info",
     ]
+    if prof["TAAF_VLLM_KV_CACHE_DTYPE"] != "auto":   # override only; keith's argv is unchanged otherwise
+        cmd += ["--kv-cache-dtype", prof["TAAF_VLLM_KV_CACHE_DTYPE"]]
+    return cmd
 
 
 # --- the server process environment (KEITH_REGIME.md §4) --------------------
@@ -599,7 +610,7 @@ if modal is not None:
         memory=MEMORY_MIB,
         volumes={CACHE_DIR: hf_cache_vol},
         secrets=[modal.Secret.from_name(SECRET_NAME),
-                 modal.Secret.from_dict({KV_OVERRIDE_KEY: os.environ.get(KV_OVERRIDE_KEY, "")})],
+                 modal.Secret.from_dict({KV_OVERRIDE_KEY: os.environ.get(KV_OVERRIDE_KEY, ""), KV_DTYPE_OVERRIDE_KEY: os.environ.get(KV_DTYPE_OVERRIDE_KEY, "")})],
         scaledown_window=IDLE_TIMEOUT_S,   # scale to zero after 15 min idle
         max_containers=MAX_CONTAINERS,     # never a surprise second GPU
         timeout=STARTUP_TIMEOUT_S,
