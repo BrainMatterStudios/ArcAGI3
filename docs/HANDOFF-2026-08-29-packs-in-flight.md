@@ -511,3 +511,17 @@ Sub 56042273 → 3.25 (pre-registered ≥2.4 band). Field forks 2.80/3.22/3.38 �
 draw of that distribution. Our best went 1.94 → 3.25 (+1.31) with zero harness change: the tier's
 serving regime + analyzer caps on the stock loop. All future arms measure against THIS base
 (one live draw; redraw once to size the mean when a slot is otherwise idle).
+
+## 24. 09-06 — kv10 rider on the new base (PRE-REGISTERED before the commit result)
+
+Kernel arc3-keith-kv10 = the flown v4 notebook with ONE constant changed (cell 3:
+TAAF_VLLM_KV_CACHE_MEMORY_BYTES 5 GiB → 10 GiB; profile name kv10-…). Modal evidence on the exact
+GPU: 3.21x → 6.42x streams, queue 121 → 65 s, calls/game 56 → 82, reasoning unchanged, 36 → 43
+levels (+0.28 ± 0.24), score 6.40 → 10.47 incl. the first full win, zero-level games 2 → 6.
+Attest before flight: startup line must read "GPU KV cache size: 210,405 tokens, Maximum
+concurrency … 6.42x"; 0 restarts; audit 25/25; local read reported (base v4: 42 lv / 10.42).
+LIVE READING RULE: base = 3.25 (n=1; field forks 2.80–3.38 ⇒ per-draw sd ≈ 0.3). ≥3.9 = rider
+positive candidate (redraw base once before adopting); 2.9–3.9 = inconclusive (n grows; alternate
+base/rider draws); <2.9 = rider harmful or a bad draw — pull the commit log, check preemptions.
+A single draw cannot resolve the +0.28 lv the rig measured; this is n-growth on a candidate, not a
+verdict. Submission requires Ahmed's go.
