@@ -504,3 +504,10 @@ READING RULE (pre-registered in the message): baseline family n=3 mean 1.87; fie
 2.80/3.22/3.38; >=2.4 transfer confirmed (new base); 1.9–2.4 partial (diff telemetry); <1.9 not
 byte-equivalent in effect (pull the commit log). Score ~08:30–10:30Z 09-06.
 Next: kv10 rider as the first counterbalanced pair on this base (Modal: +0.28 lv, first full win).
+
+## 23. 09-06 08:25 UTC — keith V14 byte-copy scored **3.25**: TRANSFER CONFIRMED, NEW BASE
+
+Sub 56042273 → 3.25 (pre-registered ≥2.4 band). Field forks 2.80/3.22/3.38 → our draw is a central
+draw of that distribution. Our best went 1.94 → 3.25 (+1.31) with zero harness change: the tier's
+serving regime + analyzer caps on the stock loop. All future arms measure against THIS base
+(one live draw; redraw once to size the mean when a slot is otherwise idle).
