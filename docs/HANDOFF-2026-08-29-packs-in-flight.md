@@ -529,3 +529,8 @@ verdict. Submission requires Ahmed's go.
   10 GiB KV left ~12 MiB free at the first GDN forward. KAGGLE LAW: KV headroom is ~12.6 GiB after
   load; reserve ≤ 8 GiB. v1 was a self-inflicted SyntaxError (inline comment ate a trailing comma;
   cells are now compile-checked before every push). Rider re-cut to 8 GiB (kv8, ≈5.1x) as v3.
+- 09-06 13:05Z: kv8 v3 ALSO OOMed at the warm-up forward (process at 94.22 GiB: 81.8 model + 8 KV;
+  the GDN/cudagraph workspace needs > 5.2 GiB; the public 5 GiB profile leaves 8.2). KAGGLE LAW: the
+  KV lever on the box has ≤ 1–2 GiB of room above the public 5 GiB — the Modal +0.28 (which needed
+  2× streams) is NOT reachable on Kaggle. Rider CLOSED; two GPU-hours spent. Fallback for the 09-06
+  slot: exact redraw of the 3.25 base (sizes its mean; n=1 today).
