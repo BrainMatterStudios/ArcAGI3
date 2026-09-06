@@ -475,3 +475,19 @@ dc22 contradicted-movement / lf52 own-table-vs-click counts falling to ≤ 1 →
 ≤ 1/6 with low uptake → dead as a prompt aid. UP8: first-call prompt_tokens must be ≈ +192 over the
 base's ~4,050 (≈ +0 = processor downscaled → arm void; ≫ → geometry differs → stop and read).
 Realistic prior for a step: low (coverage ≈ 1 direct + 1 partial of the three walls).
+
+## RESULT — base arm of the 3-wall instrument (16:34→17:09 UTC) + PRE-REGISTERED disambiguation
+
+Base at conc 3 / 60 calls / 1500 s clock: dc22 L2 passed in BOTH draws (2/6 levels each; calls@L2 16,
+27), cd82 p0 passed but VOID (length-finish 1.7%), cd82 p1 never reached L2, lf52 0/2. Attempts 4,
+passes 2 valid (+1 void). In the five full-length runs these walls passed 0/14. Same bytes, same
+server; differences: e2e 16 s vs 145 s (queue-free), yields 5.5% vs 43%, and the model is SHOWN
+run_elapsed_seconds / time_remaining_seconds in every action result (tool_agent.py:1446,
+solver.py:225) — a 1500 s clock instead of 7920 s. The instrument's null is therefore NOT ~0; the
+aid arms are read against THIS base only (paired, same geometry).
+DISAMBIGUATION ARM (queued behind the chain, before data): base at conc 3 / 60 calls but
+--per-game-s 7920 (long clock, queue-free). Rule: dc22 passes ≥1/2 and total passes ≥2/4 → the
+CADENCE (queue-free / no yields) carries the effect, the clock does not; dc22 0/2 and passes ≤1/4 →
+the CLOCK CUE carries it → build a "clock compression" graft (report a compressed time_remaining to
+the model; harness timing untouched) as the next single-knob arm on the full 25-game geometry.
+Mixed (1 pass) → one more round each.
