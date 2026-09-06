@@ -460,3 +460,18 @@ EngineCore initialization failed ("vLLM exited rc=1 before ready"); the worker's
 was not captured (Modal's log tail had scrolled). The zero-byte ×2-streams idea is CLOSED unless a
 future rider run captures the root cause from the start of the boot log (~$0.5). Rig redeployed at
 the base profile (kv5, auto); KV dtype override stays available via ARC3_KV_CACHE_DTYPE.
+
+## PRE-REGISTERED — 3-wall turn-capped instrument (launched 2026-09-06 ~18:35 UTC, before data)
+
+Arms in order on ONE server session (base profile kv5, identity-gated): `keith` (base) →
+`keith_evid` → `keith_hypo` → `keith_up8`; each `--games cd82,dc22,lf52 --draws 2 --concurrency 3
+--max-calls 60 --per-game-s 1500` (6 runs/arm, two batches of 3; ≈$3/arm).
+Walls: cd82 L2, dc22 L2, lf52 L2 (base pass rate 0/14 attempts that reached L2 across 5 runs).
+Per-run VOID: request errors > 0, preemptions > 0, or length-finish > 1% (redraw once).
+ATTEMPT counts only if the run reaches L2 with ≥ 30 calls left; PASS = level 3 reached.
+Decision: ≥ 3/6 attempts pass AND base ≤ 1/6 → the 25-game wave ($9; rule ≥ 48 levels AND ≥ 3 of the
+8 consistent walls passed); 2/6 → one more round on the same games; ≤ 1/6 with UPTAKE ≥ 30% and the
+dc22 contradicted-movement / lf52 own-table-vs-click counts falling to ≤ 1 → EVID = RIDER candidate;
+≤ 1/6 with low uptake → dead as a prompt aid. UP8: first-call prompt_tokens must be ≈ +192 over the
+base's ~4,050 (≈ +0 = processor downscaled → arm void; ≫ → geometry differs → stop and read).
+Realistic prior for a step: low (coverage ≈ 1 direct + 1 partial of the three walls).
