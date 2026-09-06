@@ -241,6 +241,14 @@ TELEMETRY_DEFINITIONS = {
     "engagement": "share of turns carrying the aid: evid = turns with >= 1 [EVID] / turns that executed a step; "
                   "hypo = turns whose prompt carries [HYPO] / turns; '_wall' restricts both to turns on wall_level "
                   "(the judge's engagement gate: >= 80 % of wall turns).",
+    "wall": "judge 09-06 instrument reads per run: void (request errors > 0, vLLM preemptions delta > 0 for the wave, "
+            "or length-finish share > 1 %), calls_at_l2 (calls made before the first level-2 turn), attempt (L2 reached "
+            "with >= 30 calls left of the budget = --max-calls or the run's own total), passed (level 3 reached), "
+            "uptake / uptake_wall (share of turns whose THINKING or ASSISTANT text quotes the aid: '[EVID]', "
+            "'TRACE per action', '[HYPO]', or MOVED/APPEARED cited with a coordinate).",
+    "first_call_prompt_tokens": "prompt_tokens of the run's first request (n_messages == 2); keith baseline ~4,050; "
+                                "the up8 arm expects ≈ +192 (256 - 64 vision tokens).",
+    "max_calls": "--max-calls N: in-memory stop after N analyzer calls per run (results.json:max_calls_stops).",
     "draws": "--draws N = taaf n_passes: each game played N times as independent runs (<gid>_p<draw>); "
              "per_game is keyed by run stem and carries game_id + draw.",
 }
@@ -424,6 +432,50 @@ def install_grafts(arm: str) -> dict[str, str]:
             raise RuntimeError(f"graft {name} did not install: {status}")
         statuses[name] = status
     return statuses
+
+
+KEITH_FIRST_CALL_PROMPT_TOKENS = 4050       # n_messages==2 prompt_tokens on the real keith run (4042-4059)
+UP8_EXPECTED_FIRST_CALL_DELTA = 192         # 256 - 64 vision tokens per image (derived, §UP8)
+WALL_MIN_CALLS_LEFT_AT_L2 = 30              # judge: an attempt counts only if L2 is reached with >= 30 calls left
+VOID_LENGTH_SHARE = 0.01
+
+_MAX_CALLS: dict = {"n": None, "installed": False, "stops": {}}
+
+
+def install_max_calls(n: int | None) -> dict:
+    """--max-calls N: in-memory per-run stop after N analyzer calls (successful chat completions).
+    Wraps ToolAgent._chat_completion (one ToolAgent per run, built by the factory). After the Nth
+    completion returns, the run's OWN cap is triggered through the session's runtime_limit_reached()
+    (started_at is moved back by max_runtime_s_per_game): should_stop() turns True, the in-flight turn
+    yields after acting on that Nth reply, play() exits and the run finishes exactly like a run that
+    hit --per-game-s (state gave_up). The session's stop_event is deliberately NOT used: it is the
+    solver-wide event shared by every run (a set flag stops all of them and _finish_if_needed marks
+    them 'cancelled')."""
+    _MAX_CALLS.update({"n": n, "stops": {}})
+    if n is None or _MAX_CALLS["installed"]:
+        return dict(_MAX_CALLS)
+    from inference.agent import tool_agent as ta  # noqa: PLC0415
+    stock = ta.ToolAgent._chat_completion
+
+    def _chat_completion(self, messages, **kwargs):
+        result = stock(self, messages, **kwargs)
+        count = int(getattr(self, "_rw_calls", 0)) + 1
+        self._rw_calls = count
+        limit = _MAX_CALLS["n"]
+        if limit is not None and count >= int(limit):
+            sess = getattr(getattr(self, "_step_env_callback", None), "__self__", None)
+            if sess is not None and not getattr(sess, "_rw_max_calls_hit", False):
+                cap = getattr(getattr(sess, "solver", None), "max_runtime_s_per_game", None)
+                if cap is not None:
+                    sess.started_at = time.monotonic() - float(cap) - 1.0
+                    sess._rw_max_calls_hit = True
+                    _MAX_CALLS["stops"][current_run_stem() or current_game_tag() or "?"] = count
+        return result
+
+    _chat_completion._rw_stock = stock
+    ta.ToolAgent._chat_completion = _chat_completion
+    _MAX_CALLS["installed"] = True
+    return dict(_MAX_CALLS)
 
 
 def graft_status(arm: str) -> dict[str, dict]:
@@ -859,9 +911,11 @@ def parse_transcript(text: str) -> dict:
             turns.append({"step": int(m.group("step")), "action": int(m.group("action")),
                           "time": m.group("time"), "calls": 0, "status_messages": [],
                           "step_executed": False, "outcome": "incomplete",
-                          "level": None, "hypo": 0, "evid": 0, "evid_level_flags": 0})
+                          "level": None, "hypo": 0, "evid": 0, "evid_level_flags": 0, "quotes": 0})
             continue
         label = m.group("label")
+        if label in ("THINKING", "ASSISTANT") and turns:
+            turns[-1]["quotes"] += len(_QUOTE_RE.findall(body))
         if label == "USER PROMPT" and turns:
             t = turns[-1]
             if t["level"] is None:
@@ -923,11 +977,12 @@ def parse_transcript(text: str) -> dict:
             t["outcome"] = "error"
     retry_markers = {"retries_fired": len(_RETRY_MARK.findall(text)),
                      "retry_clears": len(_RETRY_CLEAR_MARK.findall(text))}
+    request_errors = sum(1 for t in turns if "request_error" in t["status_messages"])
     aid_markers = {"evid_markers": sum(t["evid"] for t in turns),
                    "evid_level_flags": sum(t["evid_level_flags"] for t in turns),
                    "hypo_markers": sum(t["hypo"] for t in turns)}
     return {"turns": turns, "calls": calls, "analyzer_status_config": status_cfg, "retry_markers": retry_markers,
-            "aid_markers": aid_markers}
+            "aid_markers": aid_markers, "request_errors": request_errors}
 
 
 # graft_retry marker lines (written under a "[HARNESS RETRY]" transcript section)
@@ -938,6 +993,49 @@ _EVID_MARK = re.compile(r"^\[EVID\] harness object diff for ", re.M)
 _EVID_LEVEL_MARK = re.compile(r"^LEVEL CLEARED after action \d+ ", re.M)
 _HYPO_MARK = re.compile(r"^\[HYPO\] Hypothesis discipline for ", re.M)
 _PROMPT_LEVEL_RE = re.compile(r"^Current state: step \d+, level (\d+)", re.M)
+# the model quoting the aid in its own thinking/text (judge's UPTAKE read): the markers, the trace
+# line, or a MOVED/APPEARED entry cited with a coordinate
+_QUOTE_RE = re.compile(r"\[EVID\]|TRACE per action|\[HYPO\]|\b(?:MOVED|APPEARED)\b[^\n]{0,80}?\(\d+,\s?\d+\)")
+
+
+def wall_reads(turns: list[dict], *, wall_level: int | None, levels_completed: int | None, calls_budget: int | None,
+               request_errors: int, length_share: float | None, wave_preemptions: float | None) -> dict:
+    """Judge 09-06 instrument rules per run: VOID (errors / preemptions / truncation > 1 %), calls at the
+    first level-2 turn, ATTEMPT (L2 reached with >= WALL_MIN_CALLS_LEFT_AT_L2 calls left), PASS (level 3
+    reached = levels_completed >= 2), and UPTAKE (share of turns whose thinking/text quotes the aid)."""
+    void_reasons = []
+    if request_errors > 0:
+        void_reasons.append(f"request_errors={request_errors}")
+    if wave_preemptions:
+        void_reasons.append(f"preemptions={wave_preemptions:g}")
+    if length_share is not None and length_share > VOID_LENGTH_SHARE:
+        void_reasons.append(f"length_finish_share={length_share:.3f}")
+    total_calls = sum(t["calls"] for t in turns)
+    calls_at_l2 = None
+    seen = 0
+    for t in turns:
+        if t.get("level") is not None and t["level"] >= 2:
+            calls_at_l2 = seen
+            break
+        seen += t["calls"]
+    budget = calls_budget if calls_budget is not None else total_calls
+    remaining = (budget - calls_at_l2) if calls_at_l2 is not None else None
+    reached_l2 = calls_at_l2 is not None or (levels_completed or 0) >= 1
+    attempt = bool(reached_l2 and remaining is not None and remaining >= WALL_MIN_CALLS_LEFT_AT_L2 and not void_reasons)
+    passed = (levels_completed or 0) >= 2
+    wall = [t for t in turns if wall_level is not None and t.get("level") == wall_level]
+    quoting = [t for t in turns if t.get("quotes")]
+    return {"void": bool(void_reasons), "void_reasons": void_reasons, "calls_total": total_calls,
+            "calls_budget": budget, "calls_at_l2": calls_at_l2, "calls_remaining_at_l2": remaining,
+            "reached_l2": bool(reached_l2), "attempt": attempt, "passed": passed,
+            "uptake": {"turns": len(quoting), "of": len(turns), "share": _share(len(quoting), len(turns))},
+            "uptake_wall": {"turns": sum(1 for t in wall if t.get("quotes")), "of": len(wall),
+                            "share": _share(sum(1 for t in wall if t.get("quotes")), len(wall))}}
+
+
+def _share(a, b):
+    """a / b as a share; None only when there is nothing to divide by (0/0), never for 0/n."""
+    return None if not b else a / b
 
 
 def engagement(turns: list[dict], wall_level: int | None) -> dict:
@@ -945,7 +1043,7 @@ def engagement(turns: list[dict], wall_level: int | None) -> dict:
     def share(sel: list[dict], key: str, denom_key: str | None) -> dict:
         denom = [t for t in sel if (t.get(denom_key) if denom_key else True)]
         num = [t for t in denom if t.get(key)]
-        return {"turns": len(num), "of": len(denom), "share": _div(len(num), len(denom))}
+        return {"turns": len(num), "of": len(denom), "share": _share(len(num), len(denom))}
     wall = [t for t in turns if wall_level is not None and t.get("level") == wall_level]
     return {"evid": share(turns, "evid", "step_executed"), "evid_wall": share(wall, "evid", "step_executed"),
             "hypo": share(turns, "hypo", None), "hypo_wall": share(wall, "hypo", None),
@@ -963,7 +1061,8 @@ def _stats(values: list[float]) -> dict:
 def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None,
                        shim_records: list[dict] | None = None,
                        wallclock_s: float | None = None,
-                       levels_completed: int | None = None, number_of_levels: int | None = None) -> dict:
+                       levels_completed: int | None = None, number_of_levels: int | None = None,
+                       calls_budget: int | None = None, wave_preemptions: float | None = None) -> dict:
     parsed = parse_transcript(transcript_text)
     calls, turns = parsed["calls"], parsed["turns"]
     turn_levels = [t["level"] for t in turns]
@@ -1012,6 +1111,13 @@ def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None
         "wall_level": wall_level,
         "engagement": engagement(turns, wall_level),
     }
+    client_errors = sum(1 for r in (shim_records or []) if r.get("error") or (r.get("status") or 0) >= 400)
+    tel["wall"] = wall_reads(turns, wall_level=wall_level, levels_completed=levels_completed, calls_budget=calls_budget,
+                             request_errors=parsed["request_errors"] + client_errors,
+                             length_share=tel["length_finish_share"], wave_preemptions=wave_preemptions)
+    first = [r["prompt_tokens"] for r in (shim_records or []) if r.get("n_messages") == 2 and r.get("status") == 200
+             and r.get("prompt_tokens") is not None]
+    tel["first_call_prompt_tokens"] = first[0] if first else None
     if shim_records:
         ok = [r for r in shim_records if r.get("status") == 200]
         tel["client"] = {
@@ -1072,7 +1178,23 @@ def aggregate_telemetry(per_game: dict[str, dict]) -> dict:
         "hypo_markers_total": sum(g.get("hypo_markers") or 0 for g in games),
         "hypo_markers_per_game": sum(g.get("hypo_markers") or 0 for g in games) / n,
         "engagement": _pooled_engagement(games),
+        "wall": _pooled_wall(games),
+        "first_call_prompt_tokens": _stats([g["first_call_prompt_tokens"] for g in games
+                                            if g.get("first_call_prompt_tokens") is not None]),
     }
+
+
+def _pooled_wall(games: list[dict]) -> dict:
+    ws = [g.get("wall") or {} for g in games]
+    up = sum(((w.get("uptake") or {}).get("turns", 0)) for w in ws)
+    up_of = sum(((w.get("uptake") or {}).get("of", 0)) for w in ws)
+    upw = sum(((w.get("uptake_wall") or {}).get("turns", 0)) for w in ws)
+    upw_of = sum(((w.get("uptake_wall") or {}).get("of", 0)) for w in ws)
+    return {"runs": len(ws), "void": sum(1 for w in ws if w.get("void")),
+            "attempts": sum(1 for w in ws if w.get("attempt")), "passes": sum(1 for w in ws if w.get("passed")),
+            "reached_l2": sum(1 for w in ws if w.get("reached_l2")),
+            "uptake": {"turns": up, "of": up_of, "share": _share(up, up_of)},
+            "uptake_wall": {"turns": upw, "of": upw_of, "share": _share(upw, upw_of)}}
 
 
 def _pooled_engagement(games: list[dict]) -> dict:
@@ -1080,14 +1202,15 @@ def _pooled_engagement(games: list[dict]) -> dict:
     for key in ("evid", "evid_wall", "hypo", "hypo_wall"):
         num = sum(((g.get("engagement") or {}).get(key) or {}).get("turns", 0) for g in games)
         den = sum(((g.get("engagement") or {}).get(key) or {}).get("of", 0) for g in games)
-        out[key] = {"turns": num, "of": den, "share": _div(num, den)}
+        out[key] = {"turns": num, "of": den, "share": _share(num, den)}
     return out
 
 
 _STEM_RE = re.compile(r"^(?P<gid>.+)_p(?P<draw>\d+)\.txt$")
 
 
-def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: list[dict]) -> dict:
+def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: list[dict], *,
+                    calls_budget: int | None = None, wave_preemptions: float | None = None) -> dict:
     """Per-run + pooled telemetry from <out>/transcripts/<gid>_p<draw>.txt, the
     benchmark rows (actions, wallclock, levels) and the client shim records.
     per_game is keyed by run stem (<gid>_p<draw>; one entry per game per draw)."""
@@ -1113,7 +1236,8 @@ def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: 
         tel = telemetry_for_game(text, actions_total=row.get("actions"),
                                  shim_records=recs, wallclock_s=row.get("wallclock_s"),
                                  levels_completed=row.get("levels_completed"),
-                                 number_of_levels=row.get("number_of_levels"))
+                                 number_of_levels=row.get("number_of_levels"),
+                                 calls_budget=calls_budget, wave_preemptions=wave_preemptions)
         tel["game_id"] = gid
         tel["draw"] = draw
         tel["levels_completed"] = row.get("levels_completed")
@@ -1141,7 +1265,10 @@ def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: 
             "levels_completed": g.get("levels_completed"), "level_reached": g.get("level_reached"),
             "wall_level": g.get("wall_level"), "turns": g.get("turns"),
             "evid_wall_share": (g.get("engagement") or {}).get("evid_wall", {}).get("share"),
-            "hypo_wall_share": (g.get("engagement") or {}).get("hypo_wall", {}).get("share")}
+            "hypo_wall_share": (g.get("engagement") or {}).get("hypo_wall", {}).get("share"),
+            "calls_at_l2": (g.get("wall") or {}).get("calls_at_l2"), "attempt": (g.get("wall") or {}).get("attempt"),
+            "void": (g.get("wall") or {}).get("void"), "passed": (g.get("wall") or {}).get("passed"),
+            "uptake_wall_share": ((g.get("wall") or {}).get("uptake_wall") or {}).get("share")}
     agg["draws"] = max((g["draw"] for g in per_game.values()), default=-1) + 1
     return {"definitions": TELEMETRY_DEFINITIONS, "reference_keith_commit_run": KEITH_COMMIT_REFERENCE,
             "aggregate": agg, "per_game": per_game, "per_game_draw": by_gid}
@@ -1469,7 +1596,8 @@ def render_summary(result: dict, telemetry: dict) -> str:
         f"gpu ok={ic.get('gpu_ok')} {ic.get('gpu_rows')}",
         f"  geometry conc {geo.get('concurrency')} | {_fmt(geo.get('max_runtime_s_per_game'), 0)} s/game | "
         f"analyzer_timeout {_fmt(geo.get('analyzer_timeout'), 0)} | max_actions {geo.get('max_actions_per_game')} | "
-        f"wave cap {_fmt(result.get('wave_cap_s'), 0)} s | public25 geometry: {geo.get('matches_public25')}",
+        f"max_calls {result.get('max_calls')} | wave cap {_fmt(result.get('wave_cap_s'), 0)} s | "
+        f"public25 geometry: {geo.get('matches_public25')}",
         f"  stock agent sha {result['stock']['agent_tree_sha256'][:12]} (== june_stock pin) | "
         f"framework {result['stock']['framework_tree_sha256'][:12]} | pkls pinned",
         f"  ARM KNOB  CONTEXT_WINDOW={env.get('LOCAL_ANALYZER_CONTEXT_WINDOW')}  "
@@ -1520,13 +1648,31 @@ def render_summary(result: dict, telemetry: dict) -> str:
             f"engagement wall {_pct((eng.get('hypo_wall') or {}).get('share'))} "
             f"({(eng.get('hypo_wall') or {}).get('turns')}/{(eng.get('hypo_wall') or {}).get('of')}) all {_pct((eng.get('hypo') or {}).get('share'))} | "
             f"grafts {installed} | flags {knobs}")
+    w = agg.get("wall") or {}
+    if w:
+        per_l2 = {stem: (g.get("wall") or {}).get("calls_at_l2") for stem, g in sorted(telemetry.get("per_game", {}).items())}
+        voids = {stem: (g.get("wall") or {}).get("void_reasons") for stem, g in sorted(telemetry.get("per_game", {}).items())
+                 if (g.get("wall") or {}).get("void")}
+        lines.append(
+            f"  WALL   attempts {w.get('attempts')}/{w.get('runs')} (L2 reached {w.get('reached_l2')}; attempt = L2 with "
+            f">= {WALL_MIN_CALLS_LEFT_AT_L2} calls left) | passes {w.get('passes')} (level 3 reached) | void {w.get('void')} {voids} | "
+            f"calls@L2 {per_l2} | UPTAKE wall {_pct((w.get('uptake_wall') or {}).get('share'))} "
+            f"({(w.get('uptake_wall') or {}).get('turns')}/{(w.get('uptake_wall') or {}).get('of')}) all {_pct((w.get('uptake') or {}).get('share'))}")
+    fc = agg.get("first_call_prompt_tokens") or {}
+    if fc.get("n"):
+        delta = fc["mean"] - KEITH_FIRST_CALL_PROMPT_TOKENS
+        lines.append(
+            f"  FIRST-CALL prompt_tokens (n_messages==2) mean {_fmt(fc.get('mean'), 0)} n={fc.get('n')} "
+            f"[{_fmt(min(fc.get('mean'), fc.get('median')), 0)}..{_fmt(fc.get('max'), 0)}] | keith baseline ~{KEITH_FIRST_CALL_PROMPT_TOKENS} | "
+            f"delta {delta:+.0f} | UPSCALE={env.get('MULTIMODAL_UPSCALE')}: up8 expects ≈ +{UP8_EXPECTED_FIRST_CALL_DELTA} "
+            f"(+0 => processor downscaled = no-op; >> => geometry differs)")
     if (agg.get("draws") or 1) > 1:
         per_draw = {gid: [d.get("levels_completed") for _, d in sorted(v.items(), key=lambda kv: int(kv[0]))]
                     for gid, v in (telemetry.get("per_game_draw") or {}).items()}
         lines.append(f"  DRAWS {agg.get('draws')} | levels per (game, draw): {per_draw}")
     if result.get("knob_overrides"):
         lines.append(f"  KNOB OVERRIDES (not the pinned arm env): {result['knob_overrides']}")
-    lines.append("  run               lv/n    act  calls turns reas_mean  len%  notool%  e2e_s   score  retry  evid  hypo  wall%  state")
+    lines.append("  run               lv/n    act  calls turns reas_mean  len%  notool%  e2e_s   score  retry  evid  hypo  wall%  upt%  c@L2 att void  state")
     for stem, g in sorted(telemetry.get("per_game", {}).items()):
         r = g.get("reasoning_chars") or {}
         c = (g.get("client") or {}).get("e2e_s") or {}
@@ -1538,7 +1684,10 @@ def render_summary(result: dict, telemetry: dict) -> str:
             f"{_fmt(g.get('actions_total')):>6} {g.get('calls'):>5} {g.get('turns'):>5} "
             f"{_fmt(r.get('mean'), 0):>9} {_pct(g.get('length_finish_share')):>6} "
             f"{_pct(g.get('no_tool_call_share')):>7} {_fmt(c.get('mean')):>6} {_fmt(g.get('score'), 2):>7} "
-            f"{retry_col:>6} {g.get('evid_markers') or 0:>5} {g.get('hypo_markers') or 0:>5} {_pct(wall_share):>6}  "
+            f"{retry_col:>6} {g.get('evid_markers') or 0:>5} {g.get('hypo_markers') or 0:>5} {_pct(wall_share):>6} "
+            f"{_pct(((g.get('wall') or {}).get('uptake_wall') or {}).get('share')):>5} "
+            f"{str((g.get('wall') or {}).get('calls_at_l2', '-')):>5} {'Y' if (g.get('wall') or {}).get('attempt') else '-':>3} "
+            f"{'VOID' if (g.get('wall') or {}).get('void') else '-':>4}  "
             f"{(result.get('states') or {}).get(stem, '')}")
     return "\n".join(lines) + "\n"
 
@@ -1546,12 +1695,13 @@ def render_summary(result: dict, telemetry: dict) -> str:
 class Wave:
     def __init__(self, *, arm: str, base_url: str, token: str, out_dir: Path, game_ids: list[str],
                  per_game_s: float, concurrency: int, wave_cap_s: float, dry_run: bool,
-                 progress_every_s: float, draws: int = 1) -> None:
+                 progress_every_s: float, draws: int = 1, max_calls: int | None = None) -> None:
         self.arm, self.base_url, self.token, self.out_dir = arm, base_url, token, out_dir
         self.game_ids, self.per_game_s, self.concurrency = game_ids, per_game_s, concurrency
         self.wave_cap_s, self.dry_run, self.progress_every_s = wave_cap_s, dry_run, progress_every_s
         self.draws = max(1, int(draws))
-        self.result: dict = {"schema_version": 2, "arm": arm, "dry_run": dry_run, "status": "init",
+        self.max_calls = max_calls
+        self.result: dict = {"schema_version": 3, "max_calls": max_calls, "arm": arm, "dry_run": dry_run, "status": "init",
                              "base_url": base_url, "served_model": SERVED_MODEL_NAME,
                              "wave_cap_s": wave_cap_s, "game_ids": list(game_ids), "draws": self.draws,
                              "grafts": {"installed": {}, "status": {}}}
@@ -1705,7 +1855,11 @@ class Wave:
         self.result["shim"] = {"posts": self.shim.count, "errors": self.shim.errors,
                                "redirected": self.shim.redirected, "path": str(self.shim.path)}
         shim_records = load_shim_records(self.shim.path)
-        telemetry = build_telemetry(self.out_dir / "transcripts", rows, shim_records)
+        md = self.result["metrics"].get("delta") or {}
+        telemetry = build_telemetry(self.out_dir / "transcripts", rows, shim_records,
+                                    calls_budget=self.max_calls, wave_preemptions=md.get("preemptions"))
+        self.result["max_calls_stops"] = dict(_MAX_CALLS.get("stops") or {})
+        self.result["concurrency_override"] = self.concurrency != GEOMETRY["concurrency"]
         telemetry["arm"] = self.arm
         telemetry["dry_run"] = self.dry_run
         self.result["grafts"]["status"] = graft_status(self.arm)   # the graft's own counters (retry_log, skips, ...)
@@ -1750,7 +1904,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--draws", type=int, default=1,
                    help="play the selected games N times as independent runs in this wave (taaf n_passes; "
                         "run stems <gid>_p0.._p<N-1>; default 1)")
-    p.add_argument("--concurrency", type=int, default=GEOMETRY["concurrency"])
+    p.add_argument("--concurrency", type=int, default=GEOMETRY["concurrency"],
+                   help="solver concurrency override (public geometry 28; the 3-wall instrument uses 3); recorded "
+                        "in results.json:geometry and concurrency_override")
+    p.add_argument("--max-calls", type=int, default=None,
+                   help="stop each run after N analyzer calls (in-memory wrapper on ToolAgent._chat_completion; "
+                        "the run then ends through its own runtime cap, state gave_up); recorded in results.json")
     p.add_argument("--wave-cap-s", type=float, default=None,
                    help=f"whole-wave cap (default {WAVE_CAP_S:.0f}; dry-run {DRY_RUN_WAVE_CAP_S:.0f})")
     p.add_argument("--dry-run", action="store_true", help="loopback mock vLLM; no network")
@@ -1771,6 +1930,8 @@ def main(argv: list[str] | None = None) -> int:
     knobs = parse_knobs(args.knob)
     if args.draws < 1:
         p.error("--draws must be >= 1")
+    if args.max_calls is not None and args.max_calls < 1:
+        p.error("--max-calls must be >= 1")
 
     per_game_s = args.per_game_s if args.per_game_s is not None else (
         DRY_RUN_PER_GAME_S if args.dry_run else GEOMETRY["max_runtime_s_per_game"])
@@ -1805,6 +1966,9 @@ def main(argv: list[str] | None = None) -> int:
     if knobs:
         print(f"[regime] KNOB OVERRIDES {knobs} — this run is not the pinned {args.arm} env", flush=True)
     grafts = install_grafts(args.arm)          # in memory only; the stock tree sha above still holds
+    if args.max_calls is not None:
+        install_max_calls(args.max_calls)      # in memory only
+        print(f"[regime] --max-calls {args.max_calls}: each run stops after {args.max_calls} analyzer calls", flush=True)
     if grafts:
         flags = {k: recorded_env.get(k) for k in GRAFT_FLAG_KEYS if recorded_env.get(k) is not None}
         print(f"[regime] grafts installed: {grafts} (flags {flags})", flush=True)
@@ -1821,7 +1985,8 @@ def main(argv: list[str] | None = None) -> int:
 
     wave = Wave(arm=args.arm, base_url=base_url, token=token, out_dir=out_dir, game_ids=game_ids,
                 per_game_s=per_game_s, concurrency=args.concurrency, wave_cap_s=wave_cap_s,
-                dry_run=args.dry_run, progress_every_s=args.progress_every, draws=args.draws)
+                dry_run=args.dry_run, progress_every_s=args.progress_every, draws=args.draws,
+                max_calls=args.max_calls)
     wave.result["grafts"]["installed"] = grafts
     wave.result["expect_profile"] = args.expect_profile
     if knobs:

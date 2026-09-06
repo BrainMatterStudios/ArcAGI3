@@ -777,6 +777,13 @@ You have not acted yet. Investigate first.
 finish_reason: tool_calls
 tool_call_count: 1
 content_chars: 0
+reasoning_chars: 40
+[THINKING]
+The harness diff says MOVED b/blue ... -> (5,3)-(6,4); use that.
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
 reasoning_chars: 0
 [TOOL CALL: python]
 {"code": "action(['UP','SPACE','LEFT'])"}
@@ -857,6 +864,31 @@ def test_extractor_counts_aid_markers_and_engagement():
     assert agg["engagement"]["evid_wall"] == {"turns": 1, "of": 1, "share": 1.0}
     assert agg["engagement"]["hypo"] == {"turns": 6, "of": 8, "share": 0.75}
     assert rw.run_stem_for("cd82-fb555c5d", 4, 3) == "cd82-fb555c5d_p1" and rw.run_stem_for("x", 7, None) == "x_p0"
+    # judge 09-06 wall reads: quotes, calls@L2, attempt, void, pass
+    assert [t["quotes"] for t in parsed["turns"]] == [0, 3, 0, 0]      # prose "[EVID]"/"[HYPO]" + the coordinate cite in turn 2
+    w = tel["wall"]
+    assert w["calls_total"] == 6 and w["calls_at_l2"] == 4 and w["calls_budget"] == 6 and w["calls_remaining_at_l2"] == 2
+    assert w["reached_l2"] and not w["attempt"] and not w["passed"] and not w["void"] and w["void_reasons"] == []
+    assert w["uptake"] == {"turns": 1, "of": 4, "share": 0.25} and w["uptake_wall"] == {"turns": 0, "of": 2, "share": 0.0}
+    w60 = rw.telemetry_for_game(AID_TRANSCRIPT, levels_completed=1, number_of_levels=4, calls_budget=60)["wall"]
+    assert w60["calls_remaining_at_l2"] == 56 and w60["attempt"] is True
+    wp = rw.telemetry_for_game(AID_TRANSCRIPT, levels_completed=2, number_of_levels=4, calls_budget=60, wave_preemptions=3)["wall"]
+    assert wp["passed"] is True and wp["void"] is True and wp["void_reasons"] == ["preemptions=3"] and wp["attempt"] is False
+    err = rw.telemetry_for_game(AID_TRANSCRIPT + "\n[ANALYZER STATUS]\nrequest_error: boom\n", levels_completed=1,
+                                number_of_levels=4, calls_budget=60)["wall"]
+    assert err["void"] and err["void_reasons"] == ["request_errors=1"]
+    long_ = rw.telemetry_for_game(AID_TRANSCRIPT.replace("finish_reason: stop", "finish_reason: length"), levels_completed=1,
+                                  number_of_levels=4, calls_budget=60)["wall"]
+    assert long_["void"] and long_["void_reasons"] == ["length_finish_share=0.167"]     # 1 of 6 calls > 1 %
+    zero = rw.telemetry_for_game(SYNTHETIC_TRANSCRIPT, levels_completed=0, number_of_levels=4, calls_budget=60)["wall"]
+    assert zero["calls_at_l2"] is None and not zero["reached_l2"] and not zero["attempt"]
+    shim = [{"n_messages": 2, "status": 200, "prompt_tokens": 4242, "elapsed_s": 1.0}, {"n_messages": 5, "status": 200, "prompt_tokens": 9000, "elapsed_s": 1.0}]
+    assert rw.telemetry_for_game(AID_TRANSCRIPT, shim_records=shim)["first_call_prompt_tokens"] == 4242
+    agg2 = rw.aggregate_telemetry({"a_p0": tel, "a_p1": rw.telemetry_for_game(AID_TRANSCRIPT, shim_records=shim, levels_completed=2,
+                                                                               number_of_levels=4, calls_budget=60)})
+    assert agg2["wall"] == {**agg2["wall"], "runs": 2, "void": 0, "attempts": 1, "passes": 1, "reached_l2": 2}
+    # run 2 (levels_completed=2 of 4) sits on wall level 3, where the transcript has no turn: pooled wall denominator 2
+    assert agg2["wall"]["uptake_wall"] == {"turns": 0, "of": 2, "share": 0.0} and agg2["first_call_prompt_tokens"]["n"] == 1
 
 
 _VISION_PROBE = r'''
@@ -958,8 +990,8 @@ def test_dry_run_keith_evid_draws_end_to_end():
     telemetry, per-(game, draw) levels, run-stem-tagged shim records, stock sha intact."""
     with tempfile.TemporaryDirectory() as tmp:
         r = subprocess.run([PYTHON, str(HERE / "run_regime_wave.py"), "--dry-run", "--arm", "keith_evid",
-                            "--games", "cd82,lf52", "--draws", "2", "--per-game-s", "12", "--wave-cap-s", "60",
-                            "--progress-every", "60", "--out", tmp],
+                            "--games", "cd82,lf52", "--draws", "2", "--per-game-s", "40", "--wave-cap-s", "120",
+                            "--concurrency", "3", "--max-calls", "8", "--progress-every", "60", "--out", tmp],
                            capture_output=True, text=True, cwd=str(REPO), timeout=400)
         assert r.returncode == 0, (r.returncode, r.stderr[-3000:], r.stdout[-3000:])
         runs = list(Path(tmp).glob("*-regime-keith_evid-dry"))
@@ -973,7 +1005,17 @@ def test_dry_run_keith_evid_draws_end_to_end():
         assert res["stock"]["agent_tree_sha256"] == rw.STOCK_AGENT_TREE_SHA256
         assert res["grafts"]["installed"] == {"graft_evidence": "evidence: OK"}
         assert res["analyzer_env"]["EVID_ENABLE"] == "1" and res["analyzer_env"]["MULTIMODAL_UPSCALE"] == "4"
-        assert res["geometry"]["max_runtime_s_per_game"] == 12.0
+        assert res["geometry"]["max_runtime_s_per_game"] == 40.0 and res["geometry"]["concurrency"] == 3
+        assert res["concurrency_override"] is True and res["max_calls"] == 8
+        # --max-calls: every run made exactly 8 analyzer calls, then ended through its own runtime cap (gave_up)
+        assert all(g["calls"] == 8 for g in tel["per_game"].values()), {k: g["calls"] for k, g in tel["per_game"].items()}
+        assert all(g["state"] == "gave_up" for g in res["games"]), res["states"]
+        assert sorted(res["max_calls_stops"]) == stems and all(v == 8 for v in res["max_calls_stops"].values())
+        assert all(g["wallclock_s"] < 40 for g in res["games"])                # the stop came from max-calls, not the cap
+        for g in tel["per_game"].values():
+            w = g["wall"]
+            assert w["calls_budget"] == 8 and w["calls_total"] == 8 and w["void"] is False and w["attempt"] is False
+            assert w["uptake"]["of"] == g["turns"] and g["first_call_prompt_tokens"] is not None
         rows = res["games"]
         assert [(g["game_id"], g["draw"], g["run_stem"]) for g in rows] == [
             ("cd82-fb555c5d", 0, stems[0]), ("lf52-271a04aa", 0, stems[2]),
@@ -1007,6 +1049,8 @@ def test_dry_run_keith_evid_draws_end_to_end():
         assert {rec["run_stem"] for rec in shim} == set(stems) and all(rec["game_id"] == rec["run_stem"][:-3] for rec in shim)
         summary = (out / "summary.txt").read_text()
         assert "AID    [EVID]" in summary and "DRAWS 2 | levels per (game, draw): {'cd82-fb555c5d': [" in summary
+        assert "WALL   attempts 0/4 (L2 reached 0; attempt = L2 with >= 30 calls left) | passes 0" in summary
+        assert "FIRST-CALL prompt_tokens (n_messages==2) mean" in summary and "max_calls 8" in summary
         assert "engagement wall 100.0%" in summary and all(stem in summary for stem in stems)
         assert summary.count("\n") < 45
         for path in out.rglob("*"):

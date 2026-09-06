@@ -1,4 +1,4 @@
-# EVID / HYPO / UP8 — the 3-wall instrument arms (built 2026-09-06, NOT launched)
+# EVID / HYPO / UP8 — the 3-wall instrument arms (built 2026-09-06, judge fixes applied, NOT launched)
 
 Judge program item 1 (docs/research-2026-09-06/J-judge-0906.md): three single-lever arms on
 the keith V14 base for the turn-capped 3-wall test (cd82 L2, dc22 L2, lf52 L2; 2 draws per arm;
@@ -22,6 +22,50 @@ Files (new unless marked):
 No stock byte was edited: the runner still asserts the june_stock tree sha `74ab691052406c22…`
 after the in-memory install (probe test), and every dry run prints `stock agent sha 74ab69105240
 (== june_stock pin)`.
+
+## 0. Judge fixes applied (docs/research-2026-09-06/J-judge-evid.md, SHIP-WITH-FIXES)
+
+1. **Matcher order** (`graft_evidence.diff_grids`): after RECOLORED, an IN-PLACE pass pairs same-color
+   components by cell overlap (Jaccard >= 0.5, best first) BEFORE any shape matching, so an occluded or
+   uncovered STATIONARY tile pairs with itself and can never be reported as a mover swapped with a distant
+   look-alike; a pair that is a pure translation is labelled MOVED (a big tile stepping one cell), anything
+   else RESHAPED. Verified on the recorded frames the judge cited — the keith run's events files, saved as
+   `fixtures_evid_frames.json` (test 16): dc22 action 35 (DOWN) now yields exactly
+   `MOVED N/light green size 4: (38,8)-(39,9) -> (40,8)-(41,9)` and nothing else; lf52 action 22
+   (`MOUSE(row=56, col=6)`) yields no MOVED at all (three light-gray 4x4 tiles vanish where three
+   light-green 12-cell tiles appear, two gray tiles recolor, the bars collapse to one HUD line). Synthetic
+   occlusion/uncover cases in test 15.
+2. **Trace**: `EVID_TRACE_MAX` default 24; when the trace is cut, the FINAL action's state is always printed
+   after the cut marker (`… | (+24 more actions not traced) | 30 R: no change`).
+3. **Noise**: RESHAPED entries with |size delta| <= 2 and an unchanged bbox are dropped (the dc22 gray frame
+   `32->32`); edge-touching RESHAPED bars collapse into one line
+   `HUD/edge bars reshaped: N (colors; sizes a->b, …) — border strips, not gameplay objects` that never
+   counts against the entry cap (test 17).
+4. **Flag wording**: `LEVEL CLEARED after action k (…) — the frames after it belong to the NEXT level (level L);
+   do not diff them against this level. The completed board of the old level is never returned — the last
+   frame you saw before the clearing action is NOT the completion state; do not read it as one.`
+5. **HYPO history strip** (`graft_hypo`): a second in-memory wrapper on `ToolAgent._persistent_history_messages`
+   (the seam `analyze()` uses in its `finally` to keep the turn's messages) returns a copy with the block
+   removed from every persisted user message (str and multimodal `[text, image]` content), so exactly one
+   block is in flight per request and older prompts carry none. Test 09 runs three `analyze()` turns through
+   a mocked completion: every request carries exactly one `[HYPO]` (on the newest user message), the kept
+   history never carries it, `blocks_stripped == blocks_injected`. No stock byte edited.
+6. **Runner** (`offkaggle/run_regime_wave.py`): `--max-calls N` = in-memory wrapper on
+   `ToolAgent._chat_completion` (one agent per run); after the Nth completion the run's OWN cap is triggered
+   through the session's `runtime_limit_reached()` (`started_at` moved back by `max_runtime_s_per_game`), so
+   the in-flight turn acts on that reply, yields, and the run ends exactly like a `--per-game-s` stop
+   (state `gave_up`). The session's `stop_event` was deliberately not used: it is the solver-wide event
+   shared by all runs, and `_finish_if_needed` marks such runs `cancelled`. `--concurrency N` already
+   existed; it is recorded in `results.json:geometry.concurrency` + `concurrency_override`.
+   VOID rule per run: request errors > 0 (transcript `request_error` statuses + shim post errors), vLLM
+   preemptions delta > 0 (wave-level, applied to every run), or length-finish share > 1 %. ATTEMPT = level 2
+   reached with >= 30 calls left of the budget (`--max-calls`, else the run's own total); `calls_at_l2` =
+   calls made before the first level-2 turn; PASS = level 3 reached. UPTAKE = share of turns whose
+   THINKING/ASSISTANT text quotes the aid (`[EVID]`, `TRACE per action`, `[HYPO]`, or MOVED/APPEARED cited
+   with a `(row,col)` coordinate), overall and on the wall level. FIRST-CALL attestation = `prompt_tokens`
+   of each run's `n_messages == 2` request vs the keith baseline ~4,050 (up8 expects ≈ +192; +0 = the
+   processor downscaled, >> = geometry differs). All in `telemetry.json` (`wall`, `first_call_prompt_tokens`)
+   and the summary's `WALL` / `FIRST-CALL` lines and `upt% c@L2 att void` columns.
 
 ## 1. What the evidence aid emits, and where
 
@@ -73,25 +117,25 @@ A real single-action block from the runner dry run on one of the walls (dc22, `k
 
 ```
 [EVID] harness object diff for action 1 (1 executed in this call); coords are (row,col), 0-based: row = line index of `.ascii` from the top, col = char index from the left, the same row/col MOUSE takes
-diff, before action 1 -> after action 1: 9 cells changed, 4 object changes
+diff, before action 1 -> after action 1: 9 cells changed, 3 object changes
   MOVED N/light green size 4: (40,10)-(41,11) -> (42,10)-(43,11) (d row +2, col +0)
-  RESHAPED G/dark gray size 576->577 at (54,0)-(62,63) -> (54,0)-(63,63) [edge]
-  RESHAPED W/white size 64->63 at (63,0)-(63,63) -> (63,1)-(63,63) [edge]
-  RESHAPED g/gray size 32->32 at (38,8)-(43,13) -> (38,8)-(43,13)
+  HUD/edge bars reshaped: 2 (G/dark gray, W/white; sizes 576->577, 64->63) — border strips, not gameplay objects
 ```
-(DOWN moved the 2x2 light-green agent two rows down; the two `[edge]` lines are the HUD bars.)
+(DOWN moved the 2x2 light-green agent two rows down; post-fix rendering — the `32->32` same-bbox gray frame
+is dropped as noise and the two edge bars are one line.)
 
 Entry kinds: `MOVED` (same color + shape at a new place, with the delta), `APPEARED`, `VANISHED`,
 `RECOLORED` (identical cells, new color), `RESHAPED` (same color, overlapping cells, different
-shape — HUD bars shrinking); `[edge]` = bbox touches the border. Components covering
->= `EVID_BG_FRACTION` [0.25] of the grid are background and never listed. Multi-action calls get the
-`TRACE per action` line: the single component that moved after action k (tracked by color+size across
-the batch), else the changed-cell count, `no change`, or `LEVEL CLEARED`. GAME_OVER / run-complete /
+shape — HUD bars shrinking); `[edge]` = bbox touches the border (edge RESHAPED bars are collapsed into one HUD line; RESHAPED with
+|delta| <= 2 and the same bbox is dropped). Components covering >= `EVID_BG_FRACTION` [0.25] of the grid
+are background and never listed. Multi-action calls get the `TRACE per action` line: the single component
+that moved after action k (tracked by color+size across the batch), else the changed-cell count,
+`no change`, or `LEVEL CLEARED`; at most `EVID_TRACE_MAX` [24] actions, the final action always shown. GAME_OVER / run-complete /
 stopped-early notes come from the stock `last_action_result`.
 
 Knobs (read at call time): `EVID_ENABLE` (master), `EVID_MAX_ENTRIES` [40], `EVID_MAX_CHARS` [1500,
 whole block; header + LEVEL CLEARED flag + trace survive a cut], `EVID_TRACE` [1], `EVID_TRACE_MAX`
-[12], `EVID_CONNECTIVITY` [4 = the sandbox's `segment_layer`, so `size` equals the `pixels` the
+[24], `EVID_CONNECTIVITY` [4 = the sandbox's `segment_layer`, so `size` equals the `pixels` the
 model sees; 8 available], `EVID_BG_FRACTION` [0.25]. Cost measured on the dry run: 57,431 chars over
 96 executed tool results = 598 chars (~150-200 tokens) per executed turn, cap ~400 tokens.
 
@@ -152,7 +196,7 @@ the shim's `prompt_tokens` (expect ~+192 per image).
 
 ## 5. Tests and dry runs (all run 2026-09-06; bundle = june_stock)
 
-* `test_graft_evidence.py` — **14/14** (`GRAFT_TEST_BUNDLE=scratchpad/bundles/june_stock/src/ARC3-Inference`):
+* `test_graft_evidence.py` — **17/17** (`GRAFT_TEST_BUNDLE=scratchpad/bundles/june_stock/src/ARC3-Inference`):
   install/seam; flag-off byte-identical; MOVED/APPEARED/VANISHED/RECOLORED/RESHAPED with exact
   coordinates, background never listed, 4 vs 8 connectivity; coordinate convention (§2); batch trace
   incl. no-single-mover and `EVID_TRACE`/`EVID_TRACE_MAX`; level flag + split (clear first/middle/last,
@@ -160,10 +204,13 @@ the shim's `prompt_tokens` (expect ~+192 per image).
   and the transcript renderer shows it, counters; level flag + GAME_OVER note through the wrapper;
   exception fallback (both before and after the stock call); runtime-state fallback without a session;
   `inject()` shapes; status; `analyze()` end to end (marker once in the transcript's TOOL RESULT and
-  in the kept history).
-* `test_graft_hypo.py` — **7/7**: install; flag-off identical; once per prompt (turn 0, after a
-  clear); absent after run_complete / not playing / won; <= 900 chars; fallback; `analyze()` end to end
-  (follow-up prompt does not repeat it).
+  in the kept history); judge fixes: in-place-before-MOVED (synthetic occlusion, uncover, 1-cell step),
+  the recorded dc22-35 / lf52-22 frames, noise rules (same-bbox drop, HUD collapse), trace cut keeps the
+  final action, new flag wording.
+* `test_graft_hypo.py` — **9/9**: install (both seams); flag-off identical; once per prompt (turn 0,
+  after a clear); absent after run_complete / not playing / won; <= 900 chars; fallback; `analyze()` end
+  to end (follow-up prompt does not repeat it); strip helpers (str + multimodal, inputs not mutated);
+  three-turn `analyze()` proof that only the current turn carries the block.
 * `dry_run_evidence.py` (real arcengine, sb26 replay + vc33/ls20 cycling, 60 actions/game):
   `--graft both` **PASS 11/11**, `--graft evid` **PASS 10/10**, `--graft hypo` **PASS 6/6**.
   96 executed-action tool results -> 96 `[EVID]` blocks (== `diffs_emitted`), 3 LEVEL CLEARED flags on
@@ -183,6 +230,12 @@ the shim's `prompt_tokens` (expect ~+192 per image).
   * `keith_up8`: `UPSCALE=8 ([512, 512] px, ~256 vision tok/img derived)`, no graft, no markers.
   (Levels are 0 because the mock brain cycles actions; the mock counts prompt tokens as chars/4, so
   its token numbers carry no information about the aids' cost.)
+  * **Judge geometry, `keith_evid --games cd82,dc22,lf52 --draws 2 --concurrency 3 --max-calls 60`**
+    (`…/regime_dry_0906/20260906-182916-regime-keith_evid-dry`): `geometry conc 3 | … | max_calls 60`;
+    every run made exactly 60 calls (`CADENCE calls/game 60.0`) and ended `gave_up` under its own cap;
+    `[EVID] 304 (50.7/run)`, engagement wall 100 % (304/304); `WALL attempts 0/6 (L2 reached 0 …) | passes 0 |
+    void 0 {}`; `FIRST-CALL prompt_tokens (n_messages==2) mean 4289 n=6` (mock arithmetic, not a real
+    tokenizer); `upt% c@L2 att void` columns per run.
 
 ## 6. Runner additions (offkaggle/run_regime_wave.py)
 
@@ -202,21 +255,27 @@ the shim's `prompt_tokens` (expect ~+192 per image).
   hypo: aided turns / turns, `_wall` variants on the wall level}; `per_game_draw` = per-(game, draw)
   levels; summary `AID` / `DRAWS` lines and `evid` / `hypo` / `wall%` columns.
 
-## 7. Launch commands (NOT run; token read from `~/.config/arc3/vllm_token` into memory only)
+## 7. Launch order and commands (NOT run; token read from `~/.config/arc3/vllm_token` into memory only)
+
+The judge's corrected plan: base first at the SAME geometry, then the three arms, each on the three walls
+x 2 draws, concurrency 3, at most 60 analyzer calls per run inside a 1500 s cap:
 
 ```
 cd /Users/ahmed/Documents/ArcAGI3
-.venv/bin/python offkaggle/run_regime_wave.py --arm keith_evid --games cd82,dc22,lf52 --draws 2 --per-game-s 1500 \
-    --base-url https://a-m-mobasher--arc3-flashnext-serve.modal.run/v1 --out offkaggle/results
-.venv/bin/python offkaggle/run_regime_wave.py --arm keith_hypo --games cd82,dc22,lf52 --draws 2 --per-game-s 1500 \
-    --base-url https://a-m-mobasher--arc3-flashnext-serve.modal.run/v1 --out offkaggle/results
-.venv/bin/python offkaggle/run_regime_wave.py --arm keith_up8  --games cd82,dc22,lf52 --draws 2 --per-game-s 1500 \
-    --base-url https://a-m-mobasher--arc3-flashnext-serve.modal.run/v1 --out offkaggle/results
+G="--games cd82,dc22,lf52 --draws 2 --concurrency 3 --max-calls 60 --per-game-s 1500"
+U="--base-url https://a-m-mobasher--arc3-flashnext-serve.modal.run/v1 --out offkaggle/results"
+.venv/bin/python offkaggle/run_regime_wave.py --arm keith      $G $U     # 1. base at the instrument's geometry
+.venv/bin/python offkaggle/run_regime_wave.py --arm keith_evid $G $U     # 2. evidence-integrity aid
+.venv/bin/python offkaggle/run_regime_wave.py --arm keith_hypo $G $U     # 3. hypothesis + probe rule
+.venv/bin/python offkaggle/run_regime_wave.py --arm keith_up8  $G $U     # 4. MULTIMODAL_UPSCALE 8
 ```
-Read `summary.txt`: the `DRAWS` line gives levels per (game, draw) — the judge's rule counts a
-wall-attempt as passed when a run reaches level 3 on these games (their modal wall is L2); the `AID`
-line gives the engagement gate (>= 80 % of wall turns). Six runs at 1500 s with concurrency 28 run in
-parallel: ~25-30 min wall per arm on the queue-free endpoint.
+Reading each `summary.txt`: `IDENTITY … ok=True` (profile + GPU) and `VLLM … preemptions 0` and
+`length-finish share <= 1 %` else the run is VOID (`WALL … void N {reasons}`; one redraw); `WALL attempts
+a/6` counts only runs that reached L2 with >= 30 calls left (`c@L2` column); `passes` = level 3 reached;
+`UPTAKE wall` is the mechanism read (gate >= 30 %); `FIRST-CALL prompt_tokens … delta` attests up8
+(≈ +192 expected); `DRAWS` gives levels per (game, draw). Decision (judge): >= 3/6 passes AND base <= 1/6 ->
+25-game wave; 2/6 -> one more round; <= 1/6 with uptake >= 30 % -> EVID = rider candidate; low uptake -> dead.
+Six runs at concurrency 3 and <= 60 calls: ~2 x 60 x ~37 s ≈ 75 min wall per arm at most.
 
 ## 8. Unverified / limitations
 
@@ -236,7 +295,14 @@ parallel: ~25-30 min wall per arm on the queue-free endpoint.
 6. `RESHAPED` can list a same-size shape change (e.g. `size 32->32`) when a frame around a mover
    re-forms; it is informative but adds lines on busy games — the entry cap handles it.
 7. HYPO engagement is 100 % by construction (a fixed block on every prompt); the gate is trivially
-   met — the wave reads only whether the walls fall.
+   met — the mechanism read is UPTAKE (the model quoting `[HYPO]` in its thinking) and whether the walls fall.
+10. UPTAKE is a regex over the model's THINKING/ASSISTANT text (`[EVID]`, `TRACE per action`, `[HYPO]`,
+    MOVED/APPEARED with a coordinate); it under-counts paraphrases and over-counts a model that merely
+    mentions the marker. The judge's two finer mechanism counts (dc22 contradicted-movement-model turns,
+    lf52 own-table-vs-sent-click disagreements) are manual reads, not automated here.
+11. `--max-calls` counts successful completions; a run whose Nth call fails does not stop on it (the next
+    successful one triggers the stop). Under a 1500 s cap with e2e ~37 s the cap and the 60-call budget bind
+    at about the same point; the `calls` column shows which one did.
 8. `wall_level` uses `levels_completed + 1` from the benchmark row; when a run is cancelled
    mid-turn the last turn may be missing its prompt-level line (counted as level None, excluded from
    the wall share).

@@ -25,6 +25,15 @@ The session is reached through self._step_env_callback (analyze() sets it
 before building the prompt; solver passes step_env=session.step_env). No
 session (unit tests, other harnesses) -> the summary alone decides.
 
+HISTORY STRIP (judge fix 09-06): the block must ride ONLY the current turn.
+analyze() persists the turn's messages through
+self._persistent_history_messages(messages, tools=...) (its `finally`), and
+the next turn rebuilds the request as [system, *persisted history, new user
+message]. The graft wraps _persistent_history_messages and returns a copy in
+which every user message (str content or the multimodal [text, image] list)
+has the block removed, so older prompts carry no copy and exactly one block
+is in flight per request. Counted in status()["blocks_stripped"].
+
 Telemetry: status()["blocks_injected"], per-game counts, skips; the runner
 counts "[HYPO]" lines in [USER PROMPT] sections.
 Conventions: module _STATE/_STOCK, install() -> "hypo: OK" / "hypo: SKIP (...)".
@@ -38,6 +47,7 @@ from typing import Any
 _STATE: dict[str, Any] = {
     "installed": False,
     "blocks_injected": 0,
+    "blocks_stripped": 0,
     "errors": 0,
     "skips": {},
     "per_game": {},
@@ -86,6 +96,7 @@ def status() -> dict[str, Any]:
             "enabled": enabled(),
             "block_chars": len(block_text()),
             "blocks_injected": _STATE["blocks_injected"],
+            "blocks_stripped": _STATE["blocks_stripped"],
             "errors": _STATE["errors"],
             "skips": dict(_STATE["skips"]),
             "per_game": dict(_STATE["per_game"]),
@@ -130,6 +141,46 @@ def should_inject(agent: Any, previous_step_summary: Any) -> tuple[bool, str]:
     return True, "uncleared"
 
 
+def strip_block(text: str) -> tuple[str, int]:
+    """Remove every copy of the block (with the newline the graft added) from a prompt string."""
+    block = block_text()
+    n = text.count(block)
+    if not n:
+        return text, 0
+    return text.replace("\n" + block, "").replace(block, ""), n
+
+
+def strip_history(messages: list[Any]) -> tuple[list[Any], int]:
+    """Copy of `messages` with the block removed from every user message (str or multimodal list)."""
+    out: list[Any] = []
+    stripped = 0
+    for m in messages:
+        if not isinstance(m, dict) or m.get("role") != "user":
+            out.append(m)
+            continue
+        content = m.get("content")
+        if isinstance(content, str):
+            new, n = strip_block(content)
+            if n:
+                m = {**m, "content": new}
+                stripped += n
+        elif isinstance(content, list):
+            parts = []
+            changed = False
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                    new, n = strip_block(part["text"])
+                    if n:
+                        part = {**part, "text": new}
+                        changed = True
+                        stripped += n
+                parts.append(part)
+            if changed:
+                m = {**m, "content": parts}
+        out.append(m)
+    return out, stripped
+
+
 # --------------------------------------------------------------- install ---
 def install() -> str:
     if _STATE["installed"]:
@@ -143,8 +194,11 @@ def install() -> str:
         return "hypo: SKIP (missing ToolAgent)"
     if getattr(cls, "_build_user_prompt", None) is None:
         return "hypo: SKIP (ToolAgent._build_user_prompt missing)"
+    if getattr(cls, "_persistent_history_messages", None) is None:
+        return "hypo: SKIP (ToolAgent._persistent_history_messages missing)"
 
     _STOCK["build_user_prompt"] = cls._build_user_prompt
+    _STOCK["persistent_history_messages"] = cls._persistent_history_messages
 
     def _build_user_prompt(self, action_num, *args, **kwargs):
         text = _STOCK["build_user_prompt"](self, action_num, *args, **kwargs)
@@ -165,7 +219,24 @@ def install() -> str:
                 _STATE["errors"] += 1
             return text
 
+    def _persistent_history_messages(self, messages, *args, **kwargs):
+        kept = _STOCK["persistent_history_messages"](self, messages, *args, **kwargs)
+        if not enabled():
+            return kept
+        try:
+            stripped, n = strip_history(list(kept))
+            if n:
+                with _LOCK:
+                    _STATE["blocks_stripped"] += n
+            return stripped
+        except Exception:  # noqa: BLE001
+            with _LOCK:
+                _STATE["errors"] += 1
+            return kept
+
     _build_user_prompt._hypo_stock = _STOCK["build_user_prompt"]
+    _persistent_history_messages._hypo_stock = _STOCK["persistent_history_messages"]
     cls._build_user_prompt = _build_user_prompt
+    cls._persistent_history_messages = _persistent_history_messages
     _STATE["installed"] = True
     return "hypo: OK"

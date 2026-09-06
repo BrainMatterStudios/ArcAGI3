@@ -92,7 +92,7 @@ _OFF = {"0", "false", "no", "off"}
 MARKER = "[EVID]"
 DEFAULT_MAX_ENTRIES = 40
 DEFAULT_MAX_CHARS = 1500
-DEFAULT_TRACE_MAX = 12
+DEFAULT_TRACE_MAX = 24
 DEFAULT_CONNECTIVITY = 4
 DEFAULT_BG_FRACTION = 0.25
 
@@ -105,6 +105,8 @@ _NEIGH = {
     8: ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)),
 }
 _KIND_ORDER = {"MOVED": 0, "APPEARED": 1, "VANISHED": 2, "RECOLORED": 3, "RESHAPED": 4}
+IN_PLACE_JACCARD = 0.5
+RESHAPE_NOISE_DELTA = 2      # RESHAPED with |size delta| <= this and an unchanged bbox is dropped
 
 
 # ----------------------------------------------------------------- flags ---
@@ -327,7 +329,36 @@ def diff_grids(before: Any, after: Any, *, conn: int = 4, bg_frac: float = DEFAU
                 used_a.add(j)
                 add("RECOLORED", b, a)
                 break
-    # 2. MOVED: same color + shape, nearest first
+    # 2. IN PLACE (judge fix 09-06): same color, cell overlap Jaccard >= IN_PLACE_JACCARD, best
+    #    overlap first — an occluded / uncovered STATIONARY tile pairs with itself here, so it can
+    #    never be reported as a mover swapped with a distant look-alike. A pure translation that
+    #    still overlaps (a 1-cell step of a big tile) is labelled MOVED, anything else RESHAPED.
+    cands = []
+    for i, b in enumerate(bc):
+        if i in used_b:
+            continue
+        for j, a in enumerate(ac):
+            if j in used_a or a.color != b.color:
+                continue
+            inter = len(a.cells & b.cells)
+            if inter == 0:
+                continue
+            jac = inter / len(a.cells | b.cells)
+            if jac >= IN_PLACE_JACCARD:
+                cands.append((-jac, i, j))
+    for _, i, j in sorted(cands):
+        if i in used_b or j in used_a:
+            continue
+        used_b.add(i)
+        used_a.add(j)
+        b, a = bc[i], ac[j]
+        if a.size == b.size and a.shape == b.shape:
+            add("MOVED", b, a)
+        elif b.size >= bg_limit or a.size >= bg_limit:
+            continue                      # background-like: consumed, not listed
+        else:
+            add("RESHAPED", b, a)
+    # 3. MOVED: same color + shape, nearest first (only components not matched in place)
     cands = []
     for i, b in enumerate(bc):
         if i in used_b:
@@ -342,7 +373,7 @@ def diff_grids(before: Any, after: Any, *, conn: int = 4, bg_frac: float = DEFAU
         used_b.add(i)
         used_a.add(j)
         add("MOVED", bc[i], ac[j])
-    # 3. RESHAPED: same color, overlapping cells (Jaccard >= 0.3), best overlap first
+    # 3b. RESHAPED with a weaker overlap (Jaccard >= 0.3), best overlap first
     cands = []
     for i, b in enumerate(bc):
         if i in used_b:
@@ -371,8 +402,25 @@ def diff_grids(before: Any, after: Any, *, conn: int = 4, bg_frac: float = DEFAU
     for j, a in enumerate(ac):
         if j not in used_a and a.size < bg_limit and a.cells & changed:
             add("APPEARED", None, a)
+    entries = [e for e in entries
+               if not (e["kind"] == "RESHAPED" and e["bbox2"] == e["bbox"]
+                       and abs(int(e["size2"]) - int(e["size"])) <= RESHAPE_NOISE_DELTA)]
     entries.sort(key=lambda e: (_KIND_ORDER[e["kind"]], -e["size"], e["bbox"]))
     return {"entries": entries, "changed_cells": len(changed), "shape": (h, w), "note": ""}
+
+
+def render_entries(entries: list[dict[str, Any]], cap: int) -> tuple[list[str], int]:
+    """Entry lines with the edge-touching RESHAPED bars (HUD timers / progress bars) collapsed
+    into one summary line. Returns (lines, entries_not_shown)."""
+    bars = [e for e in entries if e["kind"] == "RESHAPED" and e.get("edge")]
+    rest = [e for e in entries if not (e["kind"] == "RESHAPED" and e.get("edge"))]
+    lines = [render_entry(e) for e in rest[:cap]]
+    hidden = max(0, len(rest) - cap)
+    if bars:
+        colors = sorted({color_label(e["color"]) for e in bars})
+        deltas = ", ".join(f"{e['size']}->{e['size2']}" for e in bars[:4]) + (", …" if len(bars) > 4 else "")
+        lines.append(f"HUD/edge bars reshaped: {len(bars)} ({', '.join(colors)}; sizes {deltas}) — border strips, not gameplay objects")
+    return lines, hidden
 
 
 def render_entry(e: dict[str, Any]) -> str:
@@ -420,10 +468,15 @@ def _trace_lines(frames: list[Any], actions: list[str], levels: list[int], *, co
     parts: list[str] = []
     tracked: tuple[int, int] | None = None      # (color, size) of the object followed across the batch
     n = len(actions)
+    cut_at: int | None = None
     for k in range(1, n + 1):
-        if len(parts) >= limit:
-            parts.append(f"(+{n - k + 1} more actions not traced)")
-            break
+        if len(parts) >= limit and k < n:
+            if cut_at is None:
+                cut_at = k
+            continue                      # cut, but the FINAL action is always traced below
+        if cut_at is not None:
+            parts.append(f"(+{n - cut_at} more actions not traced)")
+            cut_at = None
         name = actions[k - 1]
         if levels[k] > levels[k - 1]:
             parts.append(f"{k} {name}: LEVEL CLEARED (frame now level {levels[k]})")
@@ -485,7 +538,9 @@ def build_evidence(frames: list[Any], actions: list[str], levels: list[int], *, 
         lvl = levels[s]
         if cleared_k is not None:
             flags.append(f"LEVEL CLEARED after action {cleared_k} ({actions[cleared_k - 1]}) — the frames after it "
-                         f"belong to the NEXT level (level {levels[cleared_k]}); do not diff them against this level.")
+                         f"belong to the NEXT level (level {levels[cleared_k]}); do not diff them against this level. "
+                         f"The completed board of the old level is never returned — the last frame you saw before the "
+                         f"clearing action is NOT the completion state; do not read it as one.")
             info["level_flags"] += 1
         if seg_idx > 0:
             body.append(f"level {lvl} start frame (after action {s}): {object_count(frames[s], conn=conn, bg_frac=bg_frac)} "
@@ -500,11 +555,11 @@ def build_evidence(frames: list[Any], actions: list[str], levels: list[int], *, 
                 body.append(f"{label}: {d['note']}")
                 continue
             body.append(f"{label}: {d['changed_cells']} cells changed, {len(ents)} object changes")
-            shown = ents[:entry_cap]
-            info["entries_shown"] += len(shown)
-            body.extend("  " + render_entry(x) for x in shown)
-            if len(ents) > len(shown):
-                body.append(f"  (+{len(ents) - len(shown)} more not shown)")
+            lines, hidden = render_entries(ents, entry_cap)
+            info["entries_shown"] += len(ents) - hidden
+            body.extend("  " + ln for ln in lines)
+            if hidden:
+                body.append(f"  (+{hidden} more not shown)")
         elif cleared_k is not None and seg_idx == 0:
             body.append(f"level {lvl}: the clearing action was the first of this call; nothing to diff on this level")
     for note in notes or []:

@@ -256,7 +256,9 @@ class EvidenceTests(unittest.TestCase):
         self.assertNotIn("TRACE", ev.build_evidence([f0, f1, f2], ["RIGHT", "RIGHT"], [1, 1, 1])[0])
         os.environ["EVID_TRACE"] = "1"
         os.environ["EVID_TRACE_MAX"] = "2"
-        self.assertIn("(+2 more actions not traced)", ev.build_evidence([f0, f1, f2, f3, f4], ["A", "B", "C", "D"], [1] * 5)[0])
+        cut, _ = ev.build_evidence([f0, f1, f2, f3, f4], ["A", "B", "C", "D"], [1] * 5)
+        self.assertIn("| (+1 more actions not traced) | 4 D: mover b/blue size 4 -> (5,7)-(6,8)", cut)   # the FINAL action is always traced
+        self.assertNotIn("3 C:", cut)
 
     # 06 level-transition flag + split ----------------------------------------
     def test_06_level_transition_flag(self):
@@ -269,7 +271,9 @@ class EvidenceTests(unittest.TestCase):
         lines = text.splitlines()
         self.assertTrue(lines[0].startswith("[EVID] harness object diff for actions 10-12"))
         self.assertEqual(lines[1], "LEVEL CLEARED after action 2 (SPACE) — the frames after it belong to the NEXT level "
-                                   "(level 2); do not diff them against this level.")
+                                   "(level 2); do not diff them against this level. The completed board of the old level is "
+                                   "never returned — the last frame you saw before the clearing action is NOT the completion "
+                                   "state; do not read it as one.")
         self.assertIn("level 1 diff, before action 1 -> after action 1: 8 cells changed, 1 object changes", text)
         self.assertIn("MOVED b/blue size 4: (5,1)-(6,2) -> (5,3)-(6,4)", text)
         self.assertIn("level 2 start frame (after action 2): 2 non-background objects", text)
@@ -313,13 +317,13 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(text2.startswith(ev.MARKER))
         self.assertIn("lines cut by EVID_MAX_CHARS", text2)
         # the level flag survives the char cap
-        os.environ["EVID_MAX_CHARS"] = "500"
+        os.environ["EVID_MAX_CHARS"] = "600"
         text3, _ = ev.build_evidence([before, after, after], ["UP", "SPACE"], [1, 1, 2])
-        self.assertLessEqual(len(text3), 500)
+        self.assertLessEqual(len(text3), 600)
         self.assertIn("LEVEL CLEARED after action 2 (SPACE)", text3)
         # defaults
         _clear()
-        self.assertEqual((ev.max_entries(), ev.max_chars(), ev.trace_enabled(), ev.trace_max()), (40, 1500, True, 12))
+        self.assertEqual((ev.max_entries(), ev.max_chars(), ev.trace_enabled(), ev.trace_max()), (40, 1500, True, 24))
         big, _ = ev.build_evidence([before, after], ["UP"], [1, 1])
         self.assertLessEqual(len(big), 1500)
 
@@ -455,6 +459,64 @@ class EvidenceTests(unittest.TestCase):
         tool_msgs = [m for m in agent._history_messages if m.get("role") == "tool"]
         self.assertEqual(len(tool_msgs), 1)
         self.assertIn("[EVID]", tool_msgs[0]["content"])           # persisted for later turns
+
+    # 15 judge fix: in-place overlap BEFORE the shape matcher ---------------------------
+    def test_15_in_place_before_moved(self):
+        b = put(put(blank(), 2, 2, 9, 2, 2), 8, 8, 9, 2, 2)              # T1 at (2,2), T2 at (8,8), same shape+color
+        a = put(put(put(blank(), 2, 2, 9, 2, 2), 8, 1, 9, 2, 2), 3, 3, 8)  # T1 stays but one cell is occluded; T2 moved
+        d = ev.diff_grids(b, a)
+        moved = [e for e in d["entries"] if e["kind"] == "MOVED"]
+        self.assertEqual(len(moved), 1)
+        self.assertEqual((moved[0]["bbox"], moved[0]["bbox2"]), ((8, 8, 9, 9), (8, 1, 9, 2)))   # T2, not T1
+        self.assertFalse(any(e["kind"] == "MOVED" and e["bbox"] == (2, 2, 3, 3) for e in d["entries"]))
+        self.assertIn("APPEARED R/red size 1 at (3,3)", "\n".join(ev.render_entry(e) for e in d["entries"]))
+        # a big tile stepping one cell still overlaps itself (Jaccard 0.6): in-place pairing labels it MOVED
+        b2 = put(blank(), 4, 4, 9, 4, 4)
+        a2 = put(blank(), 4, 5, 9, 4, 4)
+        d2 = ev.diff_grids(b2, a2)
+        self.assertEqual([(e["kind"], e["bbox2"]) for e in d2["entries"]], [("MOVED", (4, 5, 7, 8))])
+        # the uncovered tile: an identical tile appears elsewhere while this one is partly uncovered -> no swap
+        b3 = put(put(blank(), 2, 2, 9, 2, 2), 3, 3, 8)                    # T1 at (2,2) with its corner covered by red
+        a3 = put(put(blank(), 2, 2, 9, 2, 2), 8, 8, 9, 2, 2)              # red gone (T1 whole), new identical tile at (8,8)
+        d3 = ev.diff_grids(b3, a3)
+        self.assertEqual([e["kind"] for e in d3["entries"]], ["APPEARED", "VANISHED"])
+        self.assertEqual([e["bbox"] for e in d3["entries"]], [(8, 8, 9, 9), (3, 3, 3, 3)])
+
+    # 16 judge fix verified on the recorded frames (keith run, dc22 action 35, lf52 action 22) ----------
+    def test_16_recorded_frames(self):
+        fix = json.loads((_HERE / "fixtures_evid_frames.json").read_text())
+        d = ev.diff_grids(fix["dc22-fdcac232"]["before"], fix["dc22-fdcac232"]["after"])
+        lines, hidden = ev.render_entries(d["entries"], 40)
+        self.assertEqual(lines, ["MOVED N/light green size 4: (38,8)-(39,9) -> (40,8)-(41,9) (d row +2, col +0)"])
+        self.assertEqual(hidden, 0)                                    # the 32->32 same-bbox frame reshape is noise, dropped
+        d = ev.diff_grids(fix["lf52-271a04aa"]["before"], fix["lf52-271a04aa"]["after"])
+        lines, _ = ev.render_entries(d["entries"], 40)
+        self.assertFalse(any(ln.startswith("MOVED") for ln in lines))    # nothing moved: recolors + appear/vanish only
+        self.assertIn("APPEARED N/light green size 12 at (15,13)-(18,16)", lines)
+        self.assertIn("VANISHED w/light gray size 16 at (15,13)-(18,16)", lines)
+        self.assertIn("RECOLORED size 12 at (15,31)-(18,34): g/gray -> N/light green", lines)
+        self.assertEqual([ln for ln in lines if ln.startswith("HUD/edge bars reshaped: 2 (W/white, w/light gray; sizes 56->55, 8->9)")].__len__(), 1)
+        self.assertFalse(any("[edge]" in ln and ln.startswith("RESHAPED") for ln in lines))
+
+    # 17 noise rules ------------------------------------------------------------------
+    def test_17_noise_rules(self):
+        # same bbox, |delta| <= 2 -> dropped; |delta| > 2 or bbox change -> kept
+        b = put(blank(), 4, 4, 2, 4, 4)
+        a = put(put(blank(), 4, 4, 2, 4, 4), 5, 5, 9, 2, 1)             # two interior cells recolored: frame 16->14, same bbox
+        kinds = [e["kind"] for e in ev.diff_grids(b, a)["entries"]]
+        self.assertEqual(kinds, ["APPEARED"])
+        a2 = put(put(blank(), 4, 4, 2, 4, 4), 5, 5, 9, 2, 2)            # 16->12: kept
+        self.assertIn("RESHAPED", [e["kind"] for e in ev.diff_grids(b, a2)["entries"]])
+        # edge bars collapse to one line and never count against the entry cap
+        b3 = put(put(blank(20, 20), 0, 0, 8, 1, 15), 19, 0, 11, 1, 15)
+        a3 = put(put(blank(20, 20), 0, 0, 8, 1, 12), 19, 0, 11, 1, 10)
+        lines, hidden = ev.render_entries(ev.diff_grids(b3, a3)["entries"], 1)
+        self.assertEqual(hidden, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("HUD/edge bars reshaped: 2 (R/red, Y/yellow; sizes 15->12, 15->10)"))
+        text, _ = ev.build_evidence([b3, a3], ["UP"], [1, 1])
+        self.assertIn("HUD/edge bars reshaped: 2", text)
+        self.assertNotIn("[edge]", text)
 
 
 if __name__ == "__main__":
