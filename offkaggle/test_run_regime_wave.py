@@ -121,7 +121,7 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert diff == {"LOCAL_ANALYZER_CONTEXT_WINDOW", "LOCAL_ANALYZER_MAX_OUTPUT"}, diff
     assert (rw.KEITH_ANALYZER_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"], rw.KEITH_ANALYZER_ENV["LOCAL_ANALYZER_MAX_OUTPUT"]) == ("32768", "0")
     assert (rw.FLIGHT_ANALYZER_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"], rw.FLIGHT_ANALYZER_ENV["LOCAL_ANALYZER_MAX_OUTPUT"]) == ("24576", "4096")
-    assert rw.ARMS == ("keith", "flight", "keith_yield180", "keith_retry")
+    assert rw.ARMS == ("keith", "flight", "keith_yield180", "keith_retry", "keith_evid", "keith_hypo", "keith_up8")
     # the original single-knob arm differs from the keith base on exactly the yield key
     d2 = {k for k in set(rw.KEITH_ANALYZER_ENV) | set(rw.KEITH_YIELD180_ENV)
           if rw.KEITH_ANALYZER_ENV.get(k) != rw.KEITH_YIELD180_ENV.get(k)}
@@ -133,9 +133,21 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert d3 == set(rw.RETRY_ENV_KEYS) == {"RETRY_ENABLE", "RETRY_K", "RETRY_ABS", "RETRY_COOLDOWN", "RETRY_MAX"}, d3
     assert {k: rw.KEITH_RETRY_ENV[k] for k in rw.RETRY_ENV_KEYS} == {
         "RETRY_ENABLE": "1", "RETRY_K": "3", "RETRY_ABS": "200", "RETRY_COOLDOWN": "150", "RETRY_MAX": "2"}
-    assert rw.ARM_GRAFTS == {"keith_retry": ("graft_retry",)}
-    for arm in ("keith", "flight", "keith_yield180"):
-        assert not any(k.startswith("RETRY_") for k in rw.ARM_ENV[arm]), arm   # stock arms carry no graft flag
+    assert rw.ARM_GRAFTS == {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",),
+                             "keith_hypo": ("graft_hypo",)}
+    # 09-06 arms: each differs from the keith base by exactly its own keys
+    def _diff(env):
+        return {k for k in set(rw.KEITH_ANALYZER_ENV) | set(env) if rw.KEITH_ANALYZER_ENV.get(k) != env.get(k)}
+    assert _diff(rw.KEITH_EVID_ENV) == set(rw.EVID_ENV_KEYS) == {"EVID_ENABLE", "EVID_MAX_ENTRIES", "EVID_MAX_CHARS", "EVID_TRACE"}
+    assert {k: rw.KEITH_EVID_ENV[k] for k in rw.EVID_ENV_KEYS} == {"EVID_ENABLE": "1", "EVID_MAX_ENTRIES": "40",
+                                                                    "EVID_MAX_CHARS": "1500", "EVID_TRACE": "1"}
+    assert _diff(rw.KEITH_HYPO_ENV) == set(rw.HYPO_ENV_KEYS) == {"HYPO_ENABLE"} and rw.KEITH_HYPO_ENV["HYPO_ENABLE"] == "1"
+    assert _diff(rw.KEITH_UP8_ENV) == {"MULTIMODAL_UPSCALE"} and rw.KEITH_UP8_ENV["MULTIMODAL_UPSCALE"] == "8"
+    assert rw.KEITH_ANALYZER_ENV["MULTIMODAL_UPSCALE"] == "4" and rw.KEITH_UP8_ENV["MULTIMODAL_CONTEXT"] == "current_grid"
+    for arm in ("keith", "flight", "keith_yield180", "keith_up8"):
+        assert not any(k.startswith(rw.GRAFT_ENV_PREFIXES) for k in rw.ARM_ENV[arm]), arm   # stock arms carry no graft flag
+    for arm, prefix in (("keith_retry", "RETRY_"), ("keith_evid", "EVID_"), ("keith_hypo", "HYPO_")):
+        assert all(k.startswith(prefix) for k in rw.ARM_ENV[arm] if k.startswith(rw.GRAFT_ENV_PREFIXES)), arm
 
 
 def test_install_env_never_leaks_graft_flags_into_a_stock_arm():
@@ -148,9 +160,18 @@ def test_install_env_never_leaks_graft_flags_into_a_stock_arm():
             assert os.environ["RETRY_ENABLE"] == "1" and rec["RETRY_K"] == "3"
             rec = rw.install_env("keith_retry", "http://127.0.0.1:9/v1", "t", Path(tmp), {"RETRY_ABS": "7"})
             assert os.environ["RETRY_ABS"] == "7" and rec["RETRY_ABS"] == "7" and rec["RETRY_K"] == "3"
+            # a stale EVID_/HYPO_ flag never leaks into a stock arm or into another graft's arm
+            os.environ["EVID_ENABLE"] = "1"
+            os.environ["HYPO_ENABLE"] = "1"
+            rec = rw.install_env("keith_up8", "http://127.0.0.1:9/v1", "t", Path(tmp))
+            assert "EVID_ENABLE" not in os.environ and "HYPO_ENABLE" not in os.environ and "RETRY_ENABLE" not in os.environ
+            assert rec["MULTIMODAL_UPSCALE"] == "8" and not any(k.startswith(rw.GRAFT_ENV_PREFIXES) for k in rec)
+            os.environ["HYPO_ENABLE"] = "1"
+            rec = rw.install_env("keith_evid", "http://127.0.0.1:9/v1", "t", Path(tmp))
+            assert "HYPO_ENABLE" not in os.environ and os.environ["EVID_ENABLE"] == "1" and rec["EVID_MAX_CHARS"] == "1500"
             assert rec["LOCAL_ANALYZER_API_KEY"] == "<redacted>" and "t" != os.environ["LOCAL_ANALYZER_API_KEY"][:0]
         finally:
-            for k in rw.RETRY_ENV_KEYS:
+            for k in [k for k in os.environ if k.startswith(rw.GRAFT_ENV_PREFIXES)]:
                 os.environ.pop(k, None)
     assert rw.parse_knobs(["A=1", "B = x=y"]) == {"A": "1", "B": "x=y"}
     try:
@@ -629,7 +650,14 @@ def test_dry_run_end_to_end():
         summary = (out / "summary.txt").read_text()
         assert "REGIME WAVE  arm=flight  status=done" in summary and "CONTEXT_WINDOW=24576" in summary
         assert summary.count("\n") < 45, "summary must fit one screen"
-        assert "RETRY" not in summary.split("\n  game")[0]     # stock arm: no retry line
+        head = summary.split("\n  run ")[0]
+        assert "RETRY" not in head and "AID" not in head and "DRAWS" not in head   # stock arm, 1 draw: no graft/draw lines
+        assert "UPSCALE=4 ([256, 256] px, ~64 vision tok/img derived)" in summary
+        assert res["vision"]["png_px"] == [256, 256] and res["vision"]["vision_tokens_derived"] == 64
+        assert res["draws"] == 1 and all(g["draw"] == 0 and g["run_stem"] == g["game_id"] + "_p0" for g in res["games"])
+        assert set(tel["per_game"]) == {"tu93-0768757b_p0", "ft09-0d8bbf25_p0"}
+        assert all(g["evid_markers"] == 0 and g["hypo_markers"] == 0 for g in tel["per_game"].values())
+        assert all(rec["run_stem"] == rec["game_id"] + "_p0" for rec in shim)
         ic = res["endpoint"]["identity_check"]
         assert ic["profile"] == rw.DEFAULT_EXPECT_PROFILE and ic["profile_ok"] is True and ic["gpu_ok"] is True
         assert "RTX PRO 6000" in ic["gpu_rows"][0] and res["expect_profile"] == rw.DEFAULT_EXPECT_PROFILE
@@ -678,8 +706,8 @@ def test_dry_run_keith_retry_arm_end_to_end():
         assert sum(g["retries_fired"] for g in per.values()) == agg["retries_total"]
         for gid in ("tu93-0768757b", "ft09-0d8bbf25"):
             text = (out / "transcripts" / f"{gid}_p0.txt").read_text()
-            assert text.count("FRESH MIND (harness level retry") == per[gid]["retries_fired"]
-            assert text.count("[HARNESS RETRY]\n[RETRY] game=") == per[gid]["retries_fired"]
+            assert text.count("FRESH MIND (harness level retry") == per[f"{gid}_p0"]["retries_fired"]   # per_game keyed by run stem
+            assert text.count("[HARNESS RETRY]\n[RETRY] game=") == per[f"{gid}_p0"]["retries_fired"]
         # the RESETs are in the harness's own action record (benchmark.json history)
         bench = json.loads((out / "benchmark.json").read_text())
         hist_resets = 0
@@ -692,6 +720,294 @@ def test_dry_run_keith_retry_arm_end_to_end():
         assert hist_resets >= st["retries_fired"], (hist_resets, st["retries_fired"])
         summary = (out / "summary.txt").read_text()
         assert "REGIME WAVE  arm=keith_retry" in summary and "RETRY  fired" in summary and "KNOB OVERRIDES" in summary
+        assert summary.count("\n") < 45
+        for path in out.rglob("*"):
+            if path.is_file() and path.suffix in (".json", ".txt", ".prom", ".jsonl", ".log"):
+                assert "dry-run-token" not in path.read_text(encoding="utf-8", errors="replace"), path
+
+
+# --- 8. 09-06 aids: extractor, upscale facts, in-memory installs, draws dry run ----
+
+AID_TRANSCRIPT = """
+--- analysis_step=1 | action=1 | 10:00:00 | tool-agent ---
+[SYSTEM PROMPT]
+sys
+[USER PROMPT]
+No previous sequence has been executed yet.
+Current state: step 1, level 1.
+Valid actions right now: UP, DOWN.
+[HYPO] Hypothesis discipline for this uncleared level (harness rule, every turn):
+1. List >=3 candidate mechanics.
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 3
+[THINKING]
+xyz
+[TOOL CALL: python]
+{"code": "action(['UP'])"}
+[TOOL RESULT: python]
+p
+
+[EVID] harness object diff for action 1 (1 executed in this call); coords are (row,col), 0-based
+diff, before action 1 -> after action 1: 8 cells changed, 1 object changes
+  MOVED b/blue size 4: (5,1)-(6,2) -> (5,3)-(6,4) (d row +0, col +2)
+[ANALYZER STATUS]
+step_executed: True
+message: Step executed.
+
+--- analysis_step=2 | action=2 | 10:01:00 | tool-agent ---
+[SYSTEM PROMPT]
+sys
+[USER PROMPT]
+The code executed 1 action in the previous sequence.
+Current state: step 2, level 1.
+[HYPO] Hypothesis discipline for this uncleared level (harness rule, every turn):
+[MODEL RESPONSE META]
+finish_reason: stop
+tool_call_count: 0
+content_chars: 5
+reasoning_chars: 0
+[ASSISTANT]
+thinking about [EVID] and [HYPO] in prose is not a marker
+[USER PROMPT]
+You have not acted yet. Investigate first.
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 0
+[TOOL CALL: python]
+{"code": "action(['UP','SPACE','LEFT'])"}
+[TOOL RESULT: python]
+[EVID] harness object diff for actions 2-4 (3 executed in this call); coords are (row,col), 0-based
+LEVEL CLEARED after action 2 (SPACE) — the frames after it belong to the NEXT level (level 2); do not diff them against this level.
+level 1 diff, before action 1 -> after action 1: 8 cells changed, 1 object changes
+level 2 start frame (after action 2): 3 non-background objects
+TRACE per action: 1 UP: mover b/blue size 4 -> (5,3)-(6,4) | 2 SPACE: LEVEL CLEARED (frame now level 2) | 3 LEFT: 2 cells changed
+[ANALYZER STATUS]
+step_executed: True
+message: Step executed.
+
+--- analysis_step=3 | action=5 | 10:02:00 | tool-agent ---
+[SYSTEM PROMPT]
+sys
+[USER PROMPT]
+You have progressed to a new level!
+Current state: step 5, level 2.
+[HYPO] Hypothesis discipline for this uncleared level (harness rule, every turn):
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 0
+[TOOL CALL: python]
+{"code": "print(1)"}
+[TOOL RESULT: python]
+1
+[ANALYZER STATUS]
+step_executed: False
+message: Yielded control to solver: turn_time_budget.
+
+--- analysis_step=3 | action=5 | 10:03:00 | tool-agent ---
+[SYSTEM PROMPT]
+sys
+[USER PROMPT]
+Current state: step 5, level 2.
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 0
+[TOOL CALL: python]
+{"code": "action(['UP'])"}
+[TOOL RESULT: python]
+[EVID] harness object diff for action 5 (1 executed in this call); coords are (row,col), 0-based
+diff, before action 1 -> after action 1: no cell changed
+[ANALYZER STATUS]
+step_executed: True
+message: Step executed.
+"""
+
+
+def test_extractor_counts_aid_markers_and_engagement():
+    parsed = rw.parse_transcript(AID_TRANSCRIPT)
+    assert [t["level"] for t in parsed["turns"]] == [1, 1, 2, 2]
+    assert [t["hypo"] for t in parsed["turns"]] == [1, 1, 1, 0]        # the follow-up prompt does not repeat it
+    assert [t["evid"] for t in parsed["turns"]] == [1, 1, 0, 1]
+    assert [t["evid_level_flags"] for t in parsed["turns"]] == [0, 1, 0, 0]
+    assert parsed["aid_markers"] == {"evid_markers": 3, "evid_level_flags": 1, "hypo_markers": 3}
+    tel = rw.telemetry_for_game(AID_TRANSCRIPT, actions_total=5, levels_completed=1, number_of_levels=4)
+    assert (tel["evid_markers"], tel["evid_level_flags"], tel["hypo_markers"]) == (3, 1, 3)
+    assert tel["turn_levels"] == [1, 1, 2, 2] and tel["level_reached"] == 2 and tel["wall_level"] == 2
+    e = tel["engagement"]
+    assert e["evid"] == {"turns": 3, "of": 3, "share": 1.0}            # 3 step-executed turns, all carried the aid
+    assert e["evid_wall"] == {"turns": 1, "of": 1, "share": 1.0}       # wall level 2: one executed turn, aided
+    assert e["hypo"] == {"turns": 3, "of": 4, "share": 0.75}
+    assert e["hypo_wall"] == {"turns": 1, "of": 2, "share": 0.5} and e["wall_turns"] == 2
+    # a won game has no wall
+    won = rw.telemetry_for_game(AID_TRANSCRIPT, levels_completed=4, number_of_levels=4)
+    assert won["wall_level"] is None and won["engagement"]["evid_wall"] == {"turns": 0, "of": 0, "share": None}
+    # markers inside model prose are not counted; a stock transcript has none
+    assert rw.telemetry_for_game(SYNTHETIC_TRANSCRIPT)["evid_markers"] == 0
+    assert rw.telemetry_for_game("x [EVID] harness object diff for action 1\n")["evid_markers"] == 0
+    agg = rw.aggregate_telemetry({"a_p0": tel, "a_p1": won})
+    assert agg["evid_markers_total"] == 6 and agg["hypo_markers_total"] == 6 and agg["evid_level_flags_total"] == 2
+    assert agg["engagement"]["evid_wall"] == {"turns": 1, "of": 1, "share": 1.0}
+    assert agg["engagement"]["hypo"] == {"turns": 6, "of": 8, "share": 0.75}
+    assert rw.run_stem_for("cd82-fb555c5d", 4, 3) == "cd82-fb555c5d_p1" and rw.run_stem_for("x", 7, None) == "x_p0"
+
+
+_VISION_PROBE = r'''
+import json, os, sys
+sys.path.insert(0, __HERE__)
+import run_regime_wave as rw
+from pathlib import Path
+out = Path(__TMP__)
+env = rw.install_env(__ARM__, "http://127.0.0.1:9/v1", "probe-token", out)
+rw.install_paths()
+rw.verify_imports()
+from inference.agent import vision_context as vc
+from inference.agent import tool_agent as ta
+facts = rw.vision_image_facts()
+agent = ta.ToolAgent(model=rw.SERVED_MODEL_NAME, timeout=900.0)
+from inference.agent.runtime_state import Frame
+frame = Frame(grid=tuple(tuple(0 for _ in range(64)) for _ in range(64)), step=0, level=1)
+msg = agent._build_user_message("prompt", frame)
+print(json.dumps({"arm": __ARM__, "upscale": vc.current_grid_image_upscale(), "facts": facts,
+                  "env_upscale": env.get("MULTIMODAL_UPSCALE"),
+                  "image_attached": isinstance(msg["content"], list) and msg["content"][1]["type"] == "image_url",
+                  "system_prompt_multimodal": "Multimodal context" in agent._system_prompt}))
+'''
+
+
+def test_upscale_arm_vision_facts():
+    """keith_up8 differs from keith only in MULTIMODAL_UPSCALE; the stock vision_context reads it at
+    call time: 64x64 -> 512x512 px PNG (vs 256) => 256 derived vision tokens (vs 64, the measured value)."""
+    got = {}
+    for arm in ("keith", "keith_up8"):
+        with tempfile.TemporaryDirectory() as tmp:
+            code = (_VISION_PROBE.replace("__HERE__", repr(str(HERE))).replace("__TMP__", repr(tmp))
+                    .replace("__ARM__", repr(arm)))
+            r = subprocess.run([PYTHON, "-c", code], capture_output=True, text=True, cwd=str(REPO), timeout=300)
+            assert r.returncode == 0, r.stderr[-2000:]
+            got[arm] = json.loads(r.stdout.strip().splitlines()[-1])
+    assert got["keith"]["upscale"] == 4 and got["keith"]["facts"]["png_px"] == [256, 256]
+    assert got["keith"]["facts"]["vision_tokens_derived"] == 64
+    assert got["keith_up8"]["upscale"] == 8 and got["keith_up8"]["env_upscale"] == "8"
+    assert got["keith_up8"]["facts"]["png_px"] == [512, 512] and got["keith_up8"]["facts"]["vision_tokens_derived"] == 256
+    assert got["keith_up8"]["facts"]["png_bytes"] > got["keith"]["facts"]["png_bytes"]
+    for arm in got:
+        assert got[arm]["image_attached"] and got[arm]["system_prompt_multimodal"], arm
+
+
+_AID_GRAFT_PROBE = r'''
+import json, os, sys
+sys.path.insert(0, __HERE__)
+import run_regime_wave as rw
+from pathlib import Path
+out = Path(__TMP__)
+env = rw.install_env(__ARM__, "http://127.0.0.1:9/v1", "probe-token", out)
+rw.install_paths()
+rw.verify_imports()
+from inference.agent import tool_agent as ta
+before = {"run": ta.ToolAgent._run_python_tool, "prompt": ta.ToolAgent._build_user_prompt, "analyze": ta.ToolAgent.analyze}
+grafts = rw.install_grafts(__ARM__)
+after = {"run": ta.ToolAgent._run_python_tool, "prompt": ta.ToolAgent._build_user_prompt, "analyze": ta.ToolAgent.analyze}
+stock = rw.assert_stock_tree()
+bm, target = rw.load_bundle(out)
+factory = rw.make_tagging_analyzer_factory(bm.solver, n_games=2)
+class _G:
+    class game_run: game_id = "cd82-fb555c5d"
+agent = factory(_G(), 3)
+print(json.dumps({"grafts": grafts, "rebound": {k: after[k] is not before[k] for k in before},
+                  "sha": stock["agent_tree_sha256"], "status": rw.graft_status(__ARM__),
+                  "env": {k: os.environ.get(k) for k in rw.GRAFT_FLAG_KEYS if os.environ.get(k) is not None},
+                  "tag": rw.current_game_tag(), "stem": rw.current_run_stem(),
+                  "fingerprint": rw.analyzer_config_fingerprint(agent)}))
+'''
+
+
+def test_aid_arms_install_grafts_in_memory():
+    for arm, graft, method in (("keith_evid", "graft_evidence", "run"), ("keith_hypo", "graft_hypo", "prompt")):
+        with tempfile.TemporaryDirectory() as tmp:
+            code = (_AID_GRAFT_PROBE.replace("__HERE__", repr(str(HERE))).replace("__TMP__", repr(tmp))
+                    .replace("__ARM__", repr(arm)))
+            r = subprocess.run([PYTHON, "-c", code], capture_output=True, text=True, cwd=str(REPO), timeout=300)
+            assert r.returncode == 0, r.stderr[-2000:]
+            probe = json.loads(r.stdout.strip().splitlines()[-1])
+        assert probe["grafts"] == {graft: f"{graft.split('_', 1)[1]}: OK"}, probe["grafts"]
+        assert probe["rebound"] == {k: (k == method) for k in ("run", "prompt", "analyze")}, (arm, probe["rebound"])
+        assert probe["sha"] == rw.STOCK_AGENT_TREE_SHA256
+        st = probe["status"][graft]
+        assert st["installed"] and st["enabled"] and st["errors"] == 0
+        if graft == "graft_evidence":
+            assert (st["max_entries"], st["max_chars"], st["trace"], st["diffs_emitted"]) == (40, 1500, True, 0)
+            assert probe["env"] == {"EVID_ENABLE": "1", "EVID_MAX_ENTRIES": "40", "EVID_MAX_CHARS": "1500", "EVID_TRACE": "1"}
+        else:
+            assert st["block_chars"] <= 900 and st["blocks_injected"] == 0 and probe["env"] == {"HYPO_ENABLE": "1"}
+        assert probe["tag"] == "cd82-fb555c5d" and probe["stem"] == "cd82-fb555c5d_p1"    # index 3 of 2 games = draw 1
+        fp = probe["fingerprint"]
+        assert fp["context_budget_tokens"] == 31744 and fp["max_output_tokens"] is None and fp["yield_seconds"] == 60.0
+
+
+def test_dry_run_keith_evid_draws_end_to_end():
+    """keith_evid with --draws 2 through the runner on the loopback mock + real engine: two independent
+    runs per game (<gid>_p0/_p1), the [EVID] block on every executed-action tool result, engagement
+    telemetry, per-(game, draw) levels, run-stem-tagged shim records, stock sha intact."""
+    with tempfile.TemporaryDirectory() as tmp:
+        r = subprocess.run([PYTHON, str(HERE / "run_regime_wave.py"), "--dry-run", "--arm", "keith_evid",
+                            "--games", "cd82,lf52", "--draws", "2", "--per-game-s", "12", "--wave-cap-s", "60",
+                            "--progress-every", "60", "--out", tmp],
+                           capture_output=True, text=True, cwd=str(REPO), timeout=400)
+        assert r.returncode == 0, (r.returncode, r.stderr[-3000:], r.stdout[-3000:])
+        runs = list(Path(tmp).glob("*-regime-keith_evid-dry"))
+        assert len(runs) == 1, runs
+        out = runs[0]
+        res = json.loads((out / "results.json").read_text())
+        tel = json.loads((out / "telemetry.json").read_text())
+        stems = ["cd82-fb555c5d_p0", "cd82-fb555c5d_p1", "lf52-271a04aa_p0", "lf52-271a04aa_p1"]
+        assert sorted(p.name[:-4] for p in (out / "transcripts").glob("*.txt")) == stems
+        assert res["status"] == "done" and res["arm"] == "keith_evid" and res["draws"] == 2
+        assert res["stock"]["agent_tree_sha256"] == rw.STOCK_AGENT_TREE_SHA256
+        assert res["grafts"]["installed"] == {"graft_evidence": "evidence: OK"}
+        assert res["analyzer_env"]["EVID_ENABLE"] == "1" and res["analyzer_env"]["MULTIMODAL_UPSCALE"] == "4"
+        assert res["geometry"]["max_runtime_s_per_game"] == 12.0
+        rows = res["games"]
+        assert [(g["game_id"], g["draw"], g["run_stem"]) for g in rows] == [
+            ("cd82-fb555c5d", 0, stems[0]), ("lf52-271a04aa", 0, stems[2]),
+            ("cd82-fb555c5d", 1, stems[1]), ("lf52-271a04aa", 1, stems[3])]      # taaf plays pass 0 then pass 1
+        assert res["totals"] == {**res["totals"], "games": 4, "distinct_games": 2, "draws": 2}
+        assert set(res["states"]) == set(stems)
+        assert sorted(tel["per_game"]) == stems and tel["aggregate"]["draws"] == 2
+        for stem, g in tel["per_game"].items():
+            assert g["game_id"] == stem[:-3] and g["draw"] == int(stem[-1])
+            executed = g["turn_outcomes"].get("step_executed", 0)
+            assert executed >= 3, (stem, g["turn_outcomes"])
+            assert g["evid_markers"] == executed, (stem, g["evid_markers"], executed)   # one block per executed turn
+            assert g["engagement"]["evid"] == {"turns": executed, "of": executed, "share": 1.0}
+            assert g["wall_level"] == g["levels_completed"] + 1 and g["level_reached"] == g["wall_level"]
+            assert g["engagement"]["evid_wall"]["share"] == 1.0 and g["hypo_markers"] == 0
+        pgd = tel["per_game_draw"]
+        assert set(pgd) == {"cd82-fb555c5d", "lf52-271a04aa"} and set(pgd["cd82-fb555c5d"]) == {"0", "1"}
+        assert all("levels_completed" in d and "evid_wall_share" in d for v in pgd.values() for d in v.values())
+        agg = tel["aggregate"]
+        assert agg["evid_markers_total"] == sum(g["evid_markers"] for g in tel["per_game"].values()) > 0
+        assert agg["engagement"]["evid_wall"]["share"] == 1.0
+        st = res["grafts"]["status"]["graft_evidence"]
+        assert st["diffs_emitted"] == agg["evid_markers_total"] and st["errors"] == 0   # transcript markers == graft counter
+        assert st["chars_added"] > 0 and set(st["per_game"]) == {"cd82-fb555c5d", "lf52-271a04aa"}
+        # the block rides the tool result the model sees: in the transcript's [TOOL RESULT: python] and in the prompt log
+        text = (out / "transcripts" / f"{stems[1]}.txt").read_text()
+        assert "[TOOL RESULT: python]\n" in text and re.search(r"\[TOOL RESULT: python\]\n(?:.*\n)*?\[EVID\] harness object diff for action", text)
+        assert "coords are (row,col), 0-based: row = line index of `.ascii` from the top" in text
+        assert (out / "prompts" / f"{stems[1]}.log").read_text().count("[EVID] harness object diff") >= 1
+        shim = [json.loads(l) for l in (out / "requests_shim.jsonl").read_text().splitlines() if l.strip()]
+        assert {rec["run_stem"] for rec in shim} == set(stems) and all(rec["game_id"] == rec["run_stem"][:-3] for rec in shim)
+        summary = (out / "summary.txt").read_text()
+        assert "AID    [EVID]" in summary and "DRAWS 2 | levels per (game, draw): {'cd82-fb555c5d': [" in summary
+        assert "engagement wall 100.0%" in summary and all(stem in summary for stem in stems)
         assert summary.count("\n") < 45
         for path in out.rglob("*"):
             if path.is_file() and path.suffix in (".json", ".txt", ".prom", ".jsonl", ".log"):

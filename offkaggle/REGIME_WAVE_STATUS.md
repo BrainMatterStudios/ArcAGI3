@@ -432,3 +432,23 @@ dosed is unsupported. Remaining variant on record (not run): stronger dose — c
 history / quote the last reasoning tail — but 0/5 with a note-only dose is not encouraging,
 and the per-draw stuck set is itself unstable, so the trigger is chasing noise. Recommendation:
 do not spend more on this lever unless Ahmed wants the stronger-dose arm explicitly.
+
+## 2026-09-06 — 3-wall instrument arms (`keith_evid`, `keith_hypo`, `keith_up8`), `--draws`
+
+Built for judge program item 1 (docs/research-2026-09-06/J-judge-0906.md); full write-up, test
+counts and launch commands in `submission/_throughput_v1/EVID_STATUS.md`. NOT launched.
+
+* `keith_evid` = keith + graft_evidence (EVID_ENABLE=1, MAX_ENTRIES 40, MAX_CHARS 1500, TRACE 1):
+  object-level before/after diff + per-action trace + LEVEL CLEARED flag appended to every
+  executed-action tool result. `keith_hypo` = keith + graft_hypo (HYPO_ENABLE=1): the
+  hypothesis-enumeration + probe rule appended to every analyzer prompt. `keith_up8` = keith +
+  MULTIMODAL_UPSCALE=8 (no graft; 512 px PNG, ~256 derived vision tokens vs 64).
+* `--draws N` = taaf `n_passes`: each selected game played N times as independent runs
+  (`<gid>_p0.._p<N-1>`); `results.json:games[*].draw/run_stem`, `telemetry.json:per_game` keyed by
+  run stem, `per_game_draw` = per-(game, draw) levels; shim records carry `run_stem`.
+  `--per-game-s` unchanged (default 7920).
+* Telemetry: `evid_markers`, `evid_level_flags`, `hypo_markers`, `turn_levels`, `level_reached`,
+  `wall_level`, `engagement` (`evid`/`hypo`, `_wall` = on the wall level; the judge's gate is
+  >= 80 % of wall turns); summary `AID` and `DRAWS` lines, `evid`/`hypo`/`wall%` columns.
+* Dry runs of all three arms with `--games cd82,dc22,lf52 --draws 2 --per-game-s 60` PASS
+  (6 runs each; [EVID] on 350/350 executed turns, [HYPO] on 361/361 turns, UPSCALE 8 attested).

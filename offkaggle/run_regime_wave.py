@@ -23,6 +23,17 @@ What runs (mirrors the public keithtyser V14 notebook cell by cell):
       keith_retry    : keith + graft_retry (submission/_throughput_v1/graft_retry.py,
                        the fresh-mind level retry) installed IN MEMORY at wave
                        start, flags RETRY_ENABLE=1 K=3 ABS=200 COOLDOWN=150 MAX=2
+      keith_evid     : keith + graft_evidence (evidence-integrity aid: object diff +
+                       per-action trace + LEVEL CLEARED flag appended to every
+                       executed-action tool result), flags EVID_ENABLE=1
+                       EVID_MAX_ENTRIES=40 EVID_MAX_CHARS=1500 EVID_TRACE=1
+      keith_hypo     : keith + graft_hypo (hypothesis-enumeration + probe rule
+                       appended to every analyzer prompt), flag HYPO_ENABLE=1
+      keith_up8      : keith + MULTIMODAL_UPSCALE=8 (the current-grid PNG 512 px
+                       instead of 256 px: 256 vision tokens per image instead of 64)
+  --draws N plays the selected games N times as independent runs in one wave
+  (taaf Benchmark.n_passes; run stems <gid>_p0, <gid>_p1, ...); --per-game-s
+  caps each run (default 7920 = public geometry).
     (everything else in the analyzer env is identical: sampling 0.6/0.95/20,
     thinking on, 60 s yield, tool steps unlimited, multimodal current_grid x4).
 
@@ -167,11 +178,27 @@ KEITH_YIELD180_ENV = {**KEITH_ANALYZER_ENV, "LOCAL_ANALYZER_YIELD_SECONDS": "180
 RETRY_ENV_KEYS = ("RETRY_ENABLE", "RETRY_K", "RETRY_ABS", "RETRY_COOLDOWN", "RETRY_MAX")
 KEITH_RETRY_ENV = {**KEITH_ANALYZER_ENV, "RETRY_ENABLE": "1", "RETRY_K": "3", "RETRY_ABS": "200",
                    "RETRY_COOLDOWN": "150", "RETRY_MAX": "2"}
+# 09-06 judge program item 1 (docs/research-2026-09-06/J-judge-0906.md): three single-lever arms
+# on the keith base for the 3-wall turn-capped instrument (cd82/dc22/lf52, --draws 2, --per-game-s 1500).
+#  (a) evidence-integrity aid — graft_evidence, flags read at call time
+EVID_ENV_KEYS = ("EVID_ENABLE", "EVID_MAX_ENTRIES", "EVID_MAX_CHARS", "EVID_TRACE")
+KEITH_EVID_ENV = {**KEITH_ANALYZER_ENV, "EVID_ENABLE": "1", "EVID_MAX_ENTRIES": "40", "EVID_MAX_CHARS": "1500",
+                  "EVID_TRACE": "1"}
+#  (b) hypothesis-enumeration + probe rule — graft_hypo
+HYPO_ENV_KEYS = ("HYPO_ENABLE",)
+KEITH_HYPO_ENV = {**KEITH_ANALYZER_ENV, "HYPO_ENABLE": "1"}
+#  (c) MULTIMODAL_UPSCALE 8 — no graft; vision_context.current_grid_image_upscale() reads the key at
+#      call time (64x64 grid -> 512x512 px PNG instead of 256x256; 16-px patches x 2 merge = 32 px per
+#      vision token -> 256 tokens/image instead of 64)
+KEITH_UP8_ENV = {**KEITH_ANALYZER_ENV, "MULTIMODAL_UPSCALE": "8"}
 ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV,
-           "keith_retry": KEITH_RETRY_ENV}
+           "keith_retry": KEITH_RETRY_ENV, "keith_evid": KEITH_EVID_ENV, "keith_hypo": KEITH_HYPO_ENV,
+           "keith_up8": KEITH_UP8_ENV}
 ARMS = tuple(ARM_ENV)
 # grafts (submission/_throughput_v1/<name>.py, install() -> "<name>: OK") an arm installs in memory
-ARM_GRAFTS = {"keith_retry": ("graft_retry",)}
+ARM_GRAFTS = {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",), "keith_hypo": ("graft_hypo",)}
+GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_")     # every graft flag; scrubbed from the shell for every arm
+GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS
 GRAFT_DIR = REPO / "submission/_throughput_v1"
 RUNTIME_ENV_KEYS = ("LOCAL_ANALYZER_BASE_URL", "OPENAI_BASE_URL", "LOCAL_ANALYZER_API_KEY")
 
@@ -204,6 +231,18 @@ TELEMETRY_DEFINITIONS = {
     "retries_fired": "graft_retry level retries = count of '[RETRY] game=..' marker lines the graft "
                      "wrote into the transcript (one per harness-issued level RESET + FRESH MIND turn).",
     "retry_clears": "count of '[RETRY-CLEAR] game=..' marker lines = retried levels that later cleared.",
+    "evid_markers": "graft_evidence blocks = '[EVID] harness object diff ...' lines inside [TOOL RESULT: python] "
+                    "sections (one per tool call that executed actions).",
+    "evid_level_flags": "'LEVEL CLEARED after action k ...' lines the aid wrote (a level clear inside a batch).",
+    "hypo_markers": "graft_hypo blocks = '[HYPO] Hypothesis discipline ...' lines inside [USER PROMPT] sections.",
+    "turn_levels": "per turn, the level in the first [USER PROMPT] 'Current state: step N, level L' line.",
+    "level_reached": "max turn level = the level the run ended on (levels_completed + 1 unless won).",
+    "wall_level": "the uncleared level the run ended on (None when the game was won).",
+    "engagement": "share of turns carrying the aid: evid = turns with >= 1 [EVID] / turns that executed a step; "
+                  "hypo = turns whose prompt carries [HYPO] / turns; '_wall' restricts both to turns on wall_level "
+                  "(the judge's engagement gate: >= 80 % of wall turns).",
+    "draws": "--draws N = taaf n_passes: each game played N times as independent runs (<gid>_p<draw>); "
+             "per_game is keyed by run stem and carries game_id + draw.",
 }
 
 # ---------------------------------------------------------------------------
@@ -279,7 +318,7 @@ def install_env(arm: str, base_url: str, token: str, out_dir: Path,
         del os.environ[key]              # clean slate; keith's TAAF_VLLM_* are serving-side
     for key in ("OPENROUTER_API_KEY", "OPENAI_API_KEY"):
         os.environ.pop(key, None)        # tool_agent._headers fallback chain — only ours
-    for key in RETRY_ENV_KEYS + ("RETRY_CLEAR_HISTORY",):
+    for key in [k for k in os.environ if k.startswith(GRAFT_ENV_PREFIXES)]:
         os.environ.pop(key, None)        # a graft flag inherited from the shell must never leak into a stock arm
     os.environ.update(PROCESS_ENV)
     env = arm_analyzer_env(arm)
@@ -340,6 +379,32 @@ def verify_imports() -> None:
     assert ta._LOCAL_ANALYZER_TOOL_STEPS == 0
     assert (ta._LOCAL_ANALYZER_TEMPERATURE, ta._LOCAL_ANALYZER_TOP_P, ta._LOCAL_ANALYZER_TOP_K) == (0.6, 0.95, 20)
     assert ta._LOCAL_ANALYZER_ENABLE_THINKING is True
+    from inference.agent import vision_context as vc  # noqa: PLC0415
+    assert vc.current_grid_image_enabled(), os.environ.get("MULTIMODAL_CONTEXT")
+    assert vc.current_grid_image_upscale() == int(os.environ["MULTIMODAL_UPSCALE"]), vc.current_grid_image_upscale()
+
+
+def vision_image_facts(grid_size: int = 64, patch_px: int = 16, merge: int = 2) -> dict:
+    """What the arm's MULTIMODAL_UPSCALE makes of a 64x64 frame: the PNG the stock
+    harness attaches (rendered through vision_context.frame_to_png_data_url) and
+    the vision-token count DERIVED from Qwen3-VL geometry (patch 16 px, 2x2 merge
+    -> one token per 32x32 px). 64 tokens at upscale 4 was matched against vLLM's
+    prompt_tokens on 25 real calls (judge recon_tokens.py, median ratio 0.986);
+    the value at other upscales is the same formula, not a measurement."""
+    import base64  # noqa: PLC0415
+    import io  # noqa: PLC0415
+    from PIL import Image  # noqa: PLC0415
+    from inference.agent import vision_context as vc  # noqa: PLC0415
+    from inference.agent.runtime_state import Frame  # noqa: PLC0415
+    up = vc.current_grid_image_upscale()
+    frame = Frame(grid=tuple(tuple((r * 3 + c) % 16 for c in range(grid_size)) for r in range(grid_size)), step=0, level=1)
+    url = vc.frame_to_png_data_url(frame)
+    png = base64.b64decode(url.split(",", 1)[1])
+    w, h = Image.open(io.BytesIO(png)).size
+    per_side = max(1, (w // (patch_px * merge)))
+    return {"upscale": up, "png_px": [w, h], "png_bytes": len(png),
+            "vision_tokens_derived": per_side * (max(1, h // (patch_px * merge))),
+            "derivation": f"({w}/{patch_px * merge})^2, patch {patch_px} px x merge {merge}; measured only at upscale 4 (64)"}
 
 
 def install_grafts(arm: str) -> dict[str, str]:
@@ -385,17 +450,34 @@ def current_game_tag() -> str | None:
     return getattr(_GAME_TAG, "game_id", None)
 
 
-def make_tagging_analyzer_factory(solver):
+def current_run_stem() -> str | None:
+    return getattr(_GAME_TAG, "run_stem", None)
+
+
+def run_stem_for(game_id: str, index: int, n_games: int | None) -> str:
+    """The harness's own run stem (solver._run_stem): <artifact_stem(game_id)>_p<draw>.
+    taaf plays passes in order (pass 0 = the first n_games entries of to_play, ...)
+    and the solver assigns pass_index per game_id in that same order, so
+    draw = index // n_games."""
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", game_id)
+    draw = (index // n_games) if n_games else 0
+    return f"{stem}_p{draw}"
+
+
+def make_tagging_analyzer_factory(solver, n_games: int | None = None):
     """HarnessSolver.analyzer_factory hook: returns the stock ToolAgent built
     with the same arguments HarnessSolver._make_analyzer uses when no local
     server is started (model=self.model, timeout=self.analyzer_timeout,
     save_request_logs=self.save_request_logs, api_key=None, base_url=None,
-    provider=None) and tags the calling (game) thread with the game id."""
+    provider=None) and tags the calling (game) thread with the game id and
+    the run stem (<gid>_p<draw>)."""
     from inference.agent.tool_agent import ToolAgent  # noqa: PLC0415
 
     def factory(game, index):
         run = getattr(game, "game_run", None)
-        _GAME_TAG.game_id = getattr(run, "game_id", None) or f"index-{index}"
+        gid = getattr(run, "game_id", None) or f"index-{index}"
+        _GAME_TAG.game_id = gid
+        _GAME_TAG.run_stem = run_stem_for(gid, index, n_games)
         return ToolAgent(
             model=solver.model,
             timeout=solver.analyzer_timeout,
@@ -442,7 +524,7 @@ class RequestShim:
         def post(url, data=None, json=None, **kwargs):  # noqa: A002 - requests' signature
             if not str(url).rstrip("/").endswith("/chat/completions"):
                 return orig(url, data=data, json=json, **kwargs)
-            rec = {"t": time.time(), "game_id": current_game_tag(),
+            rec = {"t": time.time(), "game_id": current_game_tag(), "run_stem": current_run_stem(),
                    "timeout": kwargs.get("timeout"),
                    "allow_redirects": kwargs.get("allow_redirects", True)}
             if isinstance(json, dict):
@@ -776,9 +858,20 @@ def parse_transcript(text: str) -> dict:
         if m.group("step") is not None:
             turns.append({"step": int(m.group("step")), "action": int(m.group("action")),
                           "time": m.group("time"), "calls": 0, "status_messages": [],
-                          "step_executed": False, "outcome": "incomplete"})
+                          "step_executed": False, "outcome": "incomplete",
+                          "level": None, "hypo": 0, "evid": 0, "evid_level_flags": 0})
             continue
         label = m.group("label")
+        if label == "USER PROMPT" and turns:
+            t = turns[-1]
+            if t["level"] is None:
+                lm = _PROMPT_LEVEL_RE.search(body)
+                if lm:
+                    t["level"] = int(lm.group(1))
+            t["hypo"] += len(_HYPO_MARK.findall(body))
+        elif label.startswith("TOOL RESULT: ") and turns:
+            turns[-1]["evid"] += len(_EVID_MARK.findall(body))
+            turns[-1]["evid_level_flags"] += len(_EVID_LEVEL_MARK.findall(body))
         if label == "MODEL RESPONSE META":
             call = {"turn_index": len(turns) - 1, "finish_reason": None, "tool_call_count": 0,
                     "content_chars": 0, "reasoning_chars_meta": 0, "reasoning_chars": 0}
@@ -830,12 +923,33 @@ def parse_transcript(text: str) -> dict:
             t["outcome"] = "error"
     retry_markers = {"retries_fired": len(_RETRY_MARK.findall(text)),
                      "retry_clears": len(_RETRY_CLEAR_MARK.findall(text))}
-    return {"turns": turns, "calls": calls, "analyzer_status_config": status_cfg, "retry_markers": retry_markers}
+    aid_markers = {"evid_markers": sum(t["evid"] for t in turns),
+                   "evid_level_flags": sum(t["evid_level_flags"] for t in turns),
+                   "hypo_markers": sum(t["hypo"] for t in turns)}
+    return {"turns": turns, "calls": calls, "analyzer_status_config": status_cfg, "retry_markers": retry_markers,
+            "aid_markers": aid_markers}
 
 
 # graft_retry marker lines (written under a "[HARNESS RETRY]" transcript section)
 _RETRY_MARK = re.compile(r"^\[RETRY\] game=\S+ level=\d+ actions=\d+", re.M)
 _RETRY_CLEAR_MARK = re.compile(r"^\[RETRY-CLEAR\] game=\S+ level=\d+ actions=", re.M)
+# graft_evidence / graft_hypo blocks (line-anchored on the block's fixed header, inside the section they ride)
+_EVID_MARK = re.compile(r"^\[EVID\] harness object diff for ", re.M)
+_EVID_LEVEL_MARK = re.compile(r"^LEVEL CLEARED after action \d+ ", re.M)
+_HYPO_MARK = re.compile(r"^\[HYPO\] Hypothesis discipline for ", re.M)
+_PROMPT_LEVEL_RE = re.compile(r"^Current state: step \d+, level (\d+)", re.M)
+
+
+def engagement(turns: list[dict], wall_level: int | None) -> dict:
+    """Share of turns carrying each aid, overall and on the wall level."""
+    def share(sel: list[dict], key: str, denom_key: str | None) -> dict:
+        denom = [t for t in sel if (t.get(denom_key) if denom_key else True)]
+        num = [t for t in denom if t.get(key)]
+        return {"turns": len(num), "of": len(denom), "share": _div(len(num), len(denom))}
+    wall = [t for t in turns if wall_level is not None and t.get("level") == wall_level]
+    return {"evid": share(turns, "evid", "step_executed"), "evid_wall": share(wall, "evid", "step_executed"),
+            "hypo": share(turns, "hypo", None), "hypo_wall": share(wall, "hypo", None),
+            "wall_level": wall_level, "wall_turns": len(wall)}
 
 
 def _stats(values: list[float]) -> dict:
@@ -848,9 +962,17 @@ def _stats(values: list[float]) -> dict:
 
 def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None,
                        shim_records: list[dict] | None = None,
-                       wallclock_s: float | None = None) -> dict:
+                       wallclock_s: float | None = None,
+                       levels_completed: int | None = None, number_of_levels: int | None = None) -> dict:
     parsed = parse_transcript(transcript_text)
     calls, turns = parsed["calls"], parsed["turns"]
+    turn_levels = [t["level"] for t in turns]
+    level_reached = max((lv for lv in turn_levels if lv is not None), default=None)
+    if levels_completed is not None:
+        won = number_of_levels is not None and levels_completed >= number_of_levels
+        wall_level = None if won else levels_completed + 1
+    else:
+        wall_level = level_reached
     n_calls, n_turns = len(calls), len(turns)
     finish: dict[str, int] = {}
     for c in calls:
@@ -882,6 +1004,13 @@ def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None
         "analyzer_status_config": parsed["analyzer_status_config"],
         "retries_fired": parsed["retry_markers"]["retries_fired"],
         "retry_clears": parsed["retry_markers"]["retry_clears"],
+        "evid_markers": parsed["aid_markers"]["evid_markers"],
+        "evid_level_flags": parsed["aid_markers"]["evid_level_flags"],
+        "hypo_markers": parsed["aid_markers"]["hypo_markers"],
+        "turn_levels": turn_levels,
+        "level_reached": level_reached,
+        "wall_level": wall_level,
+        "engagement": engagement(turns, wall_level),
     }
     if shim_records:
         ok = [r for r in shim_records if r.get("status") == 200]
@@ -937,32 +1066,60 @@ def aggregate_telemetry(per_game: dict[str, dict]) -> dict:
         "retries_per_game": sum(g.get("retries_fired") or 0 for g in games) / n,
         "retry_clears_total": sum(g.get("retry_clears") or 0 for g in games),
         "games_with_retry": sum(1 for g in games if (g.get("retries_fired") or 0) > 0),
+        "evid_markers_total": sum(g.get("evid_markers") or 0 for g in games),
+        "evid_markers_per_game": sum(g.get("evid_markers") or 0 for g in games) / n,
+        "evid_level_flags_total": sum(g.get("evid_level_flags") or 0 for g in games),
+        "hypo_markers_total": sum(g.get("hypo_markers") or 0 for g in games),
+        "hypo_markers_per_game": sum(g.get("hypo_markers") or 0 for g in games) / n,
+        "engagement": _pooled_engagement(games),
     }
 
 
+def _pooled_engagement(games: list[dict]) -> dict:
+    out: dict = {}
+    for key in ("evid", "evid_wall", "hypo", "hypo_wall"):
+        num = sum(((g.get("engagement") or {}).get(key) or {}).get("turns", 0) for g in games)
+        den = sum(((g.get("engagement") or {}).get(key) or {}).get("of", 0) for g in games)
+        out[key] = {"turns": num, "of": den, "share": _div(num, den)}
+    return out
+
+
+_STEM_RE = re.compile(r"^(?P<gid>.+)_p(?P<draw>\d+)\.txt$")
+
+
 def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: list[dict]) -> dict:
-    """Per-game + pooled telemetry from <out>/transcripts/<gid>_p0.txt, the
-    benchmark rows (actions, wallclock) and the client shim records."""
-    by_game_shim: dict[str, list[dict]] = {}
+    """Per-run + pooled telemetry from <out>/transcripts/<gid>_p<draw>.txt, the
+    benchmark rows (actions, wallclock, levels) and the client shim records.
+    per_game is keyed by run stem (<gid>_p<draw>; one entry per game per draw)."""
+    by_stem_shim: dict[str, list[dict]] = {}
     for r in shim_records:
-        by_game_shim.setdefault(str(r.get("game_id")), []).append(r)
+        key = r.get("run_stem") or f"{r.get('game_id')}_p0"
+        by_stem_shim.setdefault(str(key), []).append(r)
     per_game: dict[str, dict] = {}
     pooled_reasoning: list[float] = []
     pooled_e2e: list[float] = []
     pooled_prompt: list[float] = []
     pooled_completion: list[float] = []
-    rows_by_id = {r["game_id"]: r for r in game_rows}
-    for path in sorted(Path(transcripts_dir).glob("*_p0.txt")):
-        gid = path.name[:-len("_p0.txt")]
-        row = rows_by_id.get(gid, {})
+    rows_by_stem = {r.get("run_stem") or f"{r['game_id']}_p0": r for r in game_rows}
+    for path in sorted(Path(transcripts_dir).glob("*_p*.txt")):
+        m = _STEM_RE.match(path.name)
+        if not m:
+            continue
+        stem = path.name[:-len(".txt")]
+        gid, draw = m.group("gid"), int(m.group("draw"))
+        row = rows_by_stem.get(stem, {})
         text = path.read_text(encoding="utf-8", errors="replace")
-        recs = by_game_shim.get(gid, [])
+        recs = by_stem_shim.get(stem, [])
         tel = telemetry_for_game(text, actions_total=row.get("actions"),
-                                 shim_records=recs, wallclock_s=row.get("wallclock_s"))
+                                 shim_records=recs, wallclock_s=row.get("wallclock_s"),
+                                 levels_completed=row.get("levels_completed"),
+                                 number_of_levels=row.get("number_of_levels"))
+        tel["game_id"] = gid
+        tel["draw"] = draw
         tel["levels_completed"] = row.get("levels_completed")
         tel["number_of_levels"] = row.get("number_of_levels")
         tel["score"] = row.get("score")
-        per_game[gid] = tel
+        per_game[stem] = tel
         pooled_reasoning.extend(c["reasoning_chars"] for c in parse_transcript(text)["calls"])
         pooled_e2e.extend(r["elapsed_s"] for r in recs if r.get("status") == 200 and "elapsed_s" in r)
         pooled_prompt.extend(r["prompt_tokens"] for r in recs if r.get("prompt_tokens") is not None)
@@ -977,8 +1134,17 @@ def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: 
     agg["client_post_errors"] = sum(1 for r in shim_records if r.get("error") or (r.get("status") or 0) >= 400)
     agg["levels_total"] = sum((g.get("levels_completed") or 0) for g in per_game.values())
     agg["levels_per_game"] = _div(agg["levels_total"], len(per_game)) if per_game else None
+    # per-(game, draw) level reached, grouped by game id
+    by_gid: dict[str, dict] = {}
+    for stem, g in sorted(per_game.items()):
+        by_gid.setdefault(g["game_id"], {})[str(g["draw"])] = {
+            "levels_completed": g.get("levels_completed"), "level_reached": g.get("level_reached"),
+            "wall_level": g.get("wall_level"), "turns": g.get("turns"),
+            "evid_wall_share": (g.get("engagement") or {}).get("evid_wall", {}).get("share"),
+            "hypo_wall_share": (g.get("engagement") or {}).get("hypo_wall", {}).get("share")}
+    agg["draws"] = max((g["draw"] for g in per_game.values()), default=-1) + 1
     return {"definitions": TELEMETRY_DEFINITIONS, "reference_keith_commit_run": KEITH_COMMIT_REFERENCE,
-            "aggregate": agg, "per_game": per_game}
+            "aggregate": agg, "per_game": per_game, "per_game_draw": by_gid}
 
 
 # ---------------------------------------------------------------------------
@@ -1237,10 +1403,14 @@ def build_games(game_ids: list[str], env_dir: Path) -> list:
 
 def game_rows(bm) -> list[dict]:
     rows = []
-    for gr in list(getattr(bm, "game_runs", None) or []):
+    n_games = len(getattr(bm, "games", None) or []) or None
+    for index, gr in enumerate(list(getattr(bm, "game_runs", None) or [])):
         hist = getattr(gr, "history", None) or []
+        gid = getattr(gr, "game_id", None)
         rows.append({
-            "game_id": getattr(gr, "game_id", None),
+            "game_id": gid,
+            "draw": (index // n_games) if n_games else 0,
+            "run_stem": run_stem_for(str(gid), index, n_games),
             "levels_completed": int(getattr(gr, "levels_completed", 0) or 0),
             "number_of_levels": int(getattr(gr, "number_of_levels", 0) or 0),
             "actions": len(hist),
@@ -1303,7 +1473,9 @@ def render_summary(result: dict, telemetry: dict) -> str:
         f"  stock agent sha {result['stock']['agent_tree_sha256'][:12]} (== june_stock pin) | "
         f"framework {result['stock']['framework_tree_sha256'][:12]} | pkls pinned",
         f"  ARM KNOB  CONTEXT_WINDOW={env.get('LOCAL_ANALYZER_CONTEXT_WINDOW')}  "
-        f"MAX_OUTPUT={env.get('LOCAL_ANALYZER_MAX_OUTPUT')}  (yield {env.get('LOCAL_ANALYZER_YIELD_SECONDS')} s, "
+        f"MAX_OUTPUT={env.get('LOCAL_ANALYZER_MAX_OUTPUT')}  UPSCALE={env.get('MULTIMODAL_UPSCALE')}"
+        f"{' (' + str((result.get('vision') or {}).get('png_px')) + ' px, ~' + str((result.get('vision') or {}).get('vision_tokens_derived')) + ' vision tok/img derived)' if result.get('vision') else ''}"
+        f"  (yield {env.get('LOCAL_ANALYZER_YIELD_SECONDS')} s, "
         f"temp {env.get('LOCAL_ANALYZER_TEMPERATURE')}/{env.get('LOCAL_ANALYZER_TOP_P')}/{env.get('LOCAL_ANALYZER_TOP_K')}, "
         f"thinking {env.get('LOCAL_ANALYZER_ENABLE_THINKING')}); harness-reported "
         f"{agg.get('analyzer_status_config_first') or ''}",
@@ -1330,38 +1502,58 @@ def render_summary(result: dict, telemetry: dict) -> str:
         f"MTP 60%, 1.44 lv/game, 6.76 pts",
     ]
     grafts = result.get("grafts") or {}
-    if grafts.get("installed") or agg.get("retries_total"):
+    installed = grafts.get("installed") or {}
+    if "graft_retry" in installed or agg.get("retries_total"):
         knobs = {k: env.get(k) for k in RETRY_ENV_KEYS if env.get(k) is not None}
         lines.append(
             f"  RETRY  fired {agg.get('retries_total')} ({_fmt(agg.get('retries_per_game'), 2)}/game) | "
             f"levels cleared after retry {agg.get('retry_clears_total')} | games with retry {agg.get('games_with_retry')} | "
-            f"grafts {grafts.get('installed')} | flags {knobs}")
+            f"grafts {installed} | flags {knobs}")
+    eng = agg.get("engagement") or {}
+    if "graft_evidence" in installed or "graft_hypo" in installed or agg.get("evid_markers_total") or agg.get("hypo_markers_total"):
+        knobs = {k: env.get(k) for k in EVID_ENV_KEYS + HYPO_ENV_KEYS if env.get(k) is not None}
+        lines.append(
+            f"  AID    [EVID] {agg.get('evid_markers_total')} ({_fmt(agg.get('evid_markers_per_game'), 1)}/run) "
+            f"level flags {agg.get('evid_level_flags_total')} | engagement wall {_pct((eng.get('evid_wall') or {}).get('share'))} "
+            f"({(eng.get('evid_wall') or {}).get('turns')}/{(eng.get('evid_wall') or {}).get('of')}) all {_pct((eng.get('evid') or {}).get('share'))} || "
+            f"[HYPO] {agg.get('hypo_markers_total')} ({_fmt(agg.get('hypo_markers_per_game'), 1)}/run) | "
+            f"engagement wall {_pct((eng.get('hypo_wall') or {}).get('share'))} "
+            f"({(eng.get('hypo_wall') or {}).get('turns')}/{(eng.get('hypo_wall') or {}).get('of')}) all {_pct((eng.get('hypo') or {}).get('share'))} | "
+            f"grafts {installed} | flags {knobs}")
+    if (agg.get("draws") or 1) > 1:
+        per_draw = {gid: [d.get("levels_completed") for _, d in sorted(v.items(), key=lambda kv: int(kv[0]))]
+                    for gid, v in (telemetry.get("per_game_draw") or {}).items()}
+        lines.append(f"  DRAWS {agg.get('draws')} | levels per (game, draw): {per_draw}")
     if result.get("knob_overrides"):
         lines.append(f"  KNOB OVERRIDES (not the pinned arm env): {result['knob_overrides']}")
-    lines.append("  game            lv/n    act  calls turns reas_mean  len%  notool%  e2e_s   score  retry  state")
-    for gid, g in sorted(telemetry.get("per_game", {}).items()):
+    lines.append("  run               lv/n    act  calls turns reas_mean  len%  notool%  e2e_s   score  retry  evid  hypo  wall%  state")
+    for stem, g in sorted(telemetry.get("per_game", {}).items()):
         r = g.get("reasoning_chars") or {}
         c = (g.get("client") or {}).get("e2e_s") or {}
+        e = g.get("engagement") or {}
         retry_col = f"{g.get('retries_fired') or 0}/{g.get('retry_clears') or 0}"
+        wall_share = (e.get("evid_wall") or {}).get("share") if g.get("evid_markers") else (e.get("hypo_wall") or {}).get("share")
         lines.append(
-            f"  {gid:14s} {str(g.get('levels_completed')) + '/' + str(g.get('number_of_levels')):>5} "
+            f"  {stem:17s} {str(g.get('levels_completed')) + '/' + str(g.get('number_of_levels')):>5} "
             f"{_fmt(g.get('actions_total')):>6} {g.get('calls'):>5} {g.get('turns'):>5} "
             f"{_fmt(r.get('mean'), 0):>9} {_pct(g.get('length_finish_share')):>6} "
             f"{_pct(g.get('no_tool_call_share')):>7} {_fmt(c.get('mean')):>6} {_fmt(g.get('score'), 2):>7} "
-            f"{retry_col:>6}  {(result.get('states') or {}).get(gid, '')}")
+            f"{retry_col:>6} {g.get('evid_markers') or 0:>5} {g.get('hypo_markers') or 0:>5} {_pct(wall_share):>6}  "
+            f"{(result.get('states') or {}).get(stem, '')}")
     return "\n".join(lines) + "\n"
 
 
 class Wave:
     def __init__(self, *, arm: str, base_url: str, token: str, out_dir: Path, game_ids: list[str],
                  per_game_s: float, concurrency: int, wave_cap_s: float, dry_run: bool,
-                 progress_every_s: float) -> None:
+                 progress_every_s: float, draws: int = 1) -> None:
         self.arm, self.base_url, self.token, self.out_dir = arm, base_url, token, out_dir
         self.game_ids, self.per_game_s, self.concurrency = game_ids, per_game_s, concurrency
         self.wave_cap_s, self.dry_run, self.progress_every_s = wave_cap_s, dry_run, progress_every_s
-        self.result: dict = {"schema_version": 1, "arm": arm, "dry_run": dry_run, "status": "init",
+        self.draws = max(1, int(draws))
+        self.result: dict = {"schema_version": 2, "arm": arm, "dry_run": dry_run, "status": "init",
                              "base_url": base_url, "served_model": SERVED_MODEL_NAME,
-                             "wave_cap_s": wave_cap_s, "game_ids": list(game_ids),
+                             "wave_cap_s": wave_cap_s, "game_ids": list(game_ids), "draws": self.draws,
                              "grafts": {"installed": {}, "status": {}}}
         self.bm = None
         self.target = None
@@ -1377,15 +1569,20 @@ class Wave:
         bm, target = load_bundle(self.out_dir)
         geometry = apply_geometry(bm, per_game_s=self.per_game_s, concurrency=self.concurrency)
         bm.games = build_games(self.game_ids, ENV_FILES_DIR)
-        bm.n_passes = 1
+        bm.n_passes = self.draws                       # --draws: N independent runs per game (<gid>_p<draw>)
         bm.game_weights = None
-        bm.solver.analyzer_factory = make_tagging_analyzer_factory(bm.solver)
+        bm.solver.analyzer_factory = make_tagging_analyzer_factory(bm.solver, n_games=len(bm.games))
         self.bm, self.target = bm, target
         self.result["geometry"] = geometry
         self.result["solver_label"] = bm.solver.label
+        try:
+            self.result["vision"] = vision_image_facts()
+        except Exception as exc:  # noqa: BLE001
+            self.result["vision"] = {"error": f"{type(exc).__name__}: {exc}"}
         (self.out_dir / "arm_env.json").write_text(json.dumps(recorded_env, indent=1, sort_keys=True) + "\n")
         self._dump()
-        print(f"[regime] arm={self.arm} games={len(self.game_ids)} geometry={geometry}", flush=True)
+        print(f"[regime] arm={self.arm} games={len(self.game_ids)} draws={self.draws} geometry={geometry} "
+              f"vision={self.result['vision']}", flush=True)
 
     def _dump(self) -> None:
         self.result["elapsed_s"] = round(time.time() - self.t0, 1)
@@ -1476,12 +1673,24 @@ class Wave:
         if score is not None:
             per = score.get("games", {})
             for r in rows:
-                if r["game_id"] in per and isinstance(per[r["game_id"]], dict):
-                    r["score"] = per[r["game_id"]].get("score", r["score"])
+                entry = per.get(r["game_id"])
+                if not isinstance(entry, dict):
+                    continue
+                trials = entry.get("trial_scores") or {}
+                if self.draws > 1:
+                    # the frozen scorer names passes "<run>/pass-<k>"; take this draw's own score
+                    match = [v for k, v in trials.items() if str(k).endswith(f"/pass-{r['draw']}")]
+                    if match:
+                        r["score"] = match[0]
+                else:
+                    r["score"] = entry.get("score", r["score"])
         self.result["games"] = rows
-        self.result["states"] = {r["game_id"]: r["state"] for r in rows}
+        self.result["states"] = {r["run_stem"]: r["state"] for r in rows}
+        self.result["states_by_game"] = {r["game_id"]: r["state"] for r in rows if r["draw"] == 0}
         self.result["totals"] = {
             "games": len(rows),
+            "distinct_games": len({r["game_id"] for r in rows}),
+            "draws": self.draws,
             "score": (score or {}).get("score", sum((r["score"] or 0) for r in rows)),
             "score_source": "score.json" if score else "game_run.final_score",
             "levels": sum(r["levels_completed"] for r in rows),
@@ -1536,7 +1745,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--token", default=None, help="bearer token value (prefer --token-file / $ARC3_VLLM_TOKEN)")
     p.add_argument("--token-file", default=str(TOKEN_FILE))
     p.add_argument("--per-game-s", type=float, default=None,
-                   help=f"per-game cap (default {GEOMETRY['max_runtime_s_per_game']:.0f}; dry-run {DRY_RUN_PER_GAME_S:.0f})")
+                   help=f"per-game runtime cap in seconds (default {GEOMETRY['max_runtime_s_per_game']:.0f} = the public "
+                        f"geometry; dry-run {DRY_RUN_PER_GAME_S:.0f}); e.g. 1500 for the 3-wall turn-capped instrument")
+    p.add_argument("--draws", type=int, default=1,
+                   help="play the selected games N times as independent runs in this wave (taaf n_passes; "
+                        "run stems <gid>_p0.._p<N-1>; default 1)")
     p.add_argument("--concurrency", type=int, default=GEOMETRY["concurrency"])
     p.add_argument("--wave-cap-s", type=float, default=None,
                    help=f"whole-wave cap (default {WAVE_CAP_S:.0f}; dry-run {DRY_RUN_WAVE_CAP_S:.0f})")
@@ -1556,6 +1769,8 @@ def main(argv: list[str] | None = None) -> int:
                         "knob_overrides — the run is then NOT the pinned arm env)")
     args = p.parse_args(argv)
     knobs = parse_knobs(args.knob)
+    if args.draws < 1:
+        p.error("--draws must be >= 1")
 
     per_game_s = args.per_game_s if args.per_game_s is not None else (
         DRY_RUN_PER_GAME_S if args.dry_run else GEOMETRY["max_runtime_s_per_game"])
@@ -1591,7 +1806,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[regime] KNOB OVERRIDES {knobs} — this run is not the pinned {args.arm} env", flush=True)
     grafts = install_grafts(args.arm)          # in memory only; the stock tree sha above still holds
     if grafts:
-        flags = {k: recorded_env.get(k) for k in RETRY_ENV_KEYS}
+        flags = {k: recorded_env.get(k) for k in GRAFT_FLAG_KEYS if recorded_env.get(k) is not None}
         print(f"[regime] grafts installed: {grafts} (flags {flags})", flush=True)
 
     endpoint = None
@@ -1606,7 +1821,7 @@ def main(argv: list[str] | None = None) -> int:
 
     wave = Wave(arm=args.arm, base_url=base_url, token=token, out_dir=out_dir, game_ids=game_ids,
                 per_game_s=per_game_s, concurrency=args.concurrency, wave_cap_s=wave_cap_s,
-                dry_run=args.dry_run, progress_every_s=args.progress_every)
+                dry_run=args.dry_run, progress_every_s=args.progress_every, draws=args.draws)
     wave.result["grafts"]["installed"] = grafts
     wave.result["expect_profile"] = args.expect_profile
     if knobs:
