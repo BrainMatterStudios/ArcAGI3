@@ -534,3 +534,11 @@ verdict. Submission requires Ahmed's go.
   KV lever on the box has ≤ 1–2 GiB of room above the public 5 GiB — the Modal +0.28 (which needed
   2× streams) is NOT reachable on Kaggle. Rider CLOSED; two GPU-hours spent. Fallback for the 09-06
   slot: exact redraw of the 3.25 base (sizes its mean; n=1 today).
+
+## 25. 09-06 15:05 UTC — base exact redraw #2 submitted (sub 56058136)
+
+KV rider closed on the box (8 GiB and 10 GiB both OOM; ≤ 1–2 GiB of room above the public 5 GiB).
+Today's slot = byte-identical redraw of the 3.25 base (svid 347562879) to size its mean; rule
+2.7–3.8 in-band. Two memory-blind researchers launched on the new base: field-refresh (what the
+new 5+ entrants published since 09-02) and loss-ledger-2 (waste/failure ledger on 125 game-runs of
+the tier's regime, incl. the thinking-termination question). Score ~00:15Z 09-07.
