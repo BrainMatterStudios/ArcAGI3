@@ -97,11 +97,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 KERNEL = "ahmedmobasher86/arc3-keith-kv10"
-EXPECTED_VERSION = 2
+EXPECTED_VERSION = 3
 EXPECTED_SCRIPT_VERSION_ID = "AUTO"  # 09-05: accepted from the completed commit (exactly one kf id), logged + written to logs/keithkv10_20260906.svid
 # sha256 over "\n".join(code-cell sources) — submission-ledger canonical method.
 # Attested 2026-08-31 ~15:35Z: remote v1 pull == local notebook == this hash.
-EXPECTED_HASH = "072d6666757e1282a22e0c6e0b4baaab781b16bd08adb98903acd42be1343699"
+EXPECTED_HASH = "5c0175d2aa34436361e8ef5008356d81eb1bbfe656debe192400fd15bd7349d4"
 LOCAL_NOTEBOOK = REPO / "submission/_keith_copy/push_kv10/arc3-keith-kv10.ipynb"
 COMPETITION = "arc-prize-2026-arc-agi-3"
 TARGET_UTC = datetime(2026, 9, 6, 8, 45, 0, tzinfo=timezone.utc)
@@ -111,7 +111,7 @@ MARKER = REPO / "logs/keithkv10_20260906.marker"
 # Both directions can actually fail: the V31 serving block must be present AND
 # the bytes must still be the public-lane copy (no grafts, no Flash-Next).
 REQUIRED_MARKERS = (
-    'kv10-bf16-mtp3-c8-cg32',
+    'kv8-bf16-mtp3-c8-cg32',
     'TAAF_VLLM_MTP_TOKENS',
     'ONLY_RESET_LEVELS',
     'KAGGLE_IS_COMPETITION_RERUN',
@@ -125,12 +125,12 @@ FORBIDDEN_MARKERS = (
 )
 
 MESSAGE = (
-    "KV-RESERVATION RIDER arc3-keith-kv10 v1: the flown 3.25 base (sub 56042273 = byte-copy of keithtyser V14 "
+    "KV-RESERVATION RIDER arc3-keith-kv10 v3 (8 GiB): the flown 3.25 base (sub 56042273 = byte-copy of keithtyser V14 "
     "with the both-mount-layout install cell) with ONE constant changed - vLLM --kv-cache-memory-bytes 5 GiB -> "
-    "10 GiB (profile kv10-bf16-mtp3-c8-cg32). Off-Kaggle on the exact GPU (Modal RTX PRO 6000, same docker "
+    "8 GiB (profile kv8-bf16-mtp3-c8-cg32; 10 GiB OOMed on the Kaggle box: model load 81.8 GiB). Off-Kaggle on the exact GPU (Modal RTX PRO 6000, same docker "
     "image): streams 3.21x -> 6.42x, queue 121 -> 65 s, calls/game 56 -> 82, reasoning per call unchanged, "
     "36 -> 43 levels (+0.28 +/- 0.24 lv/game), score 6.40 -> 10.47 incl. the first full game win (ft09 6/6), "
-    "zero-level games 2 -> 6. Commit attested: 6.42x startup line, 0 restarts, 25/25 audit. READING RULE "
+    "zero-level games 2 -> 6. Commit attested: ~5.1x startup line, 0 restarts, 25/25 audit. READING RULE "
     "(pre-registered): base = 3.25 (n=1; field forks 2.80-3.38 => per-draw sd ~0.3). >=3.9 = rider positive "
     "candidate (redraw base once before adopting); 2.9-3.9 = inconclusive, grow n by alternating base/rider "
     "draws; <2.9 = rider harmful or bad draw - pull the commit log, check preemptions. A single draw cannot "
@@ -291,7 +291,7 @@ def attest_commit_outputs() -> None:
     problems = []
     if not re.search(r"PUBLIC25_AUDIT.*runs=25", nb_log):
         problems.append("audit runs=25 line missing")
-    if not re.search(r"PUBLIC25_VLLM_PROFILE name=kv10-bf16-mtp3-c8-cg32", nb_log):
+    if not re.search(r"PUBLIC25_VLLM_PROFILE name=kv8-bf16-mtp3-c8-cg32", nb_log):
         problems.append("profile line not kv10")
     srv = files.get("vllm-openai-server.log")
     if srv is None:
@@ -299,7 +299,7 @@ def attest_commit_outputs() -> None:
     else:
         text = api_bytes(srv["url"]).decode("utf-8", "replace")
         m = re.search(r"GPU KV cache size: ([\d,]+) tokens, Maximum concurrency for 32,768 tokens per request: ([\d.]+)x", text)
-        if not m or not (6.0 <= float(m.group(2)) <= 7.0):
+        if not m or not (4.5 <= float(m.group(2)) <= 5.6):
             problems.append(f"concurrency line wrong: {m.group(0) if m else 'absent'}")
         else:
             log(f"attest: {m.group(0)}")

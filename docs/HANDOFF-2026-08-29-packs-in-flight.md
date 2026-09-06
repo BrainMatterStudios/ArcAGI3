@@ -525,3 +525,7 @@ positive candidate (redraw base once before adopting); 2.9–3.9 = inconclusive 
 base/rider draws); <2.9 = rider harmful or a bad draw — pull the commit log, check preemptions.
 A single draw cannot resolve the +0.28 lv the rig measured; this is n-growth on a candidate, not a
 verdict. Submission requires Ahmed's go.
+- 09-06 12:33Z: kv10 v2 boot OOMed on the Kaggle box — "Model loading took 81.8 GiB" (Modal: 79.4) so
+  10 GiB KV left ~12 MiB free at the first GDN forward. KAGGLE LAW: KV headroom is ~12.6 GiB after
+  load; reserve ≤ 8 GiB. v1 was a self-inflicted SyntaxError (inline comment ate a trailing comma;
+  cells are now compile-checked before every push). Rider re-cut to 8 GiB (kv8, ≈5.1x) as v3.
