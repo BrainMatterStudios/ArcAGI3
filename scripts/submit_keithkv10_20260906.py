@@ -97,11 +97,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 KERNEL = "ahmedmobasher86/arc3-keith-kv10"
-EXPECTED_VERSION = 1
+EXPECTED_VERSION = 2
 EXPECTED_SCRIPT_VERSION_ID = "AUTO"  # 09-05: accepted from the completed commit (exactly one kf id), logged + written to logs/keithkv10_20260906.svid
 # sha256 over "\n".join(code-cell sources) — submission-ledger canonical method.
 # Attested 2026-08-31 ~15:35Z: remote v1 pull == local notebook == this hash.
-EXPECTED_HASH = "e5d1a1938840527fa29116086eb838ccb146dd4f4b37ded9623393f3104e2963"
+EXPECTED_HASH = "072d6666757e1282a22e0c6e0b4baaab781b16bd08adb98903acd42be1343699"
 LOCAL_NOTEBOOK = REPO / "submission/_keith_copy/push_kv10/arc3-keith-kv10.ipynb"
 COMPETITION = "arc-prize-2026-arc-agi-3"
 TARGET_UTC = datetime(2026, 9, 6, 8, 45, 0, tzinfo=timezone.utc)
