@@ -548,3 +548,16 @@ the 68 s call still exceeds the 60 s turn budget, so turns still end after one c
 Mechanistic reading: what the wall instrument exploited was calls faster than the turn budget
 (16–20 s vs 60 s → 1.66 calls/turn), not shorter games. The live-legal version of that is the
 turn budget itself (yield 900 s), now running at the live geometry.
+
+## RESULT — `keith_yield900` (live geometry, turn budget 900 s; 22:51→01:05 UTC, ran LAST in session)
+
+41 levels (1.64/game) vs base 36; score 8.46 vs 6.40; zero-level 1 vs 2; calls/game 51.5;
+calls/turn **2.10** (engaged), yields **7%** (engaged); actions/game 102 vs 154; reasoning/call
+within range; e2e 153 s (queue unchanged, as expected). Verdict by rule: **40–47 band = positive,
+not a step; redraw FIRST in a fresh session** (order-effect control; this run was third in its
+session). Live-legal as a one-env-var change (LOCAL_ANALYZER_YIELD_SECONDS=900) on the flown v4.
+PRE-REGISTERED counterbalanced draw (launched ~01:15 UTC, first in a fresh session, ≈$9): ≥ 44
+levels → pooled two-draw mean ≥ 42.5 (+6.5 over base, ~1.8 SE) → propose a live flight as a
+CANDIDATE with its own rule (base 3.25/2.58; ≥3.9 positive candidate; 2.9–3.9 inconclusive;
+<2.9 negative), Ahmed's go required; 36–43 → positive-but-unproven, keep on the rig; < 36 → the
+first read was order/noise, dead.
