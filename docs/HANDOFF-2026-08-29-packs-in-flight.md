@@ -571,3 +571,12 @@ lv, base 36). LIVE RULE (Ahmed chose option 1, 09-07): base family = 3.25 / 2.58
 three draws of the candidate: mean ≥ 4.0 → step (adopt as base); ≤ 3.6 → dead (revert to v4);
 between → two more draws, decide at five with ≥ 3.9. Single-draw reads are NOT verdicts (sd ≈ 0.55).
 First flight = the 09-08 slot after attestation, with Ahmed's go.
+
+## 29. 09-07 14:30 UTC — yield900 commit attested (svid 347926973); flies 00:01Z 09-08
+
+Attestation on the Kaggle box: YIELD900 env + import-time constant = 900 (printed), profile kv5,
+"105,202 tokens / 3.21x", 251 tok/s, 0 restarts, 25/25 audit. MECHANISM ENGAGED ON THE BOX: calls/turn
+1.99 (base commit 1.02), yielded turns 5.5% (base 50.7%), step-executed turns 92% (base 48%).
+Local read 37 levels / 5 zero-level / 7.05 pts vs the base's Kaggle commit 42 / 4 / 10.42 — a single
+draw each, inside the ~±5-level noise; length-finish 1.3% (base 0.1%) — multi-call turns use more
+context; watch this on the live read. Runner armed: submits at 00:01Z with the 3-draw live rule.
