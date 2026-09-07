@@ -542,3 +542,13 @@ Today's slot = byte-identical redraw of the 3.25 base (svid 347562879) to size i
 2.7–3.8 in-band. Two memory-blind researchers launched on the new base: field-refresh (what the
 new 5+ entrants published since 09-02) and loss-ledger-2 (waste/failure ledger on 125 game-runs of
 the tier's regime, incl. the thinking-termination question). Score ~00:15Z 09-07.
+
+## 26. 09-07 00:05 UTC — base redraw #2 scored 2.58; base n=2 mean 2.92
+
+Sub 56058136 (byte-identical to the 3.25 draw) → 2.58, just under the 2.7 in-band floor; same attested
+version, rerun log unavailable → read as a low draw. Base mean estimate ≈ 2.92 (n=2), inside the public
+V14 cohort (3.33 ± 0.55). Per-draw spread this large means only ≥ +1.0 LB levers are detectable live
+(judge 09-06 slot policy); no slot goes to anything that has not passed the rig at ≥ 48 levels.
+Rig tonight: 3-wall instrument → cadence (calls faster than the 60 s turn budget) passed a wall the
+base fails deterministically; half-concurrency wave dead (32 lv; 68 s calls still > 60 s budget);
+yield-900 arm (turn budget 900 s at the live geometry) running — ahead of the base at every mark so far.
