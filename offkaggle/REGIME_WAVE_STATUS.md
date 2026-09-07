@@ -561,3 +561,14 @@ levels → pooled two-draw mean ≥ 42.5 (+6.5 over base, ~1.8 SE) → propose a
 CANDIDATE with its own rule (base 3.25/2.58; ≥3.9 positive candidate; 2.9–3.9 inconclusive;
 <2.9 negative), Ahmed's go required; 36–43 → positive-but-unproven, keep on the rig; < 36 → the
 first read was order/noise, dead.
+
+## RESULT — yield900 counterbalanced draw (cold boot, first in session; 01:07→03:20 UTC) — VOID
+
+Server died at ~+120 min (308 request errors, 3 games crashed; see app log line above for the
+cause). Matched-time read before the failure: 30 levels at +120 min vs base 35 and the first
+yield900 draw 40 — this draw was tracking BELOW the base, so the first draw's +5 is not
+reproduced; but a void draw cannot settle it. Telemetry pre-failure: calls/turn 1.37, yields 4%,
+actions/game 115 — engaged, same regime as draw 1. Verdict: yield900 = "positive-but-unproven";
+pooled evidence (41 valid + a void 30-at-120) is consistent with no real gain. One more valid
+counterbalanced draw is needed to keep or kill; the modal rig's preemption rate (3 of the last 8
+long runs) makes each such draw a coin flip on completion.

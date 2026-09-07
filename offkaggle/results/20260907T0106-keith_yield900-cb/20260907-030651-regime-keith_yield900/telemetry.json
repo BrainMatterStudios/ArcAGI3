@@ -1,0 +1,5273 @@
+{
+ "definitions": {
+  "calls": "HTTP chat completions the harness made for the game = count of '[MODEL RESPONSE META]' transcript sections (one per successful request).",
+  "turns": "analyze() invocations = count of '--- analysis_step=N | action=M | ... ---' headers. This is the judge's 'analysis steps per game' (53 for keith).",
+  "distinct_analysis_steps": "max analysis_step number (a step repeats its header after a 60 s yield or a retryable failure).",
+  "reasoning_chars": "length of the '[THINKING]' section that follows each META (stripped); 0 when the response carried no reasoning. Pooled over calls (the judge's mean 3,406 / median 2,206).",
+  "no_tool_call_share": "calls whose META says tool_call_count: 0 (text-only replies that trigger the 'You have not acted yet' follow-up) / calls.",
+  "length_finish_share": "calls with finish_reason: length (output truncated by max_tokens or the context) / calls.",
+  "turn_outcomes": "per-turn '[ANALYZER STATUS] message:' \u2014 Step executed / Yielded control (turn_time_budget|stop_requested) / No action(...) captured / request_error / error.",
+  "actions_per_call": "len(game_run.history) / calls.",
+  "e2e_s (client)": "requests.post wall time incl. redirect legs, from the client shim.",
+  "e2e_s (vllm)": "vllm:e2e_request_latency_seconds_sum/count delta from /metrics.",
+  "retries_fired": "graft_retry level retries = count of '[RETRY] game=..' marker lines the graft wrote into the transcript (one per harness-issued level RESET + FRESH MIND turn).",
+  "retry_clears": "count of '[RETRY-CLEAR] game=..' marker lines = retried levels that later cleared.",
+  "evid_markers": "graft_evidence blocks = '[EVID] harness object diff ...' lines inside [TOOL RESULT: python] sections (one per tool call that executed actions).",
+  "evid_level_flags": "'LEVEL CLEARED after action k ...' lines the aid wrote (a level clear inside a batch).",
+  "hypo_markers": "graft_hypo blocks = '[HYPO] Hypothesis discipline ...' lines inside [USER PROMPT] sections.",
+  "turn_levels": "per turn, the level in the first [USER PROMPT] 'Current state: step N, level L' line.",
+  "level_reached": "max turn level = the level the run ended on (levels_completed + 1 unless won).",
+  "wall_level": "the uncleared level the run ended on (None when the game was won).",
+  "engagement": "share of turns carrying the aid: evid = turns with >= 1 [EVID] / turns that executed a step; hypo = turns whose prompt carries [HYPO] / turns; '_wall' restricts both to turns on wall_level (the judge's engagement gate: >= 80 % of wall turns).",
+  "wall": "judge 09-06 instrument reads per run: void (request errors > 0, vLLM preemptions delta > 0 for the wave, or length-finish share > 1 %), calls_at_l2 (calls made before the first level-2 turn), attempt (L2 reached with >= 30 calls left of the budget = --max-calls or the run's own total), passed (level 3 reached), uptake / uptake_wall (share of turns whose THINKING or ASSISTANT text quotes the aid: '[EVID]', 'TRACE per action', '[HYPO]', or MOVED/APPEARED cited with a coordinate).",
+  "first_call_prompt_tokens": "prompt_tokens of the run's first request (n_messages == 2); keith baseline ~4,050; the up8 arm expects \u2248 +192 (256 - 64 vision tokens).",
+  "max_calls": "--max-calls N: in-memory stop after N analyzer calls per run (results.json:max_calls_stops).",
+  "draws": "--draws N = taaf n_passes: each game played N times as independent runs (<gid>_p<draw>); per_game is keyed by run stem and carries game_id + draw."
+ },
+ "reference_keith_commit_run": {
+  "calls_per_game": 55,
+  "reasoning_chars_mean": 3406,
+  "reasoning_chars_median": 2206,
+  "turns_per_game": 53,
+  "vllm_e2e_mean_s": 142,
+  "vllm_queue_mean_s": 124,
+  "mtp_acceptance": 0.6,
+  "preemptions": 57,
+  "levels_per_game": 1.44,
+  "score": 6.76
+ },
+ "aggregate": {
+  "games": 25,
+  "calls_total": 1276,
+  "calls_per_game": 51.04,
+  "turns_per_game": 37.32,
+  "distinct_steps_per_game": 24.36,
+  "calls_per_turn": 1.367631296891747,
+  "no_tool_call_share": 0.011755485893416929,
+  "length_finish_share": 0.011755485893416929,
+  "finish_reasons": {
+   "tool_calls": 1261,
+   "length": 15
+  },
+  "turn_outcomes": {
+   "step_executed": 586,
+   "yielded": 39,
+   "request_error": 308
+  },
+  "step_executed_turn_share": 0.6280814576634512,
+  "yielded_turn_share": 0.04180064308681672,
+  "actions_total": 2881,
+  "actions_per_game": 115.24,
+  "actions_per_call": 2.2578369905956115,
+  "retries_total": 0,
+  "retries_per_game": 0.0,
+  "retry_clears_total": 0,
+  "games_with_retry": 0,
+  "evid_markers_total": 0,
+  "evid_markers_per_game": 0.0,
+  "evid_level_flags_total": 0,
+  "hypo_markers_total": 0,
+  "hypo_markers_per_game": 0.0,
+  "engagement": {
+   "evid": {
+    "turns": 0,
+    "of": 586,
+    "share": 0.0
+   },
+   "evid_wall": {
+    "turns": 0,
+    "of": 339,
+    "share": 0.0
+   },
+   "hypo": {
+    "turns": 0,
+    "of": 933,
+    "share": 0.0
+   },
+   "hypo_wall": {
+    "turns": 0,
+    "of": 681,
+    "share": 0.0
+   }
+  },
+  "wall": {
+   "runs": 25,
+   "void": 25,
+   "attempts": 0,
+   "passes": 8,
+   "reached_l2": 17,
+   "uptake": {
+    "turns": 15,
+    "of": 933,
+    "share": 0.01607717041800643
+   },
+   "uptake_wall": {
+    "turns": 9,
+    "of": 681,
+    "share": 0.013215859030837005
+   }
+  },
+  "first_call_prompt_tokens": {
+   "n": 25,
+   "mean": 4052.12,
+   "median": 4052,
+   "p90": 4060,
+   "max": 4062,
+   "sum": 101303
+  },
+  "reasoning_chars_pooled": {
+   "n": 1276,
+   "mean": 3824.14263322884,
+   "median": 2523.5,
+   "p90": 9005,
+   "max": 32749,
+   "sum": 4879606
+  },
+  "reasoning_chars_pooled_nonzero": {
+   "n": 1276,
+   "mean": 3824.14263322884,
+   "median": 2523.5,
+   "p90": 9005,
+   "max": 32749,
+   "sum": 4879606
+  },
+  "client_e2e_s_pooled": {
+   "n": 1276,
+   "mean": 151.4052554858934,
+   "median": 159.5405,
+   "p90": 210.724,
+   "max": 290.489,
+   "sum": 193193.106
+  },
+  "client_prompt_tokens_pooled": {
+   "n": 1276,
+   "mean": 20178.330721003134,
+   "median": 21778.0,
+   "p90": 25876,
+   "max": 32713,
+   "sum": 25747550
+  },
+  "client_completion_tokens_pooled": {
+   "n": 1276,
+   "mean": 1509.6653605015674,
+   "median": 1068.0,
+   "p90": 3186,
+   "max": 10501,
+   "sum": 1926333
+  },
+  "client_redirected_posts": 745,
+  "client_post_errors": 607,
+  "levels_total": 31,
+  "levels_per_game": 1.24,
+  "draws": 1,
+  "analyzer_status_config_first": {
+   "max_output_tokens": "server default",
+   "context_budget_tokens": "31744",
+   "yield_seconds": "900.0"
+  }
+ },
+ "per_game": {
+  "ar25-0c556536_p0": {
+   "calls": 45,
+   "turns": 29,
+   "distinct_analysis_steps": 29,
+   "calls_per_turn": 1.5517241379310345,
+   "reasoning_chars": {
+    "n": 45,
+    "mean": 4355.022222222222,
+    "median": 3318,
+    "p90": 11431,
+    "max": 16458,
+    "sum": 195976
+   },
+   "reasoning_chars_nonzero": {
+    "n": 45,
+    "mean": 4355.022222222222,
+    "median": 3318,
+    "p90": 11431,
+    "max": 16458,
+    "sum": 195976
+   },
+   "content_chars_mean": 216.8,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 45
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 29
+   },
+   "step_executed_turn_share": 1.0,
+   "yielded_turn_share": null,
+   "actions_total": 130,
+   "actions_per_call": 2.888888888888889,
+   "actions_per_turn": 4.482758620689655,
+   "wallclock_s": 6977.1900094999,
+   "calls_per_hour": 23.21851630519255,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3
+   ],
+   "level_reached": 3,
+   "wall_level": 3,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 21,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 21,
+     "share": 0.0
+    },
+    "wall_level": 3,
+    "wall_turns": 21
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "preemptions=181"
+    ],
+    "calls_total": 45,
+    "calls_budget": 45,
+    "calls_at_l2": 6,
+    "calls_remaining_at_l2": 39,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": true,
+    "uptake": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 21,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4062,
+   "client": {
+    "posts": 45,
+    "ok": 45,
+    "errors": 0,
+    "e2e_s": {
+     "n": 45,
+     "mean": 154.41857777777778,
+     "median": 166.464,
+     "p90": 210.955,
+     "max": 228.575,
+     "sum": 6948.836
+    },
+    "prompt_tokens": {
+     "n": 45,
+     "mean": 20037.088888888888,
+     "median": 22405,
+     "p90": 24963,
+     "max": 26492,
+     "sum": 901669
+    },
+    "completion_tokens": {
+     "n": 45,
+     "mean": 1655.8222222222223,
+     "median": 1302,
+     "p90": 3725,
+     "max": 5902,
+     "sum": 74512
+    },
+    "redirected_posts": 28,
+    "redirect_legs": 28,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 45,
+     "mean": 900.0,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 40500.0
+    },
+    "model_time_share_of_wall": 0.9959361849883271
+   },
+   "game_id": "ar25-0c556536",
+   "draw": 0,
+   "levels_completed": 2,
+   "number_of_levels": 8,
+   "score": 8.333333333333332
+  },
+  "bp35-0a0ad940_p0": {
+   "calls": 49,
+   "turns": 316,
+   "distinct_analysis_steps": 18,
+   "calls_per_turn": 0.1550632911392405,
+   "reasoning_chars": {
+    "n": 49,
+    "mean": 2144.5510204081634,
+    "median": 1387,
+    "p90": 4510,
+    "max": 8620,
+    "sum": 105083
+   },
+   "reasoning_chars_nonzero": {
+    "n": 49,
+    "mean": 2144.5510204081634,
+    "median": 1387,
+    "p90": 4510,
+    "max": 8620,
+    "sum": 105083
+   },
+   "content_chars_mean": 166.3265306122449,
+   "no_tool_call_calls": 3,
+   "no_tool_call_share": 0.061224489795918366,
+   "finish_reasons": {
+    "tool_calls": 46,
+    "length": 3
+   },
+   "length_finish_share": 0.061224489795918366,
+   "turn_outcomes": {
+    "step_executed": 17,
+    "yielded": 1,
+    "request_error": 298
+   },
+   "step_executed_turn_share": 0.05379746835443038,
+   "yielded_turn_share": 0.0031645569620253164,
+   "actions_total": 41,
+   "actions_per_call": 0.8367346938775511,
+   "actions_per_turn": 0.12974683544303797,
+   "wallclock_s": 7920.482095875079,
+   "calls_per_hour": 22.271371598941894,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+   ],
+   "level_reached": 2,
+   "wall_level": 2,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 17,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 1,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 316,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 299,
+     "share": 0.0
+    },
+    "wall_level": 2,
+    "wall_turns": 299
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "request_errors=895",
+     "preemptions=181",
+     "length_finish_share=0.061"
+    ],
+    "calls_total": 49,
+    "calls_budget": 49,
+    "calls_at_l2": 42,
+    "calls_remaining_at_l2": 7,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 316,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 299,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4056,
+   "client": {
+    "posts": 646,
+    "ok": 49,
+    "errors": 597,
+    "e2e_s": {
+     "n": 49,
+     "mean": 145.46638775510203,
+     "median": 156.072,
+     "p90": 199.082,
+     "max": 234.358,
+     "sum": 7127.853
+    },
+    "prompt_tokens": {
+     "n": 49,
+     "mean": 21633.102040816328,
+     "median": 23342,
+     "p90": 29712,
+     "max": 32713,
+     "sum": 1060022
+    },
+    "completion_tokens": {
+     "n": 49,
+     "mean": 853.0204081632653,
+     "median": 608,
+     "p90": 1657,
+     "max": 2758,
+     "sum": 41798
+    },
+    "redirected_posts": 27,
+    "redirect_legs": 27,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 646,
+     "mean": 433.7934276960803,
+     "median": 432.5014822501689,
+     "p90": 752.7308628750034,
+     "max": 900.0,
+     "sum": 280230.5542916679
+    },
+    "model_time_share_of_wall": 0.8999266602360135
+   },
+   "game_id": "bp35-0a0ad940",
+   "draw": 0,
+   "levels_completed": 1,
+   "number_of_levels": 9,
+   "score": 0.6125
+  },
+  "cd82-fb555c5d_p0": {
+   "calls": 54,
+   "turns": 37,
+   "distinct_analysis_steps": 37,
+   "calls_per_turn": 1.4594594594594594,
+   "reasoning_chars": {
+    "n": 54,
+    "mean": 3407.5,
+    "median": 1575.0,
+    "p90": 8099,
+    "max": 19797,
+    "sum": 184005
+   },
+   "reasoning_chars_nonzero": {
+    "n": 54,
+    "mean": 3407.5,
+    "median": 1575.0,
+    "p90": 8099,
+    "max": 19797,
+    "sum": 184005
+   },
+   "content_chars_mean": 173.22222222222223,
+   "no_tool_call_calls": 1,
+   "no_tool_call_share": 0.018518518518518517,
+   "finish_reasons": {
+    "tool_calls": 53,
+    "length": 1
+   },
+   "length_finish_share": 0.018518518518518517,
+   "turn_outcomes": {
+    "step_executed": 36,
+    "yielded": 1
+   },
+   "step_executed_turn_share": 0.972972972972973,
+   "yielded_turn_share": 0.02702702702702703,
+   "actions_total": 88,
+   "actions_per_call": 1.6296296296296295,
+   "actions_per_turn": 2.3783783783783785,
+   "wallclock_s": 7958.3345827080775,
+   "calls_per_hour": 24.42722129607288,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "level_reached": 1,
+   "wall_level": 1,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 36,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 36,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 37,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 37,
+     "share": 0.0
+    },
+    "wall_level": 1,
+    "wall_turns": 37
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "preemptions=181",
+     "length_finish_share=0.019"
+    ],
+    "calls_total": 54,
+    "calls_budget": 54,
+    "calls_at_l2": null,
+    "calls_remaining_at_l2": null,
+    "reached_l2": false,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 37,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 37,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4059,
+   "client": {
+    "posts": 54,
+    "ok": 54,
+    "errors": 0,
+    "e2e_s": {
+     "n": 54,
+     "mean": 147.0915925925926,
+     "median": 155.846,
+     "p90": 201.796,
+     "max": 290.489,
+     "sum": 7942.946
+    },
+    "prompt_tokens": {
+     "n": 54,
+     "mean": 18954.333333333332,
+     "median": 20486.0,
+     "p90": 23233,
+     "max": 25906,
+     "sum": 1023534
+    },
+    "completion_tokens": {
+     "n": 54,
+     "mean": 1197.9259259259259,
+     "median": 640.5,
+     "p90": 2458,
+     "max": 7753,
+     "sum": 64688
+    },
+    "redirected_posts": 29,
+    "redirect_legs": 29,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 54,
+     "mean": 845.0966274158951,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 45635.21788045834
+    },
+    "model_time_share_of_wall": 0.9980663564030703
+   },
+   "game_id": "cd82-fb555c5d",
+   "draw": 0,
+   "levels_completed": 0,
+   "number_of_levels": 6,
+   "score": 0.0
+  },
+  "cn04-2fe56bfb_p0": {
+   "calls": 52,
+   "turns": 26,
+   "distinct_analysis_steps": 23,
+   "calls_per_turn": 2.0,
+   "reasoning_chars": {
+    "n": 52,
+    "mean": 4061.576923076923,
+    "median": 2855.0,
+    "p90": 8416,
+    "max": 27459,
+    "sum": 211202
+   },
+   "reasoning_chars_nonzero": {
+    "n": 52,
+    "mean": 4061.576923076923,
+    "median": 2855.0,
+    "p90": 8416,
+    "max": 27459,
+    "sum": 211202
+   },
+   "content_chars_mean": 187.1153846153846,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 52
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 22,
+    "yielded": 3,
+    "request_error": 1
+   },
+   "step_executed_turn_share": 0.8461538461538461,
+   "yielded_turn_share": 0.11538461538461539,
+   "actions_total": 84,
+   "actions_per_call": 1.6153846153846154,
+   "actions_per_turn": 3.230769230769231,
+   "wallclock_s": 7920.647449333919,
+   "calls_per_hour": 23.63443155341328,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+   ],
+   "level_reached": 2,
+   "wall_level": 2,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 22,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 13,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 26,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 17,
+     "share": 0.0
+    },
+    "wall_level": 2,
+    "wall_turns": 17
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "request_errors=2",
+     "preemptions=181"
+    ],
+    "calls_total": 52,
+    "calls_budget": 52,
+    "calls_at_l2": 15,
+    "calls_remaining_at_l2": 37,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 26,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 17,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4059,
+   "client": {
+    "posts": 53,
+    "ok": 52,
+    "errors": 1,
+    "e2e_s": {
+     "n": 52,
+     "mean": 150.29209615384616,
+     "median": 159.8945,
+     "p90": 212.857,
+     "max": 261.328,
+     "sum": 7815.189
+    },
+    "prompt_tokens": {
+     "n": 52,
+     "mean": 20129.673076923078,
+     "median": 22240.0,
+     "p90": 25125,
+     "max": 26585,
+     "sum": 1046743
+    },
+    "completion_tokens": {
+     "n": 52,
+     "mean": 1531.6923076923076,
+     "median": 1195.5,
+     "p90": 3007,
+     "max": 8504,
+     "sum": 79648
+    },
+    "redirected_posts": 28,
+    "redirect_legs": 28,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 53,
+     "mean": 884.7146530841161,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 46889.87661345815
+    },
+    "model_time_share_of_wall": 0.9866856276575234
+   },
+   "game_id": "cn04-2fe56bfb",
+   "draw": 0,
+   "levels_completed": 1,
+   "number_of_levels": 6,
+   "score": 3.9109002976190474
+  },
+  "dc22-fdcac232_p0": {
+   "calls": 51,
+   "turns": 30,
+   "distinct_analysis_steps": 30,
+   "calls_per_turn": 1.7,
+   "reasoning_chars": {
+    "n": 51,
+    "mean": 3293.843137254902,
+    "median": 2974,
+    "p90": 6955,
+    "max": 8448,
+    "sum": 167986
+   },
+   "reasoning_chars_nonzero": {
+    "n": 51,
+    "mean": 3293.843137254902,
+    "median": 2974,
+    "p90": 6955,
+    "max": 8448,
+    "sum": 167986
+   },
+   "content_chars_mean": 264.5686274509804,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 51
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 29,
+    "request_error": 1
+   },
+   "step_executed_turn_share": 0.9666666666666667,
+   "yielded_turn_share": null,
+   "actions_total": 176,
+   "actions_per_call": 3.450980392156863,
+   "actions_per_turn": 5.866666666666666,
+   "wallclock_s": 7920.566968916915,
+   "calls_per_hour": 23.180158784151544,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "level_reached": 1,
+   "wall_level": 1,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 30,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 30,
+     "share": 0.0
+    },
+    "wall_level": 1,
+    "wall_turns": 30
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "request_errors=2",
+     "preemptions=181"
+    ],
+    "calls_total": 51,
+    "calls_budget": 51,
+    "calls_at_l2": null,
+    "calls_remaining_at_l2": null,
+    "reached_l2": false,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 1,
+     "of": 30,
+     "share": 0.03333333333333333
+    },
+    "uptake_wall": {
+     "turns": 1,
+     "of": 30,
+     "share": 0.03333333333333333
+    }
+   },
+   "first_call_prompt_tokens": 4057,
+   "client": {
+    "posts": 52,
+    "ok": 51,
+    "errors": 1,
+    "e2e_s": {
+     "n": 51,
+     "mean": 152.30419607843137,
+     "median": 164.883,
+     "p90": 197.82,
+     "max": 231.941,
+     "sum": 7767.514
+    },
+    "prompt_tokens": {
+     "n": 51,
+     "mean": 19176.274509803923,
+     "median": 21037,
+     "p90": 23033,
+     "max": 24675,
+     "sum": 977990
+    },
+    "completion_tokens": {
+     "n": 51,
+     "mean": 1225.3529411764705,
+     "median": 1203,
+     "p90": 2304,
+     "max": 2654,
+     "sum": 62493
+    },
+    "redirected_posts": 33,
+    "redirect_legs": 33,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 52,
+     "mean": 857.2333368653601,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 44576.13351699873
+    },
+    "model_time_share_of_wall": 0.9806765134973862
+   },
+   "game_id": "dc22-fdcac232",
+   "draw": 0,
+   "levels_completed": 0,
+   "number_of_levels": 6,
+   "score": 0.0
+  },
+  "ft09-0d8bbf25_p0": {
+   "calls": 52,
+   "turns": 20,
+   "distinct_analysis_steps": 17,
+   "calls_per_turn": 2.6,
+   "reasoning_chars": {
+    "n": 52,
+    "mean": 3097.8846153846152,
+    "median": 1763.5,
+    "p90": 6309,
+    "max": 18032,
+    "sum": 161090
+   },
+   "reasoning_chars_nonzero": {
+    "n": 52,
+    "mean": 3097.8846153846152,
+    "median": 1763.5,
+    "p90": 6309,
+    "max": 18032,
+    "sum": 161090
+   },
+   "content_chars_mean": 244.55769230769232,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 52
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 16,
+    "yielded": 3,
+    "request_error": 1
+   },
+   "step_executed_turn_share": 0.8,
+   "yielded_turn_share": 0.15,
+   "actions_total": 48,
+   "actions_per_call": 0.9230769230769231,
+   "actions_per_turn": 2.4,
+   "wallclock_s": 7920.457538458984,
+   "calls_per_hour": 23.634998242339154,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    3,
+    3,
+    3,
+    3,
+    3,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4
+   ],
+   "level_reached": 4,
+   "wall_level": 4,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 16,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 4,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 20,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 7,
+     "share": 0.0
+    },
+    "wall_level": 4,
+    "wall_turns": 7
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "request_errors=2",
+     "preemptions=181"
+    ],
+    "calls_total": 52,
+    "calls_budget": 52,
+    "calls_at_l2": 14,
+    "calls_remaining_at_l2": 38,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": true,
+    "uptake": {
+     "turns": 0,
+     "of": 20,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 7,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4049,
+   "client": {
+    "posts": 53,
+    "ok": 52,
+    "errors": 1,
+    "e2e_s": {
+     "n": 52,
+     "mean": 151.442,
+     "median": 161.921,
+     "p90": 200.651,
+     "max": 266.395,
+     "sum": 7874.984
+    },
+    "prompt_tokens": {
+     "n": 52,
+     "mean": 20618.23076923077,
+     "median": 22012.0,
+     "p90": 25928,
+     "max": 28149,
+     "sum": 1072148
+    },
+    "completion_tokens": {
+     "n": 52,
+     "mean": 1353.0576923076924,
+     "median": 963.0,
+     "p90": 2746,
+     "max": 6304,
+     "sum": 70359
+    },
+    "redirected_posts": 32,
+    "redirect_legs": 32,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 53,
+     "mean": 853.5585746061373,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 45238.60445412528
+    },
+    "model_time_share_of_wall": 0.9942587232823129
+   },
+   "game_id": "ft09-0d8bbf25",
+   "draw": 0,
+   "levels_completed": 3,
+   "number_of_levels": 6,
+   "score": 28.57142857142857
+  },
+  "g50t-5849a774_p0": {
+   "calls": 51,
+   "turns": 18,
+   "distinct_analysis_steps": 16,
+   "calls_per_turn": 2.8333333333333335,
+   "reasoning_chars": {
+    "n": 51,
+    "mean": 4518.0392156862745,
+    "median": 2296,
+    "p90": 12538,
+    "max": 22079,
+    "sum": 230420
+   },
+   "reasoning_chars_nonzero": {
+    "n": 51,
+    "mean": 4518.0392156862745,
+    "median": 2296,
+    "p90": 12538,
+    "max": 22079,
+    "sum": 230420
+   },
+   "content_chars_mean": 92.3921568627451,
+   "no_tool_call_calls": 1,
+   "no_tool_call_share": 0.0196078431372549,
+   "finish_reasons": {
+    "tool_calls": 50,
+    "length": 1
+   },
+   "length_finish_share": 0.0196078431372549,
+   "turn_outcomes": {
+    "step_executed": 15,
+    "yielded": 2,
+    "request_error": 1
+   },
+   "step_executed_turn_share": 0.8333333333333334,
+   "yielded_turn_share": 0.1111111111111111,
+   "actions_total": 149,
+   "actions_per_call": 2.9215686274509802,
+   "actions_per_turn": 8.277777777777779,
+   "wallclock_s": 7920.441596542019,
+   "calls_per_hour": 23.18052570202119,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "level_reached": 1,
+   "wall_level": 1,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 15,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 15,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 18,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 18,
+     "share": 0.0
+    },
+    "wall_level": 1,
+    "wall_turns": 18
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "request_errors=2",
+     "preemptions=181",
+     "length_finish_share=0.020"
+    ],
+    "calls_total": 51,
+    "calls_budget": 51,
+    "calls_at_l2": null,
+    "calls_remaining_at_l2": null,
+    "reached_l2": false,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 2,
+     "of": 18,
+     "share": 0.1111111111111111
+    },
+    "uptake_wall": {
+     "turns": 2,
+     "of": 18,
+     "share": 0.1111111111111111
+    }
+   },
+   "first_call_prompt_tokens": 4044,
+   "client": {
+    "posts": 52,
+    "ok": 51,
+    "errors": 1,
+    "e2e_s": {
+     "n": 51,
+     "mean": 153.93286274509805,
+     "median": 163.647,
+     "p90": 212.868,
+     "max": 248.009,
+     "sum": 7850.576
+    },
+    "prompt_tokens": {
+     "n": 51,
+     "mean": 19397.58823529412,
+     "median": 20652,
+     "p90": 25876,
+     "max": 27806,
+     "sum": 989277
+    },
+    "completion_tokens": {
+     "n": 51,
+     "mean": 1702.3529411764705,
+     "median": 1012,
+     "p90": 4307,
+     "max": 7383,
+     "sum": 86820
+    },
+    "redirected_posts": 31,
+    "redirect_legs": 31,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 52,
+     "mean": 883.474535812503,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 45940.67586225015
+    },
+    "model_time_share_of_wall": 0.991179078124568
+   },
+   "game_id": "g50t-5849a774",
+   "draw": 0,
+   "levels_completed": 0,
+   "number_of_levels": 7,
+   "score": 0.0
+  },
+  "ka59-38d34dbb_p0": {
+   "calls": 51,
+   "turns": 29,
+   "distinct_analysis_steps": 29,
+   "calls_per_turn": 1.7586206896551724,
+   "reasoning_chars": {
+    "n": 51,
+    "mean": 5103.666666666667,
+    "median": 3405,
+    "p90": 9873,
+    "max": 32749,
+    "sum": 260287
+   },
+   "reasoning_chars_nonzero": {
+    "n": 51,
+    "mean": 5103.666666666667,
+    "median": 3405,
+    "p90": 9873,
+    "max": 32749,
+    "sum": 260287
+   },
+   "content_chars_mean": 147.47058823529412,
+   "no_tool_call_calls": 1,
+   "no_tool_call_share": 0.0196078431372549,
+   "finish_reasons": {
+    "tool_calls": 50,
+    "length": 1
+   },
+   "length_finish_share": 0.0196078431372549,
+   "turn_outcomes": {
+    "step_executed": 28,
+    "request_error": 1
+   },
+   "step_executed_turn_share": 0.9655172413793104,
+   "yielded_turn_share": null,
+   "actions_total": 121,
+   "actions_per_call": 2.372549019607843,
+   "actions_per_turn": 4.172413793103448,
+   "wallclock_s": 7920.515796083957,
+   "calls_per_hour": 23.180308546417532,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+   ],
+   "level_reached": 2,
+   "wall_level": 2,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 28,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 18,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 19,
+     "share": 0.0
+    },
+    "wall_level": 2,
+    "wall_turns": 19
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "request_errors=2",
+     "preemptions=181",
+     "length_finish_share=0.020"
+    ],
+    "calls_total": 51,
+    "calls_budget": 51,
+    "calls_at_l2": 14,
+    "calls_remaining_at_l2": 37,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 19,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4057,
+   "client": {
+    "posts": 52,
+    "ok": 51,
+    "errors": 1,
+    "e2e_s": {
+     "n": 51,
+     "mean": 154.34839215686276,
+     "median": 162.927,
+     "p90": 226.431,
+     "max": 283.168,
+     "sum": 7871.768
+    },
+    "prompt_tokens": {
+     "n": 51,
+     "mean": 19905.41176470588,
+     "median": 21357,
+     "p90": 24886,
+     "max": 26965,
+     "sum": 1015176
+    },
+    "completion_tokens": {
+     "n": 51,
+     "mean": 1968.7254901960785,
+     "median": 1395,
+     "p90": 3453,
+     "max": 10501,
+     "sum": 100405
+    },
+    "redirected_posts": 28,
+    "redirect_legs": 28,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 52,
+     "mean": 854.8716713245196,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 44453.326908875024
+    },
+    "model_time_share_of_wall": 0.9938453760665361
+   },
+   "game_id": "ka59-38d34dbb",
+   "draw": 0,
+   "levels_completed": 1,
+   "number_of_levels": 7,
+   "score": 3.571428571428571
+  },
+  "lf52-271a04aa_p0": {
+   "calls": 54,
+   "turns": 32,
+   "distinct_analysis_steps": 32,
+   "calls_per_turn": 1.6875,
+   "reasoning_chars": {
+    "n": 54,
+    "mean": 2601.0555555555557,
+    "median": 1743.0,
+    "p90": 7135,
+    "max": 11524,
+    "sum": 140457
+   },
+   "reasoning_chars_nonzero": {
+    "n": 54,
+    "mean": 2601.0555555555557,
+    "median": 1743.0,
+    "p90": 7135,
+    "max": 11524,
+    "sum": 140457
+   },
+   "content_chars_mean": null,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 54
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 31,
+    "request_error": 1
+   },
+   "step_executed_turn_share": 0.96875,
+   "yielded_turn_share": null,
+   "actions_total": 102,
+   "actions_per_call": 1.8888888888888888,
+   "actions_per_turn": 3.1875,
+   "wallclock_s": 7920.644041416002,
+   "calls_per_hour": 24.543458711628507,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+   ],
+   "level_reached": 2,
+   "wall_level": 2,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 31,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 21,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 32,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 22,
+     "share": 0.0
+    },
+    "wall_level": 2,
+    "wall_turns": 22
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "request_errors=2",
+     "preemptions=181"
+    ],
+    "calls_total": 54,
+    "calls_budget": 54,
+    "calls_at_l2": 19,
+    "calls_remaining_at_l2": 35,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 32,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 22,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4060,
+   "client": {
+    "posts": 55,
+    "ok": 54,
+    "errors": 1,
+    "e2e_s": {
+     "n": 54,
+     "mean": 146.20527777777778,
+     "median": 158.1035,
+     "p90": 197.422,
+     "max": 233.6,
+     "sum": 7895.085
+    },
+    "prompt_tokens": {
+     "n": 54,
+     "mean": 19941.777777777777,
+     "median": 22492.0,
+     "p90": 24175,
+     "max": 25460,
+     "sum": 1076856
+    },
+    "completion_tokens": {
+     "n": 54,
+     "mean": 1023.3148148148148,
+     "median": 755.5,
+     "p90": 2441,
+     "max": 3946,
+     "sum": 55259
+    },
+    "redirected_posts": 33,
+    "redirect_legs": 33,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 55,
+     "mean": 840.3071914151692,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 46216.895527834306
+    },
+    "model_time_share_of_wall": 0.9967731107114071
+   },
+   "game_id": "lf52-271a04aa",
+   "draw": 0,
+   "levels_completed": 1,
+   "number_of_levels": 10,
+   "score": 1.8181818181818181
+  },
+  "lp85-305b61c3_p0": {
+   "calls": 52,
+   "turns": 25,
+   "distinct_analysis_steps": 25,
+   "calls_per_turn": 2.08,
+   "reasoning_chars": {
+    "n": 52,
+    "mean": 3219.6923076923076,
+    "median": 1856.0,
+    "p90": 7152,
+    "max": 12715,
+    "sum": 167424
+   },
+   "reasoning_chars_nonzero": {
+    "n": 52,
+    "mean": 3219.6923076923076,
+    "median": 1856.0,
+    "p90": 7152,
+    "max": 12715,
+    "sum": 167424
+   },
+   "content_chars_mean": 242.78846153846155,
+   "no_tool_call_calls": 2,
+   "no_tool_call_share": 0.038461538461538464,
+   "finish_reasons": {
+    "tool_calls": 50,
+    "length": 2
+   },
+   "length_finish_share": 0.038461538461538464,
+   "turn_outcomes": {
+    "step_executed": 24,
+    "yielded": 1
+   },
+   "step_executed_turn_share": 0.96,
+   "yielded_turn_share": 0.04,
+   "actions_total": 97,
+   "actions_per_call": 1.8653846153846154,
+   "actions_per_turn": 3.88,
+   "wallclock_s": 7920.751914124936,
+   "calls_per_hour": 23.634119844881088,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    3,
+    3,
+    3,
+    3,
+    3,
+    4,
+    4,
+    4,
+    5,
+    5,
+    5,
+    6
+   ],
+   "level_reached": 6,
+   "wall_level": 6,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 24,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 0,
+     "share": null
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 25,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 1,
+     "share": 0.0
+    },
+    "wall_level": 6,
+    "wall_turns": 1
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "preemptions=181",
+     "length_finish_share=0.038"
+    ],
+    "calls_total": 52,
+    "calls_budget": 52,
+    "calls_at_l2": 10,
+    "calls_remaining_at_l2": 42,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": true,
+    "uptake": {
+     "turns": 0,
+     "of": 25,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 1,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4049,
+   "client": {
+    "posts": 52,
+    "ok": 52,
+    "errors": 0,
+    "e2e_s": {
+     "n": 52,
+     "mean": 151.85025,
+     "median": 156.195,
+     "p90": 212.918,
+     "max": 249.959,
+     "sum": 7896.213
+    },
+    "prompt_tokens": {
+     "n": 52,
+     "mean": 22025.115384615383,
+     "median": 24241.5,
+     "p90": 27488,
+     "max": 29956,
+     "sum": 1145306
+    },
+    "completion_tokens": {
+     "n": 52,
+     "mean": 1655.2884615384614,
+     "median": 1131.0,
+     "p90": 3786,
+     "max": 5662,
+     "sum": 86075
+    },
+    "redirected_posts": 30,
+    "redirect_legs": 30,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 52,
+     "mean": 868.8123029062542,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 45178.23975112522
+    },
+    "model_time_share_of_wall": 0.9969019463819873
+   },
+   "game_id": "lp85-305b61c3",
+   "draw": 0,
+   "levels_completed": 5,
+   "number_of_levels": 8,
+   "score": 41.66666666666667
+  },
+  "ls20-9607627b_p0": {
+   "calls": 51,
+   "turns": 17,
+   "distinct_analysis_steps": 13,
+   "calls_per_turn": 3.0,
+   "reasoning_chars": {
+    "n": 51,
+    "mean": 4560.568627450981,
+    "median": 2805,
+    "p90": 10527,
+    "max": 23171,
+    "sum": 232589
+   },
+   "reasoning_chars_nonzero": {
+    "n": 51,
+    "mean": 4560.568627450981,
+    "median": 2805,
+    "p90": 10527,
+    "max": 23171,
+    "sum": 232589
+   },
+   "content_chars_mean": 177.05882352941177,
+   "no_tool_call_calls": 1,
+   "no_tool_call_share": 0.0196078431372549,
+   "finish_reasons": {
+    "tool_calls": 50,
+    "length": 1
+   },
+   "length_finish_share": 0.0196078431372549,
+   "turn_outcomes": {
+    "step_executed": 12,
+    "yielded": 4,
+    "request_error": 1
+   },
+   "step_executed_turn_share": 0.7058823529411765,
+   "yielded_turn_share": 0.23529411764705882,
+   "actions_total": 47,
+   "actions_per_call": 0.9215686274509803,
+   "actions_per_turn": 2.764705882352941,
+   "wallclock_s": 7920.419859624933,
+   "calls_per_hour": 23.18058931899783,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2
+   ],
+   "level_reached": 2,
+   "wall_level": 2,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 12,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 3,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 17,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 5,
+     "share": 0.0
+    },
+    "wall_level": 2,
+    "wall_turns": 5
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "request_errors=2",
+     "preemptions=181",
+     "length_finish_share=0.020"
+    ],
+    "calls_total": 51,
+    "calls_budget": 51,
+    "calls_at_l2": 37,
+    "calls_remaining_at_l2": 14,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 17,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 5,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4042,
+   "client": {
+    "posts": 52,
+    "ok": 51,
+    "errors": 1,
+    "e2e_s": {
+     "n": 51,
+     "mean": 152.93598039215686,
+     "median": 154.616,
+     "p90": 220.454,
+     "max": 266.568,
+     "sum": 7799.735
+    },
+    "prompt_tokens": {
+     "n": 51,
+     "mean": 20106.019607843136,
+     "median": 21159,
+     "p90": 27182,
+     "max": 30544,
+     "sum": 1025407
+    },
+    "completion_tokens": {
+     "n": 51,
+     "mean": 1817.8431372549019,
+     "median": 1595,
+     "p90": 3668,
+     "max": 7350,
+     "sum": 92710
+    },
+    "redirected_posts": 30,
+    "redirect_legs": 30,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 52,
+     "mean": 872.9127390168276,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 45391.462428875035
+    },
+    "model_time_share_of_wall": 0.9847628204358034
+   },
+   "game_id": "ls20-9607627b",
+   "draw": 0,
+   "levels_completed": 1,
+   "number_of_levels": 7,
+   "score": 2.055376252760319
+  },
+  "m0r0-492f87ba_p0": {
+   "calls": 51,
+   "turns": 16,
+   "distinct_analysis_steps": 13,
+   "calls_per_turn": 3.1875,
+   "reasoning_chars": {
+    "n": 51,
+    "mean": 3448.6470588235293,
+    "median": 2829,
+    "p90": 7102,
+    "max": 9950,
+    "sum": 175881
+   },
+   "reasoning_chars_nonzero": {
+    "n": 51,
+    "mean": 3448.6470588235293,
+    "median": 2829,
+    "p90": 7102,
+    "max": 9950,
+    "sum": 175881
+   },
+   "content_chars_mean": 8.980392156862745,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 51
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 12,
+    "yielded": 3,
+    "request_error": 1
+   },
+   "step_executed_turn_share": 0.75,
+   "yielded_turn_share": 0.1875,
+   "actions_total": 49,
+   "actions_per_call": 0.9607843137254902,
+   "actions_per_turn": 3.0625,
+   "wallclock_s": 7920.566694207955,
+   "calls_per_hour": 23.18015958810883,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "level_reached": 1,
+   "wall_level": 1,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 12,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 12,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 16,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 16,
+     "share": 0.0
+    },
+    "wall_level": 1,
+    "wall_turns": 16
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "request_errors=2",
+     "preemptions=181"
+    ],
+    "calls_total": 51,
+    "calls_budget": 51,
+    "calls_at_l2": null,
+    "calls_remaining_at_l2": null,
+    "reached_l2": false,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 16,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 16,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4059,
+   "client": {
+    "posts": 52,
+    "ok": 51,
+    "errors": 1,
+    "e2e_s": {
+     "n": 51,
+     "mean": 154.25866666666667,
+     "median": 165.805,
+     "p90": 202.422,
+     "max": 217.727,
+     "sum": 7867.192
+    },
+    "prompt_tokens": {
+     "n": 51,
+     "mean": 19611.13725490196,
+     "median": 20965,
+     "p90": 24830,
+     "max": 27084,
+     "sum": 1000168
+    },
+    "completion_tokens": {
+     "n": 51,
+     "mean": 1380.5686274509803,
+     "median": 1170,
+     "p90": 2323,
+     "max": 3643,
+     "sum": 70409
+    },
+    "redirected_posts": 31,
+    "redirect_legs": 31,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 52,
+     "mean": 863.8742407964802,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 44921.46052141697
+    },
+    "model_time_share_of_wall": 0.9932612531061715
+   },
+   "game_id": "m0r0-492f87ba",
+   "draw": 0,
+   "levels_completed": 0,
+   "number_of_levels": 6,
+   "score": 0.0
+  },
+  "r11l-495a7899_p0": {
+   "calls": 51,
+   "turns": 19,
+   "distinct_analysis_steps": 17,
+   "calls_per_turn": 2.6842105263157894,
+   "reasoning_chars": {
+    "n": 51,
+    "mean": 5421.705882352941,
+    "median": 4470,
+    "p90": 10448,
+    "max": 22385,
+    "sum": 276507
+   },
+   "reasoning_chars_nonzero": {
+    "n": 51,
+    "mean": 5421.705882352941,
+    "median": 4470,
+    "p90": 10448,
+    "max": 22385,
+    "sum": 276507
+   },
+   "content_chars_mean": 142.64705882352942,
+   "no_tool_call_calls": 1,
+   "no_tool_call_share": 0.0196078431372549,
+   "finish_reasons": {
+    "tool_calls": 50,
+    "length": 1
+   },
+   "length_finish_share": 0.0196078431372549,
+   "turn_outcomes": {
+    "step_executed": 16,
+    "yielded": 3
+   },
+   "step_executed_turn_share": 0.8421052631578947,
+   "yielded_turn_share": 0.15789473684210525,
+   "actions_total": 58,
+   "actions_per_call": 1.1372549019607843,
+   "actions_per_turn": 3.0526315789473686,
+   "wallclock_s": 8044.453562458046,
+   "calls_per_hour": 22.823178550849835,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    3,
+    3,
+    3,
+    3,
+    3
+   ],
+   "level_reached": 3,
+   "wall_level": 3,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 16,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 2,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 19,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 5,
+     "share": 0.0
+    },
+    "wall_level": 3,
+    "wall_turns": 5
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "preemptions=181",
+     "length_finish_share=0.020"
+    ],
+    "calls_total": 51,
+    "calls_budget": 51,
+    "calls_at_l2": 8,
+    "calls_remaining_at_l2": 43,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": true,
+    "uptake": {
+     "turns": 4,
+     "of": 19,
+     "share": 0.21052631578947367
+    },
+    "uptake_wall": {
+     "turns": 2,
+     "of": 5,
+     "share": 0.4
+    }
+   },
+   "first_call_prompt_tokens": 4049,
+   "client": {
+    "posts": 51,
+    "ok": 51,
+    "errors": 0,
+    "e2e_s": {
+     "n": 51,
+     "mean": 157.51603921568628,
+     "median": 164.208,
+     "p90": 215.419,
+     "max": 243.04,
+     "sum": 8033.318
+    },
+    "prompt_tokens": {
+     "n": 51,
+     "mean": 21602.56862745098,
+     "median": 23398,
+     "p90": 27891,
+     "max": 30717,
+     "sum": 1101731
+    },
+    "completion_tokens": {
+     "n": 51,
+     "mean": 2203.2549019607845,
+     "median": 1847,
+     "p90": 4895,
+     "max": 8060,
+     "sum": 112366
+    },
+    "redirected_posts": 30,
+    "redirect_legs": 30,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 51,
+     "mean": 861.8728129419809,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 43955.513460041024
+    },
+    "model_time_share_of_wall": 0.9986157465672979
+   },
+   "game_id": "r11l-495a7899",
+   "draw": 0,
+   "levels_completed": 2,
+   "number_of_levels": 6,
+   "score": 12.295012679628062
+  },
+  "re86-8af5384d_p0": {
+   "calls": 53,
+   "turns": 29,
+   "distinct_analysis_steps": 29,
+   "calls_per_turn": 1.8275862068965518,
+   "reasoning_chars": {
+    "n": 53,
+    "mean": 2191.245283018868,
+    "median": 1521,
+    "p90": 6076,
+    "max": 8201,
+    "sum": 116136
+   },
+   "reasoning_chars_nonzero": {
+    "n": 53,
+    "mean": 2191.245283018868,
+    "median": 1521,
+    "p90": 6076,
+    "max": 8201,
+    "sum": 116136
+   },
+   "content_chars_mean": null,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 53
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 28,
+    "yielded": 1
+   },
+   "step_executed_turn_share": 0.9655172413793104,
+   "yielded_turn_share": 0.034482758620689655,
+   "actions_total": 155,
+   "actions_per_call": 2.9245283018867925,
+   "actions_per_turn": 5.344827586206897,
+   "wallclock_s": 7930.847336166073,
+   "calls_per_hour": 24.05795899385405,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4
+   ],
+   "level_reached": 4,
+   "wall_level": 4,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 28,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 7,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 8,
+     "share": 0.0
+    },
+    "wall_level": 4,
+    "wall_turns": 8
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "preemptions=181"
+    ],
+    "calls_total": 53,
+    "calls_budget": 53,
+    "calls_at_l2": 13,
+    "calls_remaining_at_l2": 40,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": true,
+    "uptake": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 8,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4044,
+   "client": {
+    "posts": 53,
+    "ok": 53,
+    "errors": 0,
+    "e2e_s": {
+     "n": 53,
+     "mean": 148.44330188679245,
+     "median": 152.081,
+     "p90": 201.328,
+     "max": 225.446,
+     "sum": 7867.495
+    },
+    "prompt_tokens": {
+     "n": 53,
+     "mean": 21464.622641509435,
+     "median": 23448,
+     "p90": 27073,
+     "max": 28003,
+     "sum": 1137625
+    },
+    "completion_tokens": {
+     "n": 53,
+     "mean": 971.8301886792453,
+     "median": 695,
+     "p90": 2221,
+     "max": 3684,
+     "sum": 51507
+    },
+    "redirected_posts": 28,
+    "redirect_legs": 28,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 53,
+     "mean": 875.1202925039622,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 46381.37550271
+    },
+    "model_time_share_of_wall": 0.9920119082513196
+   },
+   "game_id": "re86-8af5384d",
+   "draw": 0,
+   "levels_completed": 3,
+   "number_of_levels": 8,
+   "score": 16.666666666666664
+  },
+  "s5i5-18d95033_p0": {
+   "calls": 54,
+   "turns": 32,
+   "distinct_analysis_steps": 32,
+   "calls_per_turn": 1.6875,
+   "reasoning_chars": {
+    "n": 54,
+    "mean": 3583.9814814814813,
+    "median": 2363.5,
+    "p90": 9147,
+    "max": 15258,
+    "sum": 193535
+   },
+   "reasoning_chars_nonzero": {
+    "n": 54,
+    "mean": 3583.9814814814813,
+    "median": 2363.5,
+    "p90": 9147,
+    "max": 15258,
+    "sum": 193535
+   },
+   "content_chars_mean": null,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 54
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 31,
+    "yielded": 1
+   },
+   "step_executed_turn_share": 0.96875,
+   "yielded_turn_share": 0.03125,
+   "actions_total": 114,
+   "actions_per_call": 2.111111111111111,
+   "actions_per_turn": 3.5625,
+   "wallclock_s": 8037.228808290791,
+   "calls_per_hour": 24.187441298108496,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3
+   ],
+   "level_reached": 3,
+   "wall_level": 3,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 31,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 5,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 32,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 6,
+     "share": 0.0
+    },
+    "wall_level": 3,
+    "wall_turns": 6
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "preemptions=181"
+    ],
+    "calls_total": 54,
+    "calls_budget": 54,
+    "calls_at_l2": 27,
+    "calls_remaining_at_l2": 27,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": true,
+    "uptake": {
+     "turns": 0,
+     "of": 32,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 6,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4049,
+   "client": {
+    "posts": 54,
+    "ok": 54,
+    "errors": 0,
+    "e2e_s": {
+     "n": 54,
+     "mean": 148.32777777777778,
+     "median": 153.8585,
+     "p90": 202.927,
+     "max": 263.531,
+     "sum": 8009.7
+    },
+    "prompt_tokens": {
+     "n": 54,
+     "mean": 20430.314814814814,
+     "median": 22934.0,
+     "p90": 25191,
+     "max": 26623,
+     "sum": 1103237
+    },
+    "completion_tokens": {
+     "n": 54,
+     "mean": 1300.148148148148,
+     "median": 820.0,
+     "p90": 2917,
+     "max": 4603,
+     "sum": 70208
+    },
+    "redirected_posts": 28,
+    "redirect_legs": 28,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 54,
+     "mean": 843.9505232901148,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 45573.3282576662
+    },
+    "model_time_share_of_wall": 0.9965748382996894
+   },
+   "game_id": "s5i5-18d95033",
+   "draw": 0,
+   "levels_completed": 2,
+   "number_of_levels": 8,
+   "score": 6.66015625
+  },
+  "sb26-7fbdac44_p0": {
+   "calls": 45,
+   "turns": 23,
+   "distinct_analysis_steps": 22,
+   "calls_per_turn": 1.9565217391304348,
+   "reasoning_chars": {
+    "n": 45,
+    "mean": 4593.022222222222,
+    "median": 4182,
+    "p90": 11054,
+    "max": 13967,
+    "sum": 206686
+   },
+   "reasoning_chars_nonzero": {
+    "n": 45,
+    "mean": 4593.022222222222,
+    "median": 4182,
+    "p90": 11054,
+    "max": 13967,
+    "sum": 206686
+   },
+   "content_chars_mean": 165.2,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 45
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 21,
+    "yielded": 2
+   },
+   "step_executed_turn_share": 0.9130434782608695,
+   "yielded_turn_share": 0.08695652173913043,
+   "actions_total": 105,
+   "actions_per_call": 2.3333333333333335,
+   "actions_per_turn": 4.565217391304348,
+   "wallclock_s": 7031.977518541971,
+   "calls_per_hour": 23.03761631388001,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+   ],
+   "level_reached": 2,
+   "wall_level": 2,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 21,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 17,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 23,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 19,
+     "share": 0.0
+    },
+    "wall_level": 2,
+    "wall_turns": 19
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "preemptions=181"
+    ],
+    "calls_total": 45,
+    "calls_budget": 45,
+    "calls_at_l2": 6,
+    "calls_remaining_at_l2": 39,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 23,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 19,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4054,
+   "client": {
+    "posts": 45,
+    "ok": 45,
+    "errors": 0,
+    "e2e_s": {
+     "n": 45,
+     "mean": 155.89424444444444,
+     "median": 167.44,
+     "p90": 221.814,
+     "max": 254.003,
+     "sum": 7015.241
+    },
+    "prompt_tokens": {
+     "n": 45,
+     "mean": 19336.17777777778,
+     "median": 21408,
+     "p90": 24765,
+     "max": 25729,
+     "sum": 870128
+    },
+    "completion_tokens": {
+     "n": 45,
+     "mean": 1687.2666666666667,
+     "median": 1649,
+     "p90": 3651,
+     "max": 4825,
+     "sum": 75927
+    },
+    "redirected_posts": 29,
+    "redirect_legs": 29,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 45,
+     "mean": 900.0,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 40500.0
+    },
+    "model_time_share_of_wall": 0.9976199414037032
+   },
+   "game_id": "sb26-7fbdac44",
+   "draw": 0,
+   "levels_completed": 1,
+   "number_of_levels": 8,
+   "score": 2.7777777777777777
+  },
+  "sc25-635fd71a_p0": {
+   "calls": 52,
+   "turns": 21,
+   "distinct_analysis_steps": 21,
+   "calls_per_turn": 2.4761904761904763,
+   "reasoning_chars": {
+    "n": 52,
+    "mean": 4360.884615384615,
+    "median": 2626.0,
+    "p90": 11923,
+    "max": 23143,
+    "sum": 226766
+   },
+   "reasoning_chars_nonzero": {
+    "n": 52,
+    "mean": 4360.884615384615,
+    "median": 2626.0,
+    "p90": 11923,
+    "max": 23143,
+    "sum": 226766
+   },
+   "content_chars_mean": 196.01923076923077,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 52
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 20,
+    "yielded": 1
+   },
+   "step_executed_turn_share": 0.9523809523809523,
+   "yielded_turn_share": 0.047619047619047616,
+   "actions_total": 63,
+   "actions_per_call": 1.2115384615384615,
+   "actions_per_turn": 3.0,
+   "wallclock_s": 7987.258915874874,
+   "calls_per_hour": 23.437327119562305,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "level_reached": 1,
+   "wall_level": 1,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 20,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 20,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 21,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 21,
+     "share": 0.0
+    },
+    "wall_level": 1,
+    "wall_turns": 21
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "preemptions=181"
+    ],
+    "calls_total": 52,
+    "calls_budget": 52,
+    "calls_at_l2": null,
+    "calls_remaining_at_l2": null,
+    "reached_l2": false,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 21,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 21,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4057,
+   "client": {
+    "posts": 52,
+    "ok": 52,
+    "errors": 0,
+    "e2e_s": {
+     "n": 52,
+     "mean": 153.405,
+     "median": 165.788,
+     "p90": 201.19,
+     "max": 253.862,
+     "sum": 7977.0599999999995
+    },
+    "prompt_tokens": {
+     "n": 52,
+     "mean": 19212.673076923078,
+     "median": 21801.5,
+     "p90": 24825,
+     "max": 26668,
+     "sum": 999059
+    },
+    "completion_tokens": {
+     "n": 52,
+     "mean": 1502.326923076923,
+     "median": 1052.0,
+     "p90": 3619,
+     "max": 6859,
+     "sum": 78121
+    },
+    "redirected_posts": 33,
+    "redirect_legs": 33,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 52,
+     "mean": 863.499498213919,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 44901.973907123785
+    },
+    "model_time_share_of_wall": 0.9987231018823486
+   },
+   "game_id": "sc25-635fd71a",
+   "draw": 0,
+   "levels_completed": 0,
+   "number_of_levels": 6,
+   "score": 0.0
+  },
+  "sk48-d8078629_p0": {
+   "calls": 51,
+   "turns": 28,
+   "distinct_analysis_steps": 27,
+   "calls_per_turn": 1.8214285714285714,
+   "reasoning_chars": {
+    "n": 51,
+    "mean": 4142.823529411765,
+    "median": 2520,
+    "p90": 9358,
+    "max": 21640,
+    "sum": 211284
+   },
+   "reasoning_chars_nonzero": {
+    "n": 51,
+    "mean": 4142.823529411765,
+    "median": 2520,
+    "p90": 9358,
+    "max": 21640,
+    "sum": 211284
+   },
+   "content_chars_mean": 153.31372549019608,
+   "no_tool_call_calls": 2,
+   "no_tool_call_share": 0.0392156862745098,
+   "finish_reasons": {
+    "tool_calls": 49,
+    "length": 2
+   },
+   "length_finish_share": 0.0392156862745098,
+   "turn_outcomes": {
+    "step_executed": 26,
+    "yielded": 2
+   },
+   "step_executed_turn_share": 0.9285714285714286,
+   "yielded_turn_share": 0.07142857142857142,
+   "actions_total": 131,
+   "actions_per_call": 2.5686274509803924,
+   "actions_per_turn": 4.678571428571429,
+   "wallclock_s": 7929.893565624952,
+   "calls_per_hour": 23.152895871879277,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "level_reached": 1,
+   "wall_level": 1,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 26,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 26,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 28,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 28,
+     "share": 0.0
+    },
+    "wall_level": 1,
+    "wall_turns": 28
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "preemptions=181",
+     "length_finish_share=0.039"
+    ],
+    "calls_total": 51,
+    "calls_budget": 51,
+    "calls_at_l2": null,
+    "calls_remaining_at_l2": null,
+    "reached_l2": false,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 28,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 28,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4060,
+   "client": {
+    "posts": 51,
+    "ok": 51,
+    "errors": 0,
+    "e2e_s": {
+     "n": 51,
+     "mean": 154.49686274509804,
+     "median": 159.329,
+     "p90": 220.489,
+     "max": 286.644,
+     "sum": 7879.34
+    },
+    "prompt_tokens": {
+     "n": 51,
+     "mean": 21573.333333333332,
+     "median": 22915,
+     "p90": 27658,
+     "max": 30478,
+     "sum": 1100240
+    },
+    "completion_tokens": {
+     "n": 51,
+     "mean": 1778.0196078431372,
+     "median": 1300,
+     "p90": 3510,
+     "max": 8561,
+     "sum": 90679
+    },
+    "redirected_posts": 31,
+    "redirect_legs": 31,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 51,
+     "mean": 900.0,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 45900.0
+    },
+    "model_time_share_of_wall": 0.9936249376859111
+   },
+   "game_id": "sk48-d8078629",
+   "draw": 0,
+   "levels_completed": 0,
+   "number_of_levels": 8,
+   "score": 0.0
+  },
+  "sp80-589a99af_p0": {
+   "calls": 42,
+   "turns": 32,
+   "distinct_analysis_steps": 32,
+   "calls_per_turn": 1.3125,
+   "reasoning_chars": {
+    "n": 42,
+    "mean": 3780.3571428571427,
+    "median": 1244.0,
+    "p90": 11267,
+    "max": 19753,
+    "sum": 158775
+   },
+   "reasoning_chars_nonzero": {
+    "n": 42,
+    "mean": 3780.3571428571427,
+    "median": 1244.0,
+    "p90": 11267,
+    "max": 19753,
+    "sum": 158775
+   },
+   "content_chars_mean": 237.76190476190476,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 42
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 32
+   },
+   "step_executed_turn_share": 1.0,
+   "yielded_turn_share": null,
+   "actions_total": 253,
+   "actions_per_call": 6.023809523809524,
+   "actions_per_turn": 7.90625,
+   "wallclock_s": 6358.16046725004,
+   "calls_per_hour": 23.78046304097061,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "level_reached": 1,
+   "wall_level": 2,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 32,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 0,
+     "share": null
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 32,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 0,
+     "share": null
+    },
+    "wall_level": 2,
+    "wall_turns": 0
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "preemptions=181"
+    ],
+    "calls_total": 42,
+    "calls_budget": 42,
+    "calls_at_l2": null,
+    "calls_remaining_at_l2": null,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 32,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 0,
+     "share": null
+    }
+   },
+   "first_call_prompt_tokens": 4059,
+   "client": {
+    "posts": 42,
+    "ok": 42,
+    "errors": 0,
+    "e2e_s": {
+     "n": 42,
+     "mean": 149.72964285714286,
+     "median": 164.96050000000002,
+     "p90": 215.495,
+     "max": 271.441,
+     "sum": 6288.645
+    },
+    "prompt_tokens": {
+     "n": 42,
+     "mean": 18449.47619047619,
+     "median": 20447.5,
+     "p90": 23977,
+     "max": 25749,
+     "sum": 774878
+    },
+    "completion_tokens": {
+     "n": 42,
+     "mean": 1419.142857142857,
+     "median": 684.0,
+     "p90": 3821,
+     "max": 6234,
+     "sum": 59604
+    },
+    "redirected_posts": 25,
+    "redirect_legs": 25,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 42,
+     "mean": 900.0,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 37800.0
+    },
+    "model_time_share_of_wall": 0.9890667328061153
+   },
+   "game_id": "sp80-589a99af",
+   "draw": 0,
+   "levels_completed": 1,
+   "number_of_levels": 6,
+   "score": 0.1158857142857143
+  },
+  "su15-1944f8ab_p0": {
+   "calls": 54,
+   "turns": 32,
+   "distinct_analysis_steps": 31,
+   "calls_per_turn": 1.6875,
+   "reasoning_chars": {
+    "n": 54,
+    "mean": 3691.240740740741,
+    "median": 3139.5,
+    "p90": 9005,
+    "max": 11749,
+    "sum": 199327
+   },
+   "reasoning_chars_nonzero": {
+    "n": 54,
+    "mean": 3691.240740740741,
+    "median": 3139.5,
+    "p90": 9005,
+    "max": 11749,
+    "sum": 199327
+   },
+   "content_chars_mean": 15.166666666666666,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 54
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 30,
+    "yielded": 2
+   },
+   "step_executed_turn_share": 0.9375,
+   "yielded_turn_share": 0.0625,
+   "actions_total": 64,
+   "actions_per_call": 1.1851851851851851,
+   "actions_per_turn": 2.0,
+   "wallclock_s": 7973.192417208105,
+   "calls_per_hour": 24.381701811239008,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+   ],
+   "level_reached": 2,
+   "wall_level": 2,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 30,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 23,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 32,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 25,
+     "share": 0.0
+    },
+    "wall_level": 2,
+    "wall_turns": 25
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "preemptions=181"
+    ],
+    "calls_total": 54,
+    "calls_budget": 54,
+    "calls_at_l2": 10,
+    "calls_remaining_at_l2": 44,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 2,
+     "of": 32,
+     "share": 0.0625
+    },
+    "uptake_wall": {
+     "turns": 1,
+     "of": 25,
+     "share": 0.04
+    }
+   },
+   "first_call_prompt_tokens": 4052,
+   "client": {
+    "posts": 54,
+    "ok": 54,
+    "errors": 0,
+    "e2e_s": {
+     "n": 54,
+     "mean": 147.4496296296296,
+     "median": 157.4785,
+     "p90": 201.803,
+     "max": 235.83,
+     "sum": 7962.28
+    },
+    "prompt_tokens": {
+     "n": 54,
+     "mean": 20534.87037037037,
+     "median": 22388.0,
+     "p90": 24463,
+     "max": 26161,
+     "sum": 1108883
+    },
+    "completion_tokens": {
+     "n": 54,
+     "mean": 1380.2777777777778,
+     "median": 1205.5,
+     "p90": 2824,
+     "max": 4825,
+     "sum": 74535
+    },
+    "redirected_posts": 29,
+    "redirect_legs": 29,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 54,
+     "mean": 852.2836237823487,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 46023.31568424683
+    },
+    "model_time_share_of_wall": 0.9986313616131283
+   },
+   "game_id": "su15-1944f8ab",
+   "draw": 0,
+   "levels_completed": 1,
+   "number_of_levels": 9,
+   "score": 2.2222222222222223
+  },
+  "tn36-ef4dde99_p0": {
+   "calls": 50,
+   "turns": 29,
+   "distinct_analysis_steps": 28,
+   "calls_per_turn": 1.7241379310344827,
+   "reasoning_chars": {
+    "n": 50,
+    "mean": 5902.02,
+    "median": 4908.0,
+    "p90": 11500,
+    "max": 24539,
+    "sum": 295101
+   },
+   "reasoning_chars_nonzero": {
+    "n": 50,
+    "mean": 5902.02,
+    "median": 4908.0,
+    "p90": 11500,
+    "max": 24539,
+    "sum": 295101
+   },
+   "content_chars_mean": 354.96,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 50
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 27,
+    "yielded": 1,
+    "request_error": 1
+   },
+   "step_executed_turn_share": 0.9310344827586207,
+   "yielded_turn_share": 0.034482758620689655,
+   "actions_total": 214,
+   "actions_per_call": 4.28,
+   "actions_per_turn": 7.379310344827586,
+   "wallclock_s": 7920.6739650829695,
+   "calls_per_hour": 22.72533887816887,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "level_reached": 1,
+   "wall_level": 1,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 27,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 27,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    },
+    "wall_level": 1,
+    "wall_turns": 29
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "request_errors=2",
+     "preemptions=181"
+    ],
+    "calls_total": 50,
+    "calls_budget": 50,
+    "calls_at_l2": null,
+    "calls_remaining_at_l2": null,
+    "reached_l2": false,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4049,
+   "client": {
+    "posts": 51,
+    "ok": 50,
+    "errors": 1,
+    "e2e_s": {
+     "n": 50,
+     "mean": 156.7084,
+     "median": 157.9205,
+     "p90": 216.827,
+     "max": 260.058,
+     "sum": 7835.42
+    },
+    "prompt_tokens": {
+     "n": 50,
+     "mean": 20005.48,
+     "median": 21396.0,
+     "p90": 25126,
+     "max": 27298,
+     "sum": 1000274
+    },
+    "completion_tokens": {
+     "n": 50,
+     "mean": 2252.6,
+     "median": 1841.0,
+     "p90": 3993,
+     "max": 8235,
+     "sum": 112630
+    },
+    "redirected_posts": 30,
+    "redirect_legs": 30,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 51,
+     "mean": 857.3614462981932,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 43725.43376120785
+    },
+    "model_time_share_of_wall": 0.9892365264043441
+   },
+   "game_id": "tn36-ef4dde99",
+   "draw": 0,
+   "levels_completed": 0,
+   "number_of_levels": 7,
+   "score": 0.0
+  },
+  "tr87-cd924810_p0": {
+   "calls": 53,
+   "turns": 12,
+   "distinct_analysis_steps": 8,
+   "calls_per_turn": 4.416666666666667,
+   "reasoning_chars": {
+    "n": 53,
+    "mean": 3971.264150943396,
+    "median": 2641,
+    "p90": 9045,
+    "max": 24140,
+    "sum": 210477
+   },
+   "reasoning_chars_nonzero": {
+    "n": 53,
+    "mean": 3971.264150943396,
+    "median": 2641,
+    "p90": 9045,
+    "max": 24140,
+    "sum": 210477
+   },
+   "content_chars_mean": 242.67924528301887,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 53
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 7,
+    "yielded": 5
+   },
+   "step_executed_turn_share": 0.5833333333333334,
+   "yielded_turn_share": 0.4166666666666667,
+   "actions_total": 107,
+   "actions_per_call": 2.018867924528302,
+   "actions_per_turn": 8.916666666666666,
+   "wallclock_s": 8040.6238848750945,
+   "calls_per_hour": 23.7295019306781,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "level_reached": 1,
+   "wall_level": 1,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 7,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 7,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 12,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 12,
+     "share": 0.0
+    },
+    "wall_level": 1,
+    "wall_turns": 12
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "preemptions=181"
+    ],
+    "calls_total": 53,
+    "calls_budget": 53,
+    "calls_at_l2": null,
+    "calls_remaining_at_l2": null,
+    "reached_l2": false,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 12,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 12,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4042,
+   "client": {
+    "posts": 53,
+    "ok": 53,
+    "errors": 0,
+    "e2e_s": {
+     "n": 53,
+     "mean": 151.35728301886792,
+     "median": 157.15,
+     "p90": 216.78,
+     "max": 260.733,
+     "sum": 8021.936
+    },
+    "prompt_tokens": {
+     "n": 53,
+     "mean": 19788.169811320753,
+     "median": 19887,
+     "p90": 27187,
+     "max": 29318,
+     "sum": 1048773
+    },
+    "completion_tokens": {
+     "n": 53,
+     "mean": 1799.3207547169811,
+     "median": 1416,
+     "p90": 3186,
+     "max": 8563,
+     "sum": 95364
+    },
+    "redirected_posts": 31,
+    "redirect_legs": 31,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 53,
+     "mean": 871.5835895314285,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 46193.93024516571
+    },
+    "model_time_share_of_wall": 0.9976758165606716
+   },
+   "game_id": "tr87-cd924810",
+   "draw": 0,
+   "levels_completed": 0,
+   "number_of_levels": 6,
+   "score": 0.0
+  },
+  "tu93-0768757b_p0": {
+   "calls": 53,
+   "turns": 13,
+   "distinct_analysis_steps": 12,
+   "calls_per_turn": 4.076923076923077,
+   "reasoning_chars": {
+    "n": 53,
+    "mean": 4398.207547169812,
+    "median": 2571,
+    "p90": 11052,
+    "max": 27024,
+    "sum": 233105
+   },
+   "reasoning_chars_nonzero": {
+    "n": 53,
+    "mean": 4398.207547169812,
+    "median": 2571,
+    "p90": 11052,
+    "max": 27024,
+    "sum": 233105
+   },
+   "content_chars_mean": null,
+   "no_tool_call_calls": 2,
+   "no_tool_call_share": 0.03773584905660377,
+   "finish_reasons": {
+    "tool_calls": 51,
+    "length": 2
+   },
+   "length_finish_share": 0.03773584905660377,
+   "turn_outcomes": {
+    "step_executed": 11,
+    "yielded": 2
+   },
+   "step_executed_turn_share": 0.8461538461538461,
+   "yielded_turn_share": 0.15384615384615385,
+   "actions_total": 82,
+   "actions_per_call": 1.5471698113207548,
+   "actions_per_turn": 6.3076923076923075,
+   "wallclock_s": 7984.019169166917,
+   "calls_per_hour": 23.897738213961325,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    3,
+    3,
+    3,
+    3
+   ],
+   "level_reached": 3,
+   "wall_level": 3,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 11,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 2,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 13,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 4,
+     "share": 0.0
+    },
+    "wall_level": 3,
+    "wall_turns": 4
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "preemptions=181",
+     "length_finish_share=0.038"
+    ],
+    "calls_total": 53,
+    "calls_budget": 53,
+    "calls_at_l2": 14,
+    "calls_remaining_at_l2": 39,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": true,
+    "uptake": {
+     "turns": 5,
+     "of": 13,
+     "share": 0.38461538461538464
+    },
+    "uptake_wall": {
+     "turns": 2,
+     "of": 4,
+     "share": 0.5
+    }
+   },
+   "first_call_prompt_tokens": 4042,
+   "client": {
+    "posts": 53,
+    "ok": 53,
+    "errors": 0,
+    "e2e_s": {
+     "n": 53,
+     "mean": 150.19011320754717,
+     "median": 156.611,
+     "p90": 209.288,
+     "max": 263.629,
+     "sum": 7960.076
+    },
+    "prompt_tokens": {
+     "n": 53,
+     "mean": 19482.075471698114,
+     "median": 20654,
+     "p90": 26594,
+     "max": 28754,
+     "sum": 1032550
+    },
+    "completion_tokens": {
+     "n": 53,
+     "mean": 1657.7735849056603,
+     "median": 997,
+     "p90": 3425,
+     "max": 9840,
+     "sum": 87862
+    },
+    "redirected_posts": 30,
+    "redirect_legs": 30,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 53,
+     "mean": 892.6631875542291,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 47311.14894037414
+    },
+    "model_time_share_of_wall": 0.9970011132664383
+   },
+   "game_id": "tu93-0768757b",
+   "draw": 0,
+   "levels_completed": 2,
+   "number_of_levels": 9,
+   "score": 2.928181689342403
+  },
+  "vc33-5430563c_p0": {
+   "calls": 52,
+   "turns": 29,
+   "distinct_analysis_steps": 29,
+   "calls_per_turn": 1.793103448275862,
+   "reasoning_chars": {
+    "n": 52,
+    "mean": 3664.596153846154,
+    "median": 2174.0,
+    "p90": 8605,
+    "max": 22132,
+    "sum": 190559
+   },
+   "reasoning_chars_nonzero": {
+    "n": 52,
+    "mean": 3664.596153846154,
+    "median": 2174.0,
+    "p90": 8605,
+    "max": 22132,
+    "sum": 190559
+   },
+   "content_chars_mean": 210.44230769230768,
+   "no_tool_call_calls": 1,
+   "no_tool_call_share": 0.019230769230769232,
+   "finish_reasons": {
+    "tool_calls": 51,
+    "length": 1
+   },
+   "length_finish_share": 0.019230769230769232,
+   "turn_outcomes": {
+    "step_executed": 28,
+    "yielded": 1
+   },
+   "step_executed_turn_share": 0.9655172413793104,
+   "yielded_turn_share": 0.034482758620689655,
+   "actions_total": 92,
+   "actions_per_call": 1.7692307692307692,
+   "actions_per_turn": 3.1724137931034484,
+   "wallclock_s": 7945.695542166941,
+   "calls_per_hour": 23.559926126863278,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4
+   ],
+   "level_reached": 4,
+   "wall_level": 4,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 28,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 6,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 7,
+     "share": 0.0
+    },
+    "wall_level": 4,
+    "wall_turns": 7
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "preemptions=181",
+     "length_finish_share=0.019"
+    ],
+    "calls_total": 52,
+    "calls_budget": 52,
+    "calls_at_l2": 14,
+    "calls_remaining_at_l2": 38,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": true,
+    "uptake": {
+     "turns": 0,
+     "of": 29,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 7,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4049,
+   "client": {
+    "posts": 52,
+    "ok": 52,
+    "errors": 0,
+    "e2e_s": {
+     "n": 52,
+     "mean": 152.49634615384616,
+     "median": 158.70350000000002,
+     "p90": 211.376,
+     "max": 225.824,
+     "sum": 7929.81
+    },
+    "prompt_tokens": {
+     "n": 52,
+     "mean": 20478.01923076923,
+     "median": 22702.0,
+     "p90": 25407,
+     "max": 27828,
+     "sum": 1064857
+    },
+    "completion_tokens": {
+     "n": 52,
+     "mean": 1477.7115384615386,
+     "median": 992.5,
+     "p90": 2933,
+     "max": 6779,
+     "sum": 76841
+    },
+    "redirected_posts": 30,
+    "redirect_legs": 30,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 52,
+     "mean": 850.7579502267673,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 44239.4134117919
+    },
+    "model_time_share_of_wall": 0.9980007361114408
+   },
+   "game_id": "vc33-5430563c",
+   "draw": 0,
+   "levels_completed": 3,
+   "number_of_levels": 7,
+   "score": 21.428571428571427
+  },
+  "wa30-ee6fef47_p0": {
+   "calls": 53,
+   "turns": 39,
+   "distinct_analysis_steps": 39,
+   "calls_per_turn": 1.358974358974359,
+   "reasoning_chars": {
+    "n": 53,
+    "mean": 2432.9811320754716,
+    "median": 989,
+    "p90": 6360,
+    "max": 16718,
+    "sum": 128948
+   },
+   "reasoning_chars_nonzero": {
+    "n": 53,
+    "mean": 2432.9811320754716,
+    "median": 989,
+    "p90": 6360,
+    "max": 16718,
+    "sum": 128948
+   },
+   "content_chars_mean": 197.0,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 53
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 38,
+    "request_error": 1
+   },
+   "step_executed_turn_share": 0.9743589743589743,
+   "yielded_turn_share": null,
+   "actions_total": 311,
+   "actions_per_call": 5.867924528301887,
+   "actions_per_turn": 7.9743589743589745,
+   "wallclock_s": 7920.6280675418675,
+   "calls_per_hour": 24.088998798199338,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+   ],
+   "level_reached": 2,
+   "wall_level": 2,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 38,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 24,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 39,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 25,
+     "share": 0.0
+    },
+    "wall_level": 2,
+    "wall_turns": 25
+   },
+   "wall": {
+    "void": true,
+    "void_reasons": [
+     "request_errors=2",
+     "preemptions=181"
+    ],
+    "calls_total": 53,
+    "calls_budget": 53,
+    "calls_at_l2": 20,
+    "calls_remaining_at_l2": 33,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 1,
+     "of": 39,
+     "share": 0.02564102564102564
+    },
+    "uptake_wall": {
+     "turns": 1,
+     "of": 25,
+     "share": 0.04
+    }
+   },
+   "first_call_prompt_tokens": 4044,
+   "client": {
+    "posts": 54,
+    "ok": 53,
+    "errors": 1,
+    "e2e_s": {
+     "n": 53,
+     "mean": 146.31875471698115,
+     "median": 153.522,
+     "p90": 206.746,
+     "max": 249.71,
+     "sum": 7754.894
+    },
+    "prompt_tokens": {
+     "n": 53,
+     "mean": 20207.905660377357,
+     "median": 21724,
+     "p90": 25613,
+     "max": 27763,
+     "sum": 1071019
+    },
+    "completion_tokens": {
+     "n": 53,
+     "mean": 1047.4150943396226,
+     "median": 584,
+     "p90": 2224,
+     "max": 6298,
+     "sum": 55513
+    },
+    "redirected_posts": 31,
+    "redirect_legs": 31,
+    "max_tokens_sent": [
+     null
+    ],
+    "timeouts_sent": {
+     "n": 54,
+     "mean": 850.2569918634491,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 45913.87756062625
+    },
+    "model_time_share_of_wall": 0.9790756407031618
+   },
+   "game_id": "wa30-ee6fef47",
+   "draw": 0,
+   "levels_completed": 1,
+   "number_of_levels": 9,
+   "score": 2.2222222222222223
+  }
+ },
+ "per_game_draw": {
+  "ar25-0c556536": {
+   "0": {
+    "levels_completed": 2,
+    "level_reached": 3,
+    "wall_level": 3,
+    "turns": 29,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 6,
+    "attempt": false,
+    "void": true,
+    "passed": true,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "bp35-0a0ad940": {
+   "0": {
+    "levels_completed": 1,
+    "level_reached": 2,
+    "wall_level": 2,
+    "turns": 316,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 42,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "cd82-fb555c5d": {
+   "0": {
+    "levels_completed": 0,
+    "level_reached": 1,
+    "wall_level": 1,
+    "turns": 37,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": null,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "cn04-2fe56bfb": {
+   "0": {
+    "levels_completed": 1,
+    "level_reached": 2,
+    "wall_level": 2,
+    "turns": 26,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 15,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "dc22-fdcac232": {
+   "0": {
+    "levels_completed": 0,
+    "level_reached": 1,
+    "wall_level": 1,
+    "turns": 30,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": null,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.03333333333333333
+   }
+  },
+  "ft09-0d8bbf25": {
+   "0": {
+    "levels_completed": 3,
+    "level_reached": 4,
+    "wall_level": 4,
+    "turns": 20,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 14,
+    "attempt": false,
+    "void": true,
+    "passed": true,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "g50t-5849a774": {
+   "0": {
+    "levels_completed": 0,
+    "level_reached": 1,
+    "wall_level": 1,
+    "turns": 18,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": null,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.1111111111111111
+   }
+  },
+  "ka59-38d34dbb": {
+   "0": {
+    "levels_completed": 1,
+    "level_reached": 2,
+    "wall_level": 2,
+    "turns": 29,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 14,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "lf52-271a04aa": {
+   "0": {
+    "levels_completed": 1,
+    "level_reached": 2,
+    "wall_level": 2,
+    "turns": 32,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 19,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "lp85-305b61c3": {
+   "0": {
+    "levels_completed": 5,
+    "level_reached": 6,
+    "wall_level": 6,
+    "turns": 25,
+    "evid_wall_share": null,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 10,
+    "attempt": false,
+    "void": true,
+    "passed": true,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "ls20-9607627b": {
+   "0": {
+    "levels_completed": 1,
+    "level_reached": 2,
+    "wall_level": 2,
+    "turns": 17,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 37,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "m0r0-492f87ba": {
+   "0": {
+    "levels_completed": 0,
+    "level_reached": 1,
+    "wall_level": 1,
+    "turns": 16,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": null,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "r11l-495a7899": {
+   "0": {
+    "levels_completed": 2,
+    "level_reached": 3,
+    "wall_level": 3,
+    "turns": 19,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 8,
+    "attempt": false,
+    "void": true,
+    "passed": true,
+    "uptake_wall_share": 0.4
+   }
+  },
+  "re86-8af5384d": {
+   "0": {
+    "levels_completed": 3,
+    "level_reached": 4,
+    "wall_level": 4,
+    "turns": 29,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 13,
+    "attempt": false,
+    "void": true,
+    "passed": true,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "s5i5-18d95033": {
+   "0": {
+    "levels_completed": 2,
+    "level_reached": 3,
+    "wall_level": 3,
+    "turns": 32,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 27,
+    "attempt": false,
+    "void": true,
+    "passed": true,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "sb26-7fbdac44": {
+   "0": {
+    "levels_completed": 1,
+    "level_reached": 2,
+    "wall_level": 2,
+    "turns": 23,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 6,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "sc25-635fd71a": {
+   "0": {
+    "levels_completed": 0,
+    "level_reached": 1,
+    "wall_level": 1,
+    "turns": 21,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": null,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "sk48-d8078629": {
+   "0": {
+    "levels_completed": 0,
+    "level_reached": 1,
+    "wall_level": 1,
+    "turns": 28,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": null,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "sp80-589a99af": {
+   "0": {
+    "levels_completed": 1,
+    "level_reached": 1,
+    "wall_level": 2,
+    "turns": 32,
+    "evid_wall_share": null,
+    "hypo_wall_share": null,
+    "calls_at_l2": null,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": null
+   }
+  },
+  "su15-1944f8ab": {
+   "0": {
+    "levels_completed": 1,
+    "level_reached": 2,
+    "wall_level": 2,
+    "turns": 32,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 10,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.04
+   }
+  },
+  "tn36-ef4dde99": {
+   "0": {
+    "levels_completed": 0,
+    "level_reached": 1,
+    "wall_level": 1,
+    "turns": 29,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": null,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "tr87-cd924810": {
+   "0": {
+    "levels_completed": 0,
+    "level_reached": 1,
+    "wall_level": 1,
+    "turns": 12,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": null,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "tu93-0768757b": {
+   "0": {
+    "levels_completed": 2,
+    "level_reached": 3,
+    "wall_level": 3,
+    "turns": 13,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 14,
+    "attempt": false,
+    "void": true,
+    "passed": true,
+    "uptake_wall_share": 0.5
+   }
+  },
+  "vc33-5430563c": {
+   "0": {
+    "levels_completed": 3,
+    "level_reached": 4,
+    "wall_level": 4,
+    "turns": 29,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 14,
+    "attempt": false,
+    "void": true,
+    "passed": true,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "wa30-ee6fef47": {
+   "0": {
+    "levels_completed": 1,
+    "level_reached": 2,
+    "wall_level": 2,
+    "turns": 39,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 20,
+    "attempt": false,
+    "void": true,
+    "passed": false,
+    "uptake_wall_share": 0.04
+   }
+  }
+ },
+ "arm": "keith_yield900",
+ "dry_run": false,
+ "grafts": {
+  "installed": {},
+  "status": {}
+ }
+}
