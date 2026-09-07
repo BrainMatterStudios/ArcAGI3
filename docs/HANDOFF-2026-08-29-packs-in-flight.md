@@ -561,3 +561,13 @@ flown v4 = 41 and 40 levels on two independent boots vs base 36 (+0.18 lv/game, 
 145 s queued calls. Not a step by the ≥48 rule; EV-positive live (≈+0.7 if the score gain
 transfers) but below one-draw detectability. Ahmed decides whether it flies as a candidate
 (commit ≈2.5 h GPU, one env var change of the v4 notebook).
+
+## 28. 09-07 — yield900 candidate committed (arc3-keith-yield900 v1) — PRE-REGISTERED live rule
+
+Notebook = flown v4 + ONE knob (cell 9 tail: LOCAL_ANALYZER_YIELD_SECONDS=900 before the harness
+import; cell 13: assert the import-time constant == 900, printed as "YIELD900 ATTEST"). Attest before
+flight: that line, profile kv5 + 3.21x line, 0 restarts, 25/25 audit, local read reported (rig: 41/40
+lv, base 36). LIVE RULE (Ahmed chose option 1, 09-07): base family = 3.25 / 2.58 (+ today's redraw);
+three draws of the candidate: mean ≥ 4.0 → step (adopt as base); ≤ 3.6 → dead (revert to v4);
+between → two more draws, decide at five with ≥ 3.9. Single-draw reads are NOT verdicts (sd ≈ 0.55).
+First flight = the 09-08 slot after attestation, with Ahmed's go.
