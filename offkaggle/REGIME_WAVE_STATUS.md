@@ -572,3 +572,14 @@ actions/game 115 — engaged, same regime as draw 1. Verdict: yield900 = "positi
 pooled evidence (41 valid + a void 30-at-120) is consistent with no real gain. One more valid
 counterbalanced draw is needed to keep or kill; the modal rig's preemption rate (3 of the last 8
 long runs) makes each such draw a coin flip on completion.
+
+## RESULT — yield900 counterbalanced draw #2 (cold boot, first/only arm; 07:03→09:17 UTC) — VALID
+
+40 levels (1.60/game), score 7.90, zero-level 1, calls/game 54.2, calls/turn 2.05, yields 6.2%,
+actions/game 124, e2e 146 s, 0 preemption/void. Two valid draws: 41 and 40 vs base 36 → pooled
++4.5 levels (+0.18 lv/game, ≈1.5 SE), score +23–32%, zero-level games 1 vs 2 in both, actions/game
+−20–34%, regime engaged in both (2.05–2.10 calls/turn, 6–7% yields). Verdict by rule: 36–43 band =
+POSITIVE, NOT A STEP (bar 48). It is the first lever in the campaign to replicate in the same
+direction on two independent boots; it is a one-env-var change (LOCAL_ANALYZER_YIELD_SECONDS=900)
+on the flown v4. Live expectation if the +25% score transfers: ≈ 2.9 → 3.6, below the one-draw
+detectability threshold (+1.0). Decision on a slot is Ahmed's: EV-positive but unreadable live.
