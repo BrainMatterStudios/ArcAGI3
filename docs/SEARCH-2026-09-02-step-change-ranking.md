@@ -53,6 +53,23 @@ Remaining original candidate: staged emission / thinking-termination control (St
 finding) — no rig experiment designed yet; the stronger-dose retry variant is on record but
 not recommended.
 
+## 09-06/07 program on the 3.25 base (docs/research-2026-09-06/, offkaggle/REGIME_WAVE_STATUS.md)
+- Base is the keith V14 byte-copy: live 3.25 and 2.58 (n=2, mean 2.92; public cohort 3.33 ± 0.55).
+- Loss ledger on the base (125 game-runs): walls are deterministic (8 games never pass the same wall in
+  5 draws); losses = wrong hypothesis + analysis-paralysis; thinking-budget lever DEAD (<1% of calls);
+  30% of the window unused by the chars/3 estimator but it is the generation headroom (rider only).
+- 3-wall instrument: evidence-integrity aid, hypothesis block, upscale 8 — all NO advantage over the
+  same-geometry base; but the BASE passed dc22's wall 4/4 when calls were faster than the 60 s turn
+  budget (queue-free) vs 0/4 queued — within-turn multi-step continuity is the mechanism; the clock cue
+  is refuted.
+- Half-concurrency geometry (14 games × 3960 s): DEAD (32 lv; 68 s calls still > 60 s budget).
+- Turn budget 900 s at the live geometry (one env var): 41 lv vs 36, calls/turn 2.10, yields 7%,
+  actions/game 102 vs 154, zero-level 1 — positive-not-step; the counterbalanced draw was VOID
+  (server died at +120 min; tracking 30 vs base 35 at that mark). Status: unproven; one more valid
+  draw decides.
+- Slot policy (judge 09-06): live can only confirm ≥ +1.0 levers; slots only for arms that passed the
+  rig at ≥ 48 levels; base redraws buy public rank only.
+
 ## Slot plan
 - 09-03 (tonight) and 09-04: redraws of committed versions only. Recommended: Flash-Next exact redraw
   (runner scripts/submit_flashnext_20260903.py; grows n on the field's base model under our serving,
