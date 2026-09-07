@@ -552,3 +552,12 @@ V14 cohort (3.33 ± 0.55). Per-draw spread this large means only ≥ +1.0 LB lev
 Rig tonight: 3-wall instrument → cadence (calls faster than the 60 s turn budget) passed a wall the
 base fails deterministically; half-concurrency wave dead (32 lv; 68 s calls still > 60 s budget);
 yield-900 arm (turn budget 900 s at the live geometry) running — ahead of the base at every mark so far.
+
+## 27. 09-07 09:20 UTC — base redraw #3 submitted (56073627); yield900 replicated (41, 40 vs 36)
+
+Slot: base exact redraw #3 (rule 2.4–3.9 in-band). Rig: LOCAL_ANALYZER_YIELD_SECONDS=900 on the
+flown v4 = 41 and 40 levels on two independent boots vs base 36 (+0.18 lv/game, 1.5 SE), score
++23–32%, zero-level 1 vs 2, actions −20–34%; mechanism = turns of 2+ calls (analysis→act) despite
+145 s queued calls. Not a step by the ≥48 rule; EV-positive live (≈+0.7 if the score gain
+transfers) but below one-draw detectability. Ahmed decides whether it flies as a candidate
+(commit ≈2.5 h GPU, one env var change of the v4 notebook).
