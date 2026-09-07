@@ -580,3 +580,11 @@ Attestation on the Kaggle box: YIELD900 env + import-time constant = 900 (printe
 Local read 37 levels / 5 zero-level / 7.05 pts vs the base's Kaggle commit 42 / 4 / 10.42 — a single
 draw each, inside the ~±5-level noise; length-finish 1.3% (base 0.1%) — multi-call turns use more
 context; watch this on the live read. Runner armed: submits at 00:01Z with the 3-draw live rule.
+
+## 30. 09-07 16:30 UTC — base redraw #3 ERRORED (Kaggle system error, slot refunded); yield900 candidate FLEW (sub 56080757)
+
+56073627 (base redraw #3) ended in Kaggle's "A system error. Please try resubmitting" — same bytes
+scored 3.25/2.58 before; no rerun log exists. The slot was refunded (submit accepted at 16:30Z), so
+the attested yield900 candidate flew a day early as 56080757 (draw 1 of the 3-draw rule; runner race
+guard now ignores errored rows). Score ~01:30Z 09-08. The 09-08 slot is free: draw 2 of the candidate
+(runner scripts/submit_keithyield900_20260908.py, restored to 00:01Z; re-arm after this read) or hold.
