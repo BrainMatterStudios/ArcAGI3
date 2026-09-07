@@ -104,7 +104,7 @@ EXPECTED_SCRIPT_VERSION_ID = "AUTO"  # 09-05: accepted from the completed commit
 EXPECTED_HASH = "577cf96a4c9df5cd4c28c4ab7de82c889016e4487fbaf56facdfccaddfde5525"
 LOCAL_NOTEBOOK = REPO / "submission/_keith_copy/push_yield900/arc3-keith-yield900.ipynb"
 COMPETITION = "arc-prize-2026-arc-agi-3"
-TARGET_UTC = datetime(2026, 9, 8, 0, 1, 0, tzinfo=timezone.utc)
+TARGET_UTC = datetime(2026, 9, 8, 2, 0, 0, tzinfo=timezone.utc)
 WINDOW_END_UTC = datetime(2026, 9, 8, 23, 55, 0, tzinfo=timezone.utc)
 MARKER = REPO / "logs/keithyield900_20260908.marker"
 
@@ -130,7 +130,7 @@ FORBIDDEN_MARKERS = (
 )
 
 MESSAGE = (
-    "CANDIDATE arc3-keith-yield900 v1 [flown 3.25/2.58 base (keithtyser V14 byte-copy, Flash-Next NVFP4, "
+    "CANDIDATE DRAW #2 arc3-keith-yield900 v1 [BYTE-IDENTICAL to sub 56080757 (draw 1); flown 3.25/2.58 base (keithtyser V14 byte-copy, Flash-Next NVFP4, "
     "profile kv5-bf16-mtp3-c8-cg32) + ONE knob: LOCAL_ANALYZER_YIELD_SECONDS 60 -> 900]. MECHANISM: live "
     "queued calls take ~145 s, so a 60 s turn budget ends every turn after one call and the analysis->act "
     "loop inside a turn never runs (1.02 calls/turn); at 900 s turns average 2.05-2.10 calls. Off-Kaggle "
@@ -339,6 +339,9 @@ def slot_already_used(day_start: datetime) -> bool:
         except ValueError:
             continue
         if made >= day_start:
+            if str(row.get("status") or "").lower() == "error":
+                log(f"ignoring ERRORED submission {row.get('ref')} at {raw} (Kaggle system error; slot refunded)")
+                continue
             log(f"found submission {row.get('ref')} at {raw} in the new UTC day")
             return True
     return False
