@@ -588,3 +588,11 @@ scored 3.25/2.58 before; no rerun log exists. The slot was refunded (submit acce
 the attested yield900 candidate flew a day early as 56080757 (draw 1 of the 3-draw rule; runner race
 guard now ignores errored rows). Score ~01:30Z 09-08. The 09-08 slot is free: draw 2 of the candidate
 (runner scripts/submit_keithyield900_20260908.py, restored to 00:01Z; re-arm after this read) or hold.
+
+## 31. 09-08 01:45 UTC — yield900 draw 1 scored **4.31** (best ever; base 3.25 / 2.58)
+
+Sub 56080757 → 4.31. Draw 1 of the pre-registered 3-draw rule (mean ≥ 4.0 = step, ≤ 3.6 = dead).
+Not a verdict alone (sd ≈ 0.55), but it is above every base draw and consistent with the rig's
++23–32% score gain (2.92 × 1.3 ≈ 3.8). Draw 2 fires 02:00Z (runner armed). If draws 2–3 hold ≥ 3.9
+the turn budget becomes the base and the mechanism (within-turn multi-call continuity) is the first
+original lever of the campaign to survive live.
