@@ -637,3 +637,5 @@ What is left is (a) levers that change what the model perceives or knows — the
 hypothesis block) were dead; (b) the model axis, blocked by the 96 GB box (Flash-Next loads at 81.8 GiB);
 (c) a different loop entirely; (d) the Sept-30 open-sourcing absorption. Live: yield900 draw 2 (sub
 56088705) pending at 10:15Z; draw 3 armed 09-09 02:00Z; 3-draw rule unchanged.
+
+**§33 addendum (11:15Z):** yield900 draw 2 = **2.45** (sub 56088705). Draws 4.31 / 2.45, mean 3.38; the step outcome (3-draw mean ≥ 4.0) would need ≥ 5.24 on draw 3 — unreachable — so the 4.31 reads as the tail draw the ledger predicted. Draw 3 stays armed for 09-09 02:00Z (runner restarted with the venv interpreter, pid 51806; message updated to state the draws and that it pools into the base family: 3.25 / 2.58 / 4.31 / 2.45, n=4 mean 3.15, sd 0.85). ≤ 4.04 on draw 3 = dead, revert to v4 (byte-copy) for base draws. Base family after draw 3 will be n=5. No live candidate exists; the next slot after 09-09 has no hypothesis — do not spend it on a routine redraw without a reason written first.

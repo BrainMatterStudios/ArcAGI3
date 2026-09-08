@@ -130,7 +130,7 @@ FORBIDDEN_MARKERS = (
 )
 
 MESSAGE = (
-    "CANDIDATE DRAW #3 arc3-keith-yield900 v1 [BYTE-IDENTICAL to subs 56080757 (draw 1, 4.31) and 56088705 (draw 2); flown 3.25/2.58 base (keithtyser V14 byte-copy, Flash-Next NVFP4, "
+    "CANDIDATE DRAW #3 (final under the 3-draw rule) arc3-keith-yield900 v1 [BYTE-IDENTICAL to subs 56080757 (draw 1, 4.31) and 56088705 (draw 2, 2.45); flown 3.25/2.58 base (keithtyser V14 byte-copy, Flash-Next NVFP4, "
     "profile kv5-bf16-mtp3-c8-cg32) + ONE knob: LOCAL_ANALYZER_YIELD_SECONDS 60 -> 900]. MECHANISM: live "
     "queued calls take ~145 s, so a 60 s turn budget ends every turn after one call and the analysis->act "
     "loop inside a turn never runs (1.02 calls/turn); at 900 s turns average 2.05-2.10 calls. Off-Kaggle "
@@ -139,7 +139,11 @@ MESSAGE = (
     "2. Commit attested: YIELD900 ATTEST line (import-time constant = 900), kv5 profile, 3.21x line, 0 "
     "restarts, 25/25 audit. READING RULE (pre-registered): base family 3.25 / 2.58 (sd ~0.55); THREE draws "
     "of this candidate: mean >= 4.0 = step (adopt as base); <= 3.6 = dead (revert to v4); between = two "
-    "more draws, decide at five with >= 3.9. A single draw is NOT a verdict."
+    "more draws, decide at five with >= 3.9. STATE BEFORE THIS DRAW: draws 4.31 / 2.45 (mean 3.38), so the "
+    "step outcome needs >= 5.24 here and is out of reach; the off-Kaggle loss ledger (75 vs 75 runs) already "
+    "read the knob as NULL on levels (118 = 118) and the 09-08 probe-discipline arm was engaged-but-flat. "
+    "This draw completes the pre-registered rule and pools into the base family (3.25 / 2.58 / 4.31 / 2.45): "
+    "<= 4.04 here = dead, revert to v4 for the next base draw. No new lever is claimed."
 )
 
 
