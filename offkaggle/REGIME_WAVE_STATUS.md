@@ -731,3 +731,37 @@ must be dropped, so the block is purely ADDITIVE and context fill matches or exc
 ≈ $3. Rule: ENGAGED (unchanged) AND levels >= 8 (the base) -> 25-game wave; <= 7 -> A1 is dead as a step on this brain
 and Track A moves to A2 (persistent workspace), which composes with the block rather than competing with it.
 A second, cheaper rider if that runs: keep the last 2 turns verbatim regardless of the target.
+
+## PRE-REGISTERED — `keith_carry` + `CARRY_TARGET_FRACTION=0.75` (variant kill test; written 2026-09-08 before launch)
+
+Single knob on the arm read above: 0.5 -> **0.75**. Everything else identical (same graft, same flags, same geometry,
+same games/draws), plus the 400-guard fix committed as 0538b5b (keep_last_user / no_user_after_trim /
+rebuilt_from_last_user), which only fires where the pre-fix build produced a failed call.
+
+WHY 0.75 AND NOT THE 0.85 FIRST PROPOSED: the diagnosis is context under-fill (47.7 % of budget vs the stock's 64 %),
+but the knob also sets how OFTEN compaction fires. At 0.85 each compaction drops only ~4.7k tokens ≈ one history block,
+so it would fire every 1-2 turns (~20-30 per run); at the live cadence (~150 s per queued call) that is ~47 % of the
+7,920 s game clock and fails fit-the-clock whatever it scores. At 0.75 each compaction drops ~7.9k ≈ 2-3 blocks and
+fires every ~2-3 turns (~12-15 per run, ~25 % of the live clock), while steady-state fill rises from ~50 % to ~87 % of
+budget. 0.75 is the largest fill increase that keeps the arm live-eligible.
+
+Launch: `--arm keith_carry --knob CARRY_TARGET_FRACTION=0.75 --games cd82,dc22,lf52 --draws 2 --concurrency 3
+--max-calls 60 --per-game-s 7920`, fresh boot, ≈ $3. Recorded as `knob_overrides` (NOT the pinned arm env).
+
+READS, locked before data:
+* ENGAGEMENT (unchanged): compactions ≥ 1/run, failures ≤ 10 % of attempts, 0 requests over 32,768, ≥ 40 % of calls
+  carry the block. Additionally CONFIRM THE KNOB BOUND: mean prompt tokens/call must rise above the 0.5 arm's 15,147
+  (target ≈ 20k, the stock band) and compactions/run must land in 10-18; outside that the knob did not do what the
+  arithmetic says and the level read is not interpretable.
+* PRIMARY: levels over 6 runs vs the same-geometry stock base **8** (cd82 1/1, dc22 2/2, lf52 1/1) and vs the 0.5 arm's
+  **6**. **≥ 8 → carry to the 25-game wave** (its own pre-registration above, gates ≥ 48 / 45-47 / ≤ 44, walls ≥ 3,
+  fit-the-clock). **≤ 7 → A1 is DEAD as a step on this brain**: two configurations of the same lever, both engaged,
+  neither above the base ⇒ Track A moves to A2 (persistent workspace), which composes with the block instead of
+  competing with it for the window. No third dose of this knob.
+* CO-PRIMARY (diagnostic, not a gate): dc22 L2, which the stock passes 4/4 in this queue-free geometry and the 0.5 arm
+  passed 0/2. If 0.75 restores dc22 to ≥ 1/2 while total levels stay ≤ 7, the recency-displacement diagnosis is
+  supported and the failure is the trade, not the block.
+* SAFETY: GAME_OVERs/run vs 0.87; live-cap score/game; per-run VOID rules unchanged (request errors, preemptions,
+  length-finish > 1 %) — 2 of 6 runs were VOID in the 0.5 arm, so read valid runs alongside the total.
+* FIT-THE-CLOCK (live-eligibility, reported even though this geometry is queue-free): compactions/run × 150 s +
+  play calls × 150 s must stay under 7,920 s in the live geometry.
