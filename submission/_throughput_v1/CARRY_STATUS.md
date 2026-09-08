@@ -14,7 +14,7 @@ Files (new unless marked; no stock byte edited — the runner still asserts the 
 | file | what |
 |---|---|
 | `submission/_throughput_v1/graft_carry.py` | the graft (`install()` -> `carry: OK`, `status()`), master flag `CARRY_ENABLE` |
-| `submission/_throughput_v1/test_graft_carry.py` | 12 tests (fake session + the REAL python sandbox; both bundles) |
+| `submission/_throughput_v1/test_graft_carry.py` | 13 tests (fake session + the REAL python sandbox; both bundles) |
 | `submission/_throughput_v1/dry_run_carry.py` | real-engine dry run (june_stock + pinned taaf + arcengine, vc33/ls20/sb26, 14k window) |
 | `offkaggle/run_regime_wave.py` (edited) | arm `keith_carry`, `[HARNESS CARRY]` extractor, `carry` telemetry + gate, 4 summary lines, mock compaction reply |
 | `offkaggle/test_run_regime_wave.py` (edited) | arm invariants, in-memory install, extractor on a CARRY transcript, `keith_carry` dry run end to end |
@@ -56,7 +56,7 @@ completion_tokens=<q> e2e_s=<t> ok=1|0 [err=<why>]` + `SUMMARY:` + the block.
 
 ## 2. Test results (2026-09-08)
 
-`test_graft_carry.py` — **12/12 on BOTH bundles** (june_stock and the anim bundle):
+`test_graft_carry.py` — **13/13 on BOTH bundles** (june_stock and the anim bundle):
 01 install/seams; 02 flag-off byte-identical to stock on a budget where the stock trimmer evicts (transcript bytes,
 request messages, persisted history; no `_carry` state, no post); 03 prior-turn reasoning is in the next request and
 measured (`[CARRY-CALL] … reasoning_msgs=1`); 04 compaction fires: payload has no tools, `enable_thinking` False,
@@ -66,7 +66,8 @@ marker + `SUMMARY:` in the transcript, token accounting includes the call; 05 ev
 20k-char reply is capped to `CARRY_SUMMARY_CHARS`; 06 failures (ConnectionError / HTTP 500 / empty) fall back to
 eviction, the turn still acts, later compactions recover; 07 skips (`small_drop`, `overflow_path`, `no_time`);
 08 a new game gets a fresh block; 09 exceptions inside the graft return the stock result; 10 status/env parsing;
-11 rendering of dropped turns (boilerplate stripped, caps); 12 window counters (`prompt_over_window`).
+11 rendering of dropped turns (boilerplate stripped, caps); 12 window counters (`prompt_over_window`);
+13 every returned request keeps a real user message (the 400 defect of §3b, stock behaviour + recovery).
 
 `dry_run_carry.py` (real engine, 3 games, 14k window) — **PASS 12/12**, 8 s: 90 calls, 28 compactions (9–10 per
 game), 0 failures; markers == graft counters == mock; one `[CARRY-CALL]` per call; compaction request had no tools,
@@ -74,10 +75,9 @@ thinking off, max_tokens 1500; the dropped turns' reasoning reached the compacto
 game saw `(none yet)`, the other 25 saw the previous block; the block rode 81 later requests, never duplicated; the
 stock estimate of every request ≤ budget (max 11,870 of 12,976); every request carried the retained reasoning.
 
-`offkaggle/test_run_regime_wave.py` — **29/30** (new: `test_carry_arm_installs_graft_in_memory`,
+`offkaggle/test_run_regime_wave.py` — **30/30** (new: `test_carry_arm_installs_graft_in_memory`,
 `test_extractor_reads_carry_markers`, `test_dry_run_keith_carry_arm_end_to_end`; the 30th,
-`test_game_overs_from_events_counts_compact_json`, is a pytest-fixture test that the script runner could not call —
-given a default in this commit). Runner dry run (`--arm keith_carry --knob LOCAL_ANALYZER_CONTEXT_WINDOW=9000
+`test_game_overs_from_events_counts_compact_json`, is a pytest fixture test given a default so the script runner can call it too). Runner dry run (`--arm keith_carry --knob LOCAL_ANALYZER_CONTEXT_WINDOW=9000
 --max-calls 14 --per-game-s 120`): 30 compactions / 3 games, ENGAGED = YES, the block in every prompt log.
 
 ## 3. Runner arm, telemetry and the reads
