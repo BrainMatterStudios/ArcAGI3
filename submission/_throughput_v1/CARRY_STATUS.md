@@ -94,6 +94,27 @@ the block, first block call #, reasoning msgs/chars carried per request), `CARRY
 **ENGAGEMENT** = compactions ≥ 1.0/game AND failures ≤ 10 % of attempts AND `prompt_tokens > 32768` never AND
 ≥ 40 % of calls carry the block.
 
+## 3b. Defect found in the first live run and fixed (2026-09-08, commit after the kill test)
+
+The kill test produced one `400 ... "No user query found in messages."` in 157 calls (lf52_p0, action 63). The
+chat template raises that when no `role == "user"` message survives a trim (tool results ride as `role: "tool"`
+and are rendered as `<tool_response>`, which the template explicitly does not count).
+
+**It is a stock defect, reproduced on the unmodified bundle with the graft never imported**: with one turn's own
+assistant+tool pairs over the budget (10 calls x 8k reasoning + 4k tool results), the stock drop loop plus
+`_drop_until_first_user_message` returns the system message alone. Prior stock waves never hit it (0 in 75 runs
+of three waves) because they average 1.0-2.1 calls/turn; this arm reaches it sooner because the system message
+now also carries the compacted block (~1.3-1.6k tokens of headroom).
+
+Fix (graft only; the stock bundle is untouched): (a) the drop-to-target loop stops before evicting the last real
+user message (`keep_last_user`); (b) every enabled-path return goes through a guard that, if no user message
+survived, re-trims with the stock-sized system message (`no_user_after_trim`) and, failing that, rebuilds the
+request as system-with-block + the turn's own user prompt (`rebuilt_from_last_user`). Verified on all three
+severities: a sendable request that keeps the block and fits the budget; the realistic path (8 calls, 4k
+reasoning) is unchanged. Regression test 13 in `test_graft_carry.py` asserts both the stock behaviour and the
+recovery. NOTE for reading the wave: this makes the arm differ from stock in a second, smaller way — it converts
+a request the stock would fail into a shorter valid one. It fires only where the stock would have 400'd.
+
 ## 4. Known limitations
 
 1. No game has been played against the real model; the block's QUALITY (does Flash-Next write a useful, honest
@@ -106,6 +127,10 @@ the block, first block call #, reasoning msgs/chars carried per request), `CARRY
 5. The retained user prompts still carry ~700 tokens of identical boilerplate each (~7k of the window); slimming
    history prompts is a separate rider, not part of this arm.
 6. Not stacked with any other graft.
+7. Block truncation: 1 of 12 compactions in the kill test hit BOTH caps at once (`summary_chars` 4,800 and
+   `completion_tokens` 1,500), so that block was cut mid-sentence and is fed forward as prior knowledge.
+   Median block is 3,921 chars, so this is an edge case; if it exceeds ~15 % in the wave, raise
+   `CARRY_COMPACT_MAX_TOKENS` as a separate single-knob change, not mid-arm.
 
 ## 5. Launch commands (NOT run; token read from `~/.config/arc3/vllm_token` into memory only)
 

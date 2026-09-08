@@ -61,7 +61,8 @@ reasoning_chars_total, prompt_tokens_total, prompt_tokens_max,
 prompt_over_window, compactions, compaction_failures, dropped_msgs_total,
 dropped_chars_total, summary_chars_total, compaction_prompt_tokens,
 compaction_completion_tokens, compaction_e2e_s, turns_total, per_game,
-errors, skips (small_drop, overflow_path, no_time, disabled_midway).
+errors, skips (small_drop, overflow_path, no_time, keep_last_user,
+no_user_after_trim).
 
 Conventions (graft_probe): module-level _STATE/_STOCK, install() rebinds
 ToolAgent methods only, fail-open try/except around every graft branch (an
@@ -473,6 +474,13 @@ def system_with_summary(base: str, summary: str) -> str:
     return f"{base}\n\n{SUMMARY_INTRO}\n{summary}"
 
 
+def has_user_message(messages: list[dict[str, Any]] | None) -> bool:
+    """The chat template raises `No user query found in messages.` unless at least one message has
+    role == "user" (tool results ride as role "tool" and are rendered as <tool_response>, which the
+    template explicitly does not count). Every request we hand back must satisfy this."""
+    return any(str(m.get("role", "")).strip() == "user" for m in messages or [])
+
+
 def summary_in_messages(messages: list[dict[str, Any]]) -> int:
     """Chars of the compacted block carried by the request's system message (0 when absent)."""
     try:
@@ -641,6 +649,34 @@ def install() -> str:
         if not enabled():
             return _STOCK["trim"](self, messages, tools=tools, preserve_recent=preserve_recent,
                                   extra_safety_tokens=extra_safety_tokens)
+
+        def stock(msgs):
+            return _STOCK["trim"](self, msgs, tools=tools, preserve_recent=preserve_recent,
+                                  extra_safety_tokens=extra_safety_tokens)
+
+        def guarded(msgs):
+            """Never hand back a request the template will reject with `No user query found in
+            messages.` (400). That state is reachable in the UNMODIFIED stock too — when one turn's
+            own assistant+tool pairs exceed the budget, the stock drop loop plus
+            _drop_until_first_user_message leaves the system message alone (reproduced on the stock
+            bundle at 10 calls x 8k reasoning) — but our system message carries the compacted block,
+            so we reach it sooner and must not convert a playable turn into a failed call.
+            Recovery, in order: (1) re-trim with the stock-sized system message (more headroom);
+            (2) keep the turn's own user prompt and drop the assistant/tool pairs."""
+            out = stock(msgs)
+            if has_user_message(out) or not has_user_message(messages):
+                return out
+            _skip("no_user_after_trim")
+            retry = stock(messages)
+            if has_user_message(retry):
+                return retry
+            last_user = next((m for m in reversed(messages) if str(m.get("role", "")).strip() == "user"), None)
+            if last_user is None:
+                return out
+            _skip("rebuilt_from_last_user")
+            head = out[0] if out else msgs[0]
+            return stock([head, last_user])
+
         st = getattr(self, "_carry", None)
         try:
             if st is None or not messages or str(messages[0].get("role", "")) != "system":
@@ -654,13 +690,11 @@ def install() -> str:
             work = [system, *history]
             if extra_safety_tokens and extra_safety_tokens > 0:
                 _skip("overflow_path")       # the server rejected the request as too long: evict fast, no extra call
-                return _STOCK["trim"](self, work, tools=tools, preserve_recent=preserve_recent,
-                                      extra_safety_tokens=extra_safety_tokens)
+                return guarded(work)
             budget = max(1, int(self._context_budget_tokens))
             est = self._estimate_request_input_tokens(work, tools=tools)
             if est <= budget:
-                return _STOCK["trim"](self, work, tools=tools, preserve_recent=preserve_recent,
-                                      extra_safety_tokens=extra_safety_tokens)
+                return guarded(work)
             target = int(budget * target_fraction())
             dropped: list[dict[str, Any]] = []
             keep = max(0, int(preserve_recent))
@@ -668,24 +702,25 @@ def install() -> str:
                 before = list(history)
                 if not self._drop_oldest_history_block(history, preserve_recent=keep):
                     break
+                if not has_user_message(history):
+                    history[:] = before      # dropping to the TARGET must not pass the last user message
+                    _skip("keep_last_user")  # (the stock only drops to the budget and never gets here)
+                    break
                 dropped.extend(before[: len(before) - len(history)])
                 est = self._estimate_request_input_tokens([system, *history], tools=tools)
             if len(dropped) < min_drop_msgs():
                 _skip("small_drop")
-                return _STOCK["trim"](self, work, tools=tools, preserve_recent=preserve_recent,
-                                      extra_safety_tokens=extra_safety_tokens)
+                return guarded(work)
             if st.request_timeout is not None and float(st.request_timeout) < MIN_TIME_FOR_COMPACTION_S:
                 _skip("no_time")             # the game is ending: eviction only
-                return _STOCK["trim"](self, [system, *history], tools=tools, preserve_recent=preserve_recent,
-                                      extra_safety_tokens=extra_safety_tokens)
+                return guarded([system, *history])
             new_summary, meta = _compact(self, agent_mod, st, dropped)
             _record_compaction(st, agent_mod, new_summary, meta)
             if new_summary is not None:
                 st.summary = new_summary
                 st.compactions += 1
                 system = {**messages[0], "content": system_with_summary(base, st.summary)}
-            return _STOCK["trim"](self, [system, *history], tools=tools, preserve_recent=preserve_recent,
-                                  extra_safety_tokens=extra_safety_tokens)
+            return guarded([system, *history])
         except Exception:  # noqa: BLE001
             _error()
             return _STOCK["trim"](self, messages, tools=tools, preserve_recent=preserve_recent,

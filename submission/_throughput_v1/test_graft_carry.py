@@ -556,6 +556,48 @@ class CarryTests(unittest.TestCase):
         self.assertEqual(cr.reasoning_stats([{"role": "assistant", "reasoning": "ab"}, {"role": "assistant", "reasoning_content": "c"},
                                              {"role": "assistant", "content": "x"}, {"role": "user", "reasoning": "zz"}]), (2, 3))
 
+    # ------------------------------- 13 every request keeps a real user message
+    def test_13_never_returns_a_request_without_a_user_message(self) -> None:
+        """The chat template answers 400 `No user query found in messages.` unless a role=="user"
+        message survives (tool results ride as role "tool"). The UNMODIFIED stock reaches that state
+        when one turn's own assistant+tool pairs exceed the budget; our bigger system message (it
+        carries the block) reaches it sooner, so the wrapper must recover. Live evidence: 1 such 400
+        in the 09-08 keith_carry kill test, 0 in three prior stock waves."""
+        def turn_messages(agent, n, rlen, tlen):
+            msgs = [{"role": "system", "content": agent._system_prompt},
+                    {"role": "user", "content": "Current state: step 5, level 1."}]
+            for i in range(n):
+                msgs.append({"role": "assistant", "content": None, "reasoning": "R" * rlen,
+                             "tool_calls": [_tool_call("print(1)", f"c{i}")]})
+                msgs.append({"role": "tool", "tool_call_id": f"c{i}", "content": "O" * tlen})
+            return msgs
+
+        # the stock defect, on the stock trimmer itself (no graft state involved)
+        stock_agent = self._agent()
+        heavy = turn_messages(stock_agent, 10, 8000, 4000)
+        stock_out = cr._STOCK["trim"](stock_agent, heavy, tools=None)
+        self.assertFalse(cr.has_user_message(stock_out))                    # documents the stock behaviour
+        # the graft recovers on every severity, keeps the block, and stays inside the budget
+        for n, rlen, tlen in ((8, 16000, 12000), (10, 8000, 4000), (8, 4000, 3000)):
+            agent = self._agent()
+            st = cr._cstate(agent, self.state_path)
+            st.game, st.summary, st.request_timeout = "tu93-test_p0", SUMMARY_TEXT + "Z" * 3000, None
+            msgs = turn_messages(agent, n, rlen, tlen)
+            with mock.patch.object(self.agent_mod.requests, "post", self._fake_post()):
+                out = agent._trim_messages_for_context(msgs, tools=None)
+            self.assertTrue(cr.has_user_message(out), (n, rlen, tlen))
+            self.assertLessEqual(agent._estimate_request_input_tokens(out, tools=None), agent._context_budget_tokens)
+            self.assertEqual(out[0]["role"], "system")
+            self.assertIn(cr.SUMMARY_INTRO, out[0]["content"])               # the block survives the recovery
+            self.assertEqual(out[-1]["role"] in ("user", "tool"), True)
+        skips = cr.status()["skips"]
+        self.assertGreaterEqual(skips.get("keep_last_user", 0), 1)           # the drop-to-target loop stopped in time
+        self.assertGreaterEqual(skips.get("rebuilt_from_last_user", 0), 1)   # the last-resort rebuild fired
+        self.assertEqual(cr.status()["errors"], 0)
+        # helper semantics: tool messages are NOT user queries
+        self.assertFalse(cr.has_user_message([{"role": "system"}, {"role": "tool"}, {"role": "assistant"}]))
+        self.assertTrue(cr.has_user_message([{"role": "tool"}, {"role": "user"}]))
+
     # ---------------------------------------------- 12 window counters
     def test_12_prompt_token_counters_and_over_window(self) -> None:
         os.environ["CARRY_WINDOW_TOKENS"] = "5000"
