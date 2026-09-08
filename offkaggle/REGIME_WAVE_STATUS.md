@@ -695,3 +695,39 @@ VOID rules unchanged (Modal container preemption; identity gate must print the k
 KV preemptions ~110–180 are a regime constant); first in a fresh boot. Judge's prior: the mechanism is the field's
 converged method (Astra provider adapter, Tufa's own unfinished lever), but the compactor here is Flash-Next with
 thinking off summarising itself; modal outcome unknown — this is the first read of the thesis on this brain.
+
+### RESULT 2026-09-08 — `keith_carry` kill test: ENGAGED, levels BELOW the bar → NO WAVE (pre-registered read)
+
+Wave `offkaggle/results/20260908T1843-keith_carry-kill` (fresh boot 20:43Z, identity ok: kv5 profile on RTX PRO 6000;
+0.70 h, ~$2.5). Geometry = the 09-06 3-wall instrument with the long clock (cd82/dc22/lf52, 2 draws, conc 3, 60 calls,
+7920 s), whose stock base read **8 levels / 6 runs** (cd82 1/1, dc22 2/2, lf52 1/1).
+
+**MECHANISM: ENGAGED = YES, on every condition, with room to spare.** 44 compactions (7.33/game — the predicted ~7),
+**0 failures of 44**, 0 requests over the 32,768 window (max 26,843), 287/360 calls (79.7 %) carried the block, first
+block at call #13 (median). Per compaction: 19.7 dropped messages, 30.7k input chars, **13.0 s**, 1,260 completion
+tokens, block 4,002 chars mean. Cost is negligible in this geometry (44 × 13 s over 6 runs vs 7,920 s/game).
+The blocks themselves are **high quality**: concrete verified mechanics with coordinates, refuted hypotheses, tried
+sequences (e.g. dc22 p1: "TOGGLE BLOCKED: clicking Blue T while the player stands on Solid Blue results in NO
+movement", "when Blue moves A->B the destination becomes Dithered (hole)", "GAME OVER occurred when the player was
+left on a dithered hole"). Knowledge capture is not the failure.
+
+**PRIMARY: 6 levels / 6 runs vs base 8 / 6 runs** — cd82 [2, 0] vs [1, 1], dc22 [1, 1] vs [2, 2], lf52 [1, 1] vs [1, 1].
+Pre-registered rule was "ENGAGED and levels >= 7 -> 25-game wave; ENGAGED but <= 6 -> stop and read the blocks before
+spending more". **6 => STOP. The 25-game wave is NOT launched.** (Per-run levels here are 0-2 and 2 of 6 runs are VOID
+by the standing rules — cd82_p0 length-finish 1.7 %, lf52_p0 request_errors 2 — so 6 vs 8 is inside this instrument's
+noise; the honest statement is "did not clear the bar", not "carry is worse". The one real regression worth naming:
+dc22's L2 wall, which the stock passes 4/4 in this queue-free geometry, was passed 0/2 here.)
+SAFETY was fine: GAME_OVERs 0.83/run (base 0.87), live-cap score 1.59/game, fit-the-clock 966 s + compactions of 7,920 s.
+
+**DIAGNOSIS (measured, and it is a design flaw in the arm, not in the mechanism):** the arm **under-fills the context
+window**. Mean prompt tokens per call: **carry 15,147 = 47.7 % of the 31,744 budget**, vs stock **20,286 (63.9 %)** in
+the 09-08 probe wave and **20,405 (64.3 %)** in the 09-07 yield900 wave. `CARRY_TARGET_FRACTION=0.5` drops to half the
+budget and refills, so the agent holds ~4 recent turns where the stock rolls ~10, and the block (~1.3k tokens) does not
+pay for the raw recency it displaces. The agent gained a good summary and lost about a quarter of its working context —
+a wash at best on games whose wall needs precise current state (dc22).
+
+**NEXT (not run; needs Ahmed's go on spend):** one single-knob variant `CARRY_TARGET_FRACTION=0.85` — compact only what
+must be dropped, so the block is purely ADDITIVE and context fill matches or exceeds the stock's 64 %. Same kill test,
+≈ $3. Rule: ENGAGED (unchanged) AND levels >= 8 (the base) -> 25-game wave; <= 7 -> A1 is dead as a step on this brain
+and Track A moves to A2 (persistent workspace), which composes with the block rather than competing with it.
+A second, cheaper rider if that runs: keep the last 2 turns verbatim regardless of the target.

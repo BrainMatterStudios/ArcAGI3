@@ -1,4 +1,10 @@
-# CARRY — compaction instead of eviction (Track A1, built 2026-09-08, NOT launched)
+# CARRY — compaction instead of eviction (Track A1, built 2026-09-08; kill test run 09-08: ENGAGED, below the level bar, NO WAVE)
+
+> **Result 2026-09-08:** mechanism fully engaged (44/44 compactions, 0 failures, 0 over-window, 79.7 % of calls
+> carry the block, 13 s each, blocks concrete and high quality) but **6 levels / 6 runs vs the base's 8** -> the
+> pre-registered rule says stop; the 25-game wave was NOT launched. Measured cause: the arm under-fills the window
+> (47.7 % of budget vs the stock's 64 %) because `CARRY_TARGET_FRACTION=0.5` trades raw recency for the block.
+> Proposed single-knob follow-up: `CARRY_TARGET_FRACTION=0.85`. Full read: `offkaggle/REGIME_WAVE_STATUS.md`.
 
 Plan: docs/PLAN-2026-09-08-revised-plan-to-7plus.md §6 A1 ("carry + compact"). Prerequisite read:
 docs/research-2026-09-08/R-reasoning-carriage-0908.md — **the "carry" half was already true**: the stock keeps

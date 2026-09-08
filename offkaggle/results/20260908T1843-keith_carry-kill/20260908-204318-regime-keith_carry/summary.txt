@@ -1,0 +1,27 @@
+REGIME WAVE  arm=keith_carry  status=done  dry_run=False  games=6  wall=0.70 h
+  endpoint https://a-m-mobasher--arc3-flashnext-serve.modal.run/v1  model Qwen/Qwen3.8-Flash-Next-NVFP4
+  IDENTITY profile 'kv5-bf16-mtp3-c8-cg32' (expected 'kv5-bf16-mtp3-c8-cg32', ok=True) | gpu ok=True ['0, NVIDIA RTX PRO 6000 Blackwell Server Edition, 97887 MiB, 580.95.05, 12.0']
+  geometry conc 3 | 7920 s/game | analyzer_timeout 900 | max_actions None | max_calls 60 | wave cap 9000 s | public25 geometry: False
+  stock agent sha 74ab69105240 (== june_stock pin) | framework f68b6850b242 | pkls pinned
+  ARM KNOB  CONTEXT_WINDOW=32768  MAX_OUTPUT=0  UPSCALE=4 ([256, 256] px, ~64 vision tok/img derived)  (yield 900 s, temp 0.6/0.95/20, thinking true); harness-reported {'max_output_tokens': 'server default', 'context_budget_tokens': '31744', 'yield_seconds': '900.0'}
+  SCORE 1.50 total | levels 6 (1.00/game) | actions 902 (150/game) | zero-level games 1 | states {'gave_up': 6}
+  CADENCE calls/game 60.0 | turns/game 34.5 | distinct steps/game 34.3 | actions/call 2.51 | calls/turn 1.74
+  REASONING chars/call mean 3671 median 2279 p90 8663 (n=360) | no-tool-call share 0.6% | length-finish share 0.3% | finish {'tool_calls': 358, 'length': 1, 'stop': 1}
+  TURNS step-executed 96.6% | yielded 2.9% | outcomes {'step_executed': 200, 'yielded': 6, 'request_error': 1}
+  CLIENT e2e/call mean 16.1 s median 12.2 s p90 29.4 s | prompt tok/call 15147 | completion tok/call 1382 | redirected posts 0 | post errors 1
+  VLLM   requests 404 | e2e mean 15.5 s | queue 0.0 s | inference 15.4 s | TPOT 10.0 ms | gen tok/req 1382 | gen tok/s 221 | MTP accept 59.7% | preemptions 0 | prefix hit - | finished {'abort': 0.0, 'error': 0.0, 'length': 10.0, 'repetition': 0.0, 'stop': 394.0}
+  REF keith V14 commit: 55 calls/game, reasoning 3406/2206, 53 turns/game, e2e 142 s, queue 124 s, MTP 60%, 1.44 lv/game, 6.76 pts
+  CARRY  compactions 44 (7.33/game; gate >= 1) in 6 runs | failures 0 (0.0% of 44 attempts; gate <= 10.0%) | per compaction: dropped msgs 19.7, input chars 30704, e2e 13.0 s, prompt tok 11843, completion tok 1260 | block chars mean 4002 (cap 4800) | ENGAGED = YES {compactions_per_game+, failure_share+, prompt_over_window+, calls_with_summary_share+} | grafts {'graft_carry': 'carry: OK'} | flags {'CARRY_ENABLE': '1', 'CARRY_TARGET_FRACTION': '0.5', 'CARRY_SUMMARY_CHARS': '4800', 'CARRY_INPUT_CHARS': '48000', 'CARRY_COMPACT_MAX_TOKENS': '1500', 'CARRY_COMPACT_THINKING': '0', 'CARRY_MIN_DROP_MSGS': '2'}
+  CARRY-WINDOW prompt tok/call (server usage via markers) mean 15551 max 26843 | over 32768: 0 (gate 0) | calls carrying the block 287/360 (79.7%; gate >= 40.0%) | first block at call #13 (median over 6 runs) | reasoning carried per request: 5.56 msgs, 15274 chars (stock behaviour, measured) | compactions/failures per run {'cd82-fb555c5d_p0': '7/0', 'cd82-fb555c5d_p1': '10/0', 'dc22-fdcac232_p0': '7/0', 'dc22-fdcac232_p1': '7/0', 'lf52-271a04aa_p0': '7/0', 'lf52-271a04aa_p1': '6/0'}
+  CARRY-PRIMARY levels 6 over 6 runs / 2 draw(s) = 3.0/draw vs pooled six-draw base 39.33 (sd 2.34) -> delta -36.3 (-15.53 sd; 25-game waves only; >= 48 step candidate, 45-47 redraw, <= 44 dead) | never-passed walls 0/12 passed [] (present in wave: 2; co-primary target >= 3)
+  CARRY-SAFETY GAME_OVERs 5 (0.83/run over 6 runs; yield900 base 0.87) | live-cap score 9.54 (1.59/game over 6 runs; yield900 base 8.42/game) | fit-the-clock: calls/game 60.0 x e2e 16.1 s = 966 s (+ compactions) vs 7920 s
+  WALL   attempts 1/6 (L2 reached 5; attempt = L2 with >= 30 calls left) | passes 1 (level 3 reached) | void 2 {'cd82-fb555c5d_p0': ['length_finish_share=0.017'], 'lf52-271a04aa_p0': ['request_errors=2']} | calls@L2 {'cd82-fb555c5d_p0': 40, 'cd82-fb555c5d_p1': None, 'dc22-fdcac232_p0': 54, 'dc22-fdcac232_p1': 58, 'lf52-271a04aa_p0': 12, 'lf52-271a04aa_p1': 14} | UPTAKE wall 0.0% (0/94) all 0.5%
+  FIRST-CALL prompt_tokens (n_messages==2) mean 4059 n=6 [4059..4060] | keith baseline ~4050 | delta +9 | UPSCALE=4: up8 expects ≈ +192 (+0 => processor downscaled = no-op; >> => geometry differs)
+  DRAWS 2 | levels per (game, draw): {'cd82-fb555c5d': [2, 0], 'dc22-fdcac232': [1, 1], 'lf52-271a04aa': [1, 1]}
+  run               lv/n    act  calls turns reas_mean  len%  notool%  e2e_s   score  retry probe wall/b  evid  hypo  wall%  upt%  c@L2 att void  state
+  cd82-fb555c5d_p0    2/6    155    60    37      3674   1.7%    1.7%   16.3    4.06    0/0   0/0   1.41     0     0   0.0%  0.0%    40   - VOID  gave_up
+  cd82-fb555c5d_p1    0/6    202    60    44      6012      -       -   20.1    0.00    0/0   0/0   3.67     0     0   0.0%  0.0%  None   -    -  gave_up
+  dc22-fdcac232_p0    1/6    177    60    38      3106      -       -   15.2    0.55    0/0   0/0   0.03     0     0   0.0%  0.0%    54   -    -  gave_up
+  dc22-fdcac232_p1    1/6    148    60    31      3059      -    1.7%   14.6    0.76    0/0   0/0   0.00     0     0   0.0%  0.0%    58   -    -  gave_up
+  lf52-271a04aa_p0   1/10     79    60    23      3902      -       -   18.2    1.82    0/0   0/0   0.80     0     0   0.0%  0.0%    12   - VOID  gave_up
+  lf52-271a04aa_p1   1/10    141    60    34      2271      -       -   12.0    1.82    0/0   0/0   1.52     0     0   0.0%  0.0%    14   Y    -  gave_up
