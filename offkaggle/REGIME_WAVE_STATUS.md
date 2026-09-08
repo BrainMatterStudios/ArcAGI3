@@ -583,3 +583,18 @@ POSITIVE, NOT A STEP (bar 48). It is the first lever in the campaign to replicat
 direction on two independent boots; it is a one-env-var change (LOCAL_ANALYZER_YIELD_SECONDS=900)
 on the flown v4. Live expectation if the +25% score transfers: ≈ 2.9 → 3.6, below the one-draw
 detectability threshold (+1.0). Decision on a slot is Ahmed's: EV-positive but unreadable live.
+
+## PRE-REGISTERED — arm `keith_probe` (harness-enforced probe discipline on the 900 s regime; written 09-08 before the build finished)
+
+Base for comparison: keith_yield900 rig draws 41 and 40 (25-game total sd across same-regime runs
+≈ 2–3 levels; pooled null vs the 60 s base per loss-ledger-3). Knob: graft_probe — after 2
+analysis-only python calls in a turn the harness REFUSES further analysis-only snippets (returns a
+tool result demanding a ≤5-action test), cap 2 refusals/turn; informational one-liner on the turn
+after a no-action turn. Everything else = keith_yield900. Run FIRST in a fresh session, live geometry.
+ENGAGEMENT: refusals ≥ 1 per game on average AND acting-call-after-refusal share ≥ 50% AND share of
+turns with ≥3 analysis-only calls < 5% (now 15%); if the model answers refusals with more
+non-acting calls or no-tool replies, the lever is "not engaged" regardless of levels.
+PRIMARY (levels, 25 games): ≥ 52 → step candidate (then a counterbalanced draw and ≥3 of the 12
+never-passed walls before any slot); 45–51 → positive, counterbalanced redraw; < 45 → dead.
+SECONDARY: wall actions/baseline median (now 0.72) — must rise toward ≥ 1.0 if the mechanism works;
+yields/draw; zero-level games; length-finish ≤ 1% per run (VOID rules as before).
