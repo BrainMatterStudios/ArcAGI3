@@ -596,3 +596,6 @@ Not a verdict alone (sd ≈ 0.55), but it is above every base draw and consisten
 +23–32% score gain (2.92 × 1.3 ≈ 3.8). Draw 2 fires 02:00Z (runner armed). If draws 2–3 hold ≥ 3.9
 the turn budget becomes the base and the mechanism (within-turn multi-call continuity) is the first
 original lever of the campaign to survive live.
+- 09-08 02:10Z: yield900 draw 2 submitted (sub 56088705, byte-identical to 56080757). Score ~11:15Z.
+  After it: draw 3 on 09-09 (arm from scripts/submit_keithyield900_20260908.py with dates/marker
+  bumped) unless Ahmed stops; then the 3-draw verdict.
