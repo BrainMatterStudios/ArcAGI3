@@ -599,14 +599,26 @@ never-passed walls before any slot); 45–51 → positive, counterbalanced redra
 SECONDARY: wall actions/baseline median (now 0.72) — must rise toward ≥ 1.0 if the mechanism works;
 yields/draw; zero-level games; length-finish ≤ 1% per run (VOID rules as before).
 
-### BUILT 2026-09-08 — `keith_probe` ready (not launched)
+### BUILT 2026-09-08 — `keith_probe` ready (not launched; judge SHIP-WITH-FIXES applied)
 
-Graft `submission/_throughput_v1/graft_probe.py` (11/11 tests on both bundles; real-engine dry run
-`dry_run_probe.py` PASS 10/10; runner suite 26/26). Arm = `keith_yield900` + `PROBE_ENABLE=1
-PROBE_MAX_ANALYSIS=2 PROBE_MAX_PROBE=5 PROBE_MAX_REFUSALS=2 PROBE_NOTE_LINES=3` (differs from
-keith_yield900 by exactly those keys; `PROBE_*` scrubbed for every other arm). Analysis-only = the
-harness's own `_ToolDispatchResult.step_executed` (payload); the pre-run refusal predicate is an AST read
-for an `action()` call. Telemetry: `PROBE` / `PROBE-WALL` summary lines with the pre-registered gate
-(`aggregate.probe.gate.engaged`), the ledger's call classes (A/X/E/N + R refused), wall actions/baseline
-(q7 definition, needs the offline engine's baselines), turn_time_budget yields per draw. Full report,
-exact refusal text, dry-run proof and the launch command: `submission/_throughput_v1/PROBE_STATUS.md`.
+Graft `submission/_throughput_v1/graft_probe.py` (14/14 tests on both bundles; real-engine dry run
+`dry_run_probe.py` PASS 16/16 with a compliant and a stubborn brain; runner suite 26/26). Arm =
+`keith_yield900` + `PROBE_ENABLE=1 PROBE_MAX_ANALYSIS=2 PROBE_MAX_PROBE=5 PROBE_MAX_REFUSALS=4
+PROBE_NOTE_LINES=3` (differs from keith_yield900 by exactly those keys; `PROBE_*` scrubbed for every
+other arm). Analysis-only = the harness's own `_ToolDispatchResult.step_executed` (payload); the pre-run
+refusal predicate is an AST read for an `action()` call. Counters are per SPAN: a no-action turn carries
+its analysis/refusal counts into the next turn on the same level (reset after an acting turn, a level
+change or a new game), so the 4-refusal cap bounds the span (stubborn brain: exactly 4 refusals per game
+over ~50 NOACT turns). GATE (judge amendment of the pre-registration above): refusals >= 1/game AND
+acted-after-FIRST-refusal >= 50 % (turn-ending refusals count as non-acting) AND wall actions/baseline
+median >= 0.9; secondary: spans with >= 3 executed analysis-only calls (leak split cap_lifted /
+dead_branch / unparsable) and yields/draw. PRIMARY: levels vs the pooled six-draw base 39.33 (sd 2.34)
++ co-primary walls passed among the 12 six-draw-never-passed walls (bp35 L2, dc22 L2, g50t L2, lf52 L2,
+lp85 L6, ls20 L2, r11l L3, sb26 L2, sp80 L2, tn36 L3, vc33 L4, wa30 L2). SAFETY: GAME_OVERs/run vs 0.87,
+live-cap score vs 8.42/game. Summary lines `PROBE` / `PROBE-2ND` / `PROBE-PRIMARY` / `PROBE-SAFETY`.
+READ (locked before launch, 09-08): PRIMARY levels >= 52 -> step candidate (counterbalanced redraw + >= 2 of the
+12 walls before any slot); 45-51 -> positive, counterbalanced redraw; < 45, or ENGAGED with levels inside
+39.33 +/- 2.34 -> dead. NOT ENGAGED -> the lever is unread regardless of levels (a mechanism failure, not a
+score). VOID rules unchanged (request errors > 0, preemptions > 0, length-finish > 1 %); first in a fresh boot.
+Judge's prior: weakly positive, +0 to +3 levels; the modal outcome is a null.
+Full report, exact refusal text, dry-run proof and the launch command: `submission/_throughput_v1/PROBE_STATUS.md`.

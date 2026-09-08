@@ -33,11 +33,12 @@ What runs (mirrors the public keithtyser V14 notebook cell by cell):
                        instead of 256 px: 256 vision tokens per image instead of 64)
       keith_probe    : keith_yield900 + graft_probe (harness-enforced probe
                        discipline: after PROBE_MAX_ANALYSIS=2 analysis-only python
-                       calls in a turn the next analysis-only snippet is refused
+                       calls in a span the next analysis-only snippet is refused
                        with a "run a <=5-action test" tool result, at most
-                       PROBE_MAX_REFUSALS=2 refusals per turn; one-line notice on
-                       the turn after a no-action turn), flags PROBE_ENABLE=1
-                       PROBE_MAX_ANALYSIS=2 PROBE_MAX_PROBE=5 PROBE_MAX_REFUSALS=2
+                       PROBE_MAX_REFUSALS=4 refusals per span — a span carries
+                       across no-action turns on the same level; one-line notice
+                       on the turn after a no-action turn), flags PROBE_ENABLE=1
+                       PROBE_MAX_ANALYSIS=2 PROBE_MAX_PROBE=5 PROBE_MAX_REFUSALS=4
                        PROBE_NOTE_LINES=3
   --draws N plays the selected games N times as independent runs in one wave
   (taaf Benchmark.n_passes; run stems <gid>_p0, <gid>_p1, ...); --per-game-s
@@ -205,7 +206,7 @@ KEITH_UP8_ENV = {**KEITH_ANALYZER_ENV, "MULTIMODAL_UPSCALE": "8"}
 # from keith_yield900 by exactly the PROBE_* keys. Pre-registration: offkaggle/REGIME_WAVE_STATUS.md.
 PROBE_ENV_KEYS = ("PROBE_ENABLE", "PROBE_MAX_ANALYSIS", "PROBE_MAX_PROBE", "PROBE_MAX_REFUSALS", "PROBE_NOTE_LINES")
 KEITH_PROBE_ENV = {**KEITH_YIELD900_ENV, "PROBE_ENABLE": "1", "PROBE_MAX_ANALYSIS": "2", "PROBE_MAX_PROBE": "5",
-                   "PROBE_MAX_REFUSALS": "2", "PROBE_NOTE_LINES": "3"}
+                   "PROBE_MAX_REFUSALS": "4", "PROBE_NOTE_LINES": "3"}
 ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV, "keith_yield900": KEITH_YIELD900_ENV,
            "keith_retry": KEITH_RETRY_ENV, "keith_evid": KEITH_EVID_ENV, "keith_hypo": KEITH_HYPO_ENV,
            "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV}
@@ -217,9 +218,57 @@ GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_", "PROBE_")     # every graft fl
 GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEYS
 # loss-ledger-3 reference reads for the PROBE gate (docs/research-2026-09-08/R-loss-ledger-3.md, yield900 regime)
 LEDGER3_REFERENCE = {"turns_ge3_analysis_share": 0.15, "wall_actions_ratio_median": 0.72, "yields_per_draw": "27-30",
-                     "analysis_call_share": 0.49}
-PROBE_GATE = {"refusals_per_game_min": 1.0, "acting_after_refusal_min": 0.5, "turns_ge3_analysis_max": 0.05,
-              "yields_per_draw_max": 20, "wall_actions_ratio_min": 1.0}
+                     "analysis_call_share": 0.49,
+                     # PRIMARY comparator: the six 25-game draws of the two regimes pooled (Y1 41, Y2 40, YK 37, M1 36,
+                     # M4 40, K 42; loss-ledger-3 NOTES Q1) — levels are a null between the regimes
+                     "base_levels_six_draws": [41, 40, 37, 36, 40, 42], "base_levels_mean": 39.33, "base_levels_sd": 2.34,
+                     # SAFETY comparators, yield900 regime (the arm's base): GAME_OVERs/run and live-cap score/game
+                     "game_overs_per_run": 0.87, "live_cap_score_per_game": 8.42}
+# the 12 games whose modal wall was never passed in any of the six draws (loss-ledger-3 NOTES Q1/q7): the co-primary
+# read is how many of these walls the arm passes (levels_completed >= wall level in any draw)
+NEVER6_WALLS = {"bp35": 2, "dc22": 2, "g50t": 2, "lf52": 2, "lp85": 6, "ls20": 2, "r11l": 3, "sb26": 2, "sp80": 2,
+                "tn36": 3, "vc33": 4, "wa30": 2}
+# pre-registered ENGAGEMENT gate (judge 09-08): refusals >= 1/game AND the very next call after the FIRST refusal
+# of a span acted >= 50 % (turn-ending refusals count as non-acting) AND wall actions/baseline median >= 0.9;
+# secondary: turns with >= 3 executed analysis-only calls (leak split) and turn_time_budget yields per draw
+PROBE_GATE = {"refusals_per_game_min": 1.0, "acted_after_first_refusal_min": 0.5, "wall_actions_ratio_min": 0.9,
+              "turns_ge3_analysis_max": 0.05, "yields_per_draw_max": 20}
+LIVE_CAP = 1.15
+
+
+def live_cap_score(baselines: list | None, actions_per_level: list | None, levels: int, cap: float = LIVE_CAP) -> float | None:
+    """loss-ledger-3 common.py score(): 100 * sum_{l<levels} (l+1) * min(cap, (b/a)^2) / sum(1..n) — the live
+    formula recomputed from the per-level action buckets; None when baselines are unavailable (submission mode)."""
+    if not baselines or actions_per_level is None:
+        return None
+    n = len(baselines)
+    if n == 0:
+        return None
+    total = sum(range(1, n + 1))
+    s = 0.0
+    for lv in range(min(int(levels or 0), n, len(actions_per_level))):
+        a, b = actions_per_level[lv], baselines[lv]
+        s += (lv + 1) * min(cap, (b / a) ** 2 if a else 0.0)
+    return 100.0 * s / total
+
+
+def game_overs_from_events(path: Path) -> int | None:
+    """GAME_OVERs of a run = action rows with game_over true in the harness's <stem>_events.jsonl (loss-ledger-3 q2)."""
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    n = 0
+    for line in text.splitlines():
+        if '"game_over": true' not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if rec.get("type") == "action" and rec.get("game_over") is True:
+            n += 1
+    return n
 GRAFT_DIR = REPO / "submission/_throughput_v1"
 RUNTIME_ENV_KEYS = ("LOCAL_ANALYZER_BASE_URL", "OPENAI_BASE_URL", "LOCAL_ANALYZER_API_KEY")
 
@@ -285,9 +334,18 @@ TELEMETRY_DEFINITIONS = {
              "is in probe.graft (per run) and aggregate.probe.graft; yields_turn_time_budget = turns whose status says "
              "turn_time_budget; wall_actions_ratio = actions_per_level[wall] / base_actions_per_level[wall] "
              "(loss-ledger-3 q7: 'wall-level actions/baseline', median 0.72 on yield900).",
-    "probe_gate": "pre-registered ENGAGEMENT (offkaggle/REGIME_WAVE_STATUS.md 09-08): refusals >= 1/game AND "
-                  "acting-after-refusal >= 50 % AND turns_ge3_analysis share < 5 %; ledger-3 secondary reads: "
-                  "turn_time_budget yields < 20/draw and wall actions/baseline median >= 1.0.",
+    "probe_gate": "ENGAGEMENT (judge 09-08): refusals >= 1/game AND acted_after_first_refusal share >= 50 % (graft "
+                  "counters: the very next call after the FIRST refusal of a span acted; a refusal that ended the turn is "
+                  "a non-acting follow-up) AND wall actions/baseline median >= 0.9; SECONDARY: turns_ge3_analysis (graft "
+                  "leak split: leak_cap_lifted = the leaking snippet had no action() and only the refusal cap let it run; "
+                  "leak_dead_branch = it contained an action() call but executed none; leak_unparsable) and "
+                  "turn_time_budget yields per draw. PRIMARY: levels vs the pooled six-draw base 39.3 (sd 2.34) and the "
+                  "co-primary 'walls passed among the 12 six-draw-never-passed walls' (NEVER6_WALLS). SAFETY: GAME_OVERs "
+                  "per run vs 0.87 (events.jsonl action rows with game_over) and live-cap score per game vs 8.42 "
+                  "(live_cap_score: min(1.15, (b/a)^2) level-weighted).",
+    "probe_span": "graft_probe counters are per SPAN: a turn that executed nothing carries its analysis/refusal counts "
+                  "into the next turn on the same level (carried_turns); the span resets after an acting turn, a level "
+                  "change or a new game.",
 }
 
 # ---------------------------------------------------------------------------
@@ -1026,17 +1084,31 @@ def parse_transcript(text: str) -> dict:
         t["analysis_before_act"] = before.count("A")
         t["nonacting_before_act"] = len(before)
         t["yield_turn_time_budget"] = any("turn_time_budget" in m for m in t["status_messages"])
-        # the next python call after a refusal, inside the turn: did it act (code-based)?
+        # the next python call after a refusal, inside the turn: did it act (code-based)? A refusal that was the
+        # turn's last call is a non-acting follow-up. first_* = the FIRST refusal of the turn only.
         after, acted = 0, 0
         pending = False
+        first_pending, first_of, first_acted = False, 0, 0
         for c in seq:
-            if pending and c["tool_call_count"] > 0:
-                after += 1
-                acted += bool(c["acts_code"] and not c["refused"])
-                pending = False
+            if c["tool_call_count"] > 0:
+                if pending:
+                    after += 1
+                    acted += bool(c["acts_code"] and not c["refused"])
+                    pending = False
+                if first_pending:
+                    first_of += 1
+                    first_acted += bool(c["acts_code"] and not c["refused"])
+                    first_pending = False
             if c["refused"]:
+                if first_of == 0 and not first_pending:
+                    first_pending = True
                 pending = True
+        if pending:
+            after += 1                       # turn-ending refusal: settled as non-acting
+        if first_pending:
+            first_of += 1
         t["calls_after_refusal"], t["acting_after_refusal"] = after, acted
+        t["first_refusal_followups"], t["acted_after_first_refusal"] = first_of, first_acted
     for t in turns:
         msgs = " | ".join(t["status_messages"])
         if "Step executed" in msgs:
@@ -1170,15 +1242,23 @@ def _stats(values: list[float]) -> dict:
             "p90": vs[min(len(vs) - 1, int(round(0.9 * (len(vs) - 1))))], "max": vs[-1], "sum": sum(vs)}
 
 
+_GRAFT_KEYS = ("refusals", "turns_with_refusal", "noact_turns", "carried_turns", "analysis_calls_total", "acting_calls_total",
+               "calls_after_refusal", "acting_calls_after_refusal", "first_refusal_followups", "acted_after_first_refusal",
+               "refusal_turn_ending", "turns_total", "turns_ge3_analysis", "leak_cap_lifted", "leak_dead_branch",
+               "leak_unparsable")
+
+
 def probe_reads(turns: list[dict], calls: list[dict], probe_markers: dict, *, actions_per_level: list | None,
                 baselines: list | None, levels_completed: int | None, number_of_levels: int | None,
-                graft_counters: dict | None = None) -> dict:
+                graft_counters: dict | None = None, game_overs: int | None = None) -> dict:
     """graft_probe mechanism reads for one run (TELEMETRY_DEFINITIONS['probe'])."""
     n_turns = len(turns)
     ge3 = sum(1 for t in turns if t.get("analysis_before_act", 0) >= 3)
     ge3_strict = sum(1 for t in turns if t.get("nonacting_before_act", 0) >= 3)
     after = sum(t.get("calls_after_refusal", 0) for t in turns)
     acted = sum(t.get("acting_after_refusal", 0) for t in turns)
+    first_of = sum(t.get("first_refusal_followups", 0) for t in turns)
+    first_acted = sum(t.get("acted_after_first_refusal", 0) for t in turns)
     types: dict[str, int] = {}
     for c in calls:
         types[c.get("ledger_type", "?")] = types.get(c.get("ledger_type", "?"), 0) + 1
@@ -1198,17 +1278,19 @@ def probe_reads(turns: list[dict], calls: list[dict], probe_markers: dict, *, ac
         "turns_ge3_analysis": {"turns": ge3, "of": n_turns, "share": _share(ge3, n_turns)},
         "turns_ge3_nonacting": {"turns": ge3_strict, "of": n_turns, "share": _share(ge3_strict, n_turns)},
         "acting_after_refusal": {"acted": acted, "of": after, "share": _share(acted, after)},
+        "acted_after_first_refusal": {"acted": first_acted, "of": first_of, "share": _share(first_acted, first_of)},
         "call_types": types,
         "analysis_call_share": _share(types.get("A", 0), len(calls)),
         "yields_turn_time_budget": sum(1 for t in turns if t.get("yield_turn_time_budget")),
         "wall_actions": wall_actions, "wall_baseline": wall_baseline, "wall_actions_ratio": ratio,
+        "game_overs": game_overs,
+        "live_cap_score": live_cap_score(baselines, actions_per_level, levels_completed or 0),
     }
     if graft_counters:
         g = graft_counters
-        out["graft"] = {k: g.get(k) for k in ("refusals", "turns_with_refusal", "noact_turns", "analysis_calls_total",
-                                                 "acting_calls_total", "calls_after_refusal", "acting_calls_after_refusal",
-                                                 "turns_total", "turns_ge3_analysis")}
-        out["graft"]["acting_after_refusal_share"] = _share(g.get("acting_calls_after_refusal", 0), g.get("calls_after_refusal", 0))
+        out["graft"] = {k: g.get(k) for k in _GRAFT_KEYS}
+        out["graft"]["acting_after_refusal_share"] = _share(g.get("acting_calls_after_refusal", 0) or 0, g.get("calls_after_refusal", 0) or 0)
+        out["graft"]["acted_after_first_refusal_share"] = _share(g.get("acted_after_first_refusal", 0) or 0, g.get("first_refusal_followups", 0) or 0)
     return out
 
 
@@ -1218,7 +1300,7 @@ def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None
                        levels_completed: int | None = None, number_of_levels: int | None = None,
                        calls_budget: int | None = None, wave_preemptions: float | None = None,
                        actions_per_level: list | None = None, baselines: list | None = None,
-                       graft_counters: dict | None = None) -> dict:
+                       graft_counters: dict | None = None, game_overs: int | None = None) -> dict:
     parsed = parse_transcript(transcript_text)
     calls, turns = parsed["calls"], parsed["turns"]
     turn_levels = [t["level"] for t in turns]
@@ -1268,7 +1350,7 @@ def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None
         "engagement": engagement(turns, wall_level),
         "probe": probe_reads(turns, calls, parsed["probe_markers"], actions_per_level=actions_per_level,
                              baselines=baselines, levels_completed=levels_completed, number_of_levels=number_of_levels,
-                             graft_counters=graft_counters),
+                             graft_counters=graft_counters, game_overs=game_overs),
     }
     client_errors = sum(1 for r in (shim_records or []) if r.get("error") or (r.get("status") or 0) >= 400)
     tel["wall"] = wall_reads(turns, wall_level=wall_level, levels_completed=levels_completed, calls_budget=calls_budget,
@@ -1362,46 +1444,77 @@ def _pooled_probe(games: list[dict]) -> dict:
     refusals = sum(p.get("refusals", 0) for p in ps)
     yields = sum(p.get("yields_turn_time_budget", 0) for p in ps)
     grafts = [p["graft"] for p in ps if p.get("graft")]
-    g_after = sum((g.get("calls_after_refusal") or 0) for g in grafts)
-    g_acted = sum((g.get("acting_calls_after_refusal") or 0) for g in grafts)
+
+    def gsum(key: str) -> int:
+        return sum(int(g.get(key) or 0) for g in grafts)
+
+    g_after, g_acted = gsum("calls_after_refusal"), gsum("acting_calls_after_refusal")
+    g_first_of, g_first_acted = gsum("first_refusal_followups"), gsum("acted_after_first_refusal")
+    g_ge3 = gsum("turns_ge3_analysis")
+    g_turns = gsum("turns_total")
+    gos = [p["game_overs"] for p in ps if p.get("game_overs") is not None]
+    scores = [p["live_cap_score"] for p in ps if p.get("live_cap_score") is not None]
+    levels_total = sum(int(g.get("levels_completed") or 0) for g in games)
+    # co-primary: the 12 six-draw-never-passed walls, passed = levels_completed >= wall level in any draw of that game
+    best: dict[str, int] = {}
+    for g in games:
+        short = str(g.get("game_id") or "").split("-", 1)[0]
+        if short in NEVER6_WALLS:
+            best[short] = max(best.get(short, 0), int(g.get("levels_completed") or 0))
+    walls_passed = sorted(s for s, lv in best.items() if lv >= NEVER6_WALLS[s])
     out = {
-        "refusals_total": refusals, "refusals_per_game": _div(refusals, n),
+        "refusals_total": refusals, "refusals_per_game": refusals / n,       # n >= 1 here (0 refusals is a real read, not None)
         "games_with_refusal": sum(1 for p in ps if p.get("refusals", 0) > 0),
         "noact_turns_total": sum(p.get("noact_turns", 0) for p in ps),
         "noact_notices_total": sum(p.get("noact_notices", 0) for p in ps),
         "turns_ge3_analysis": pooled("turns_ge3_analysis", "turns", "of"),
         "turns_ge3_nonacting": pooled("turns_ge3_nonacting", "turns", "of"),
         "acting_after_refusal": pooled("acting_after_refusal", "acted", "of"),
+        "acted_after_first_refusal": pooled("acted_after_first_refusal", "acted", "of"),
         "graft": {"runs": len(grafts), "calls_after_refusal": g_after, "acting_calls_after_refusal": g_acted,
                   "acting_after_refusal_share": _share(g_acted, g_after),
-                  "refusals": sum((g.get("refusals") or 0) for g in grafts),
-                  "turns_ge3_analysis": sum((g.get("turns_ge3_analysis") or 0) for g in grafts),
-                  "analysis_calls_total": sum((g.get("analysis_calls_total") or 0) for g in grafts),
-                  "acting_calls_total": sum((g.get("acting_calls_total") or 0) for g in grafts)},
+                  "first_refusal_followups": g_first_of, "acted_after_first_refusal": g_first_acted,
+                  "acted_after_first_refusal_share": _share(g_first_acted, g_first_of),
+                  "refusal_turn_ending": gsum("refusal_turn_ending"), "carried_turns": gsum("carried_turns"),
+                  "refusals": gsum("refusals"), "turns_total": g_turns,
+                  "turns_ge3_analysis": g_ge3, "turns_ge3_analysis_share": _share(g_ge3, g_turns),
+                  "leak_cap_lifted": gsum("leak_cap_lifted"), "leak_dead_branch": gsum("leak_dead_branch"),
+                  "leak_unparsable": gsum("leak_unparsable"),
+                  "analysis_calls_total": gsum("analysis_calls_total"), "acting_calls_total": gsum("acting_calls_total")},
         "call_types": types,
         "analysis_call_share": _share(types.get("A", 0), sum(types.values())),
-        "yields_turn_time_budget_total": yields, "draws": draws, "yields_per_draw": _div(yields, draws),
+        "yields_turn_time_budget_total": yields, "draws": draws, "yields_per_draw": yields / draws,
         "wall_actions_ratio": {"n": len(ratios), "median": statistics.median(ratios) if ratios else None,
                                "under_1x": sum(1 for r in ratios if r < 1.0)},
+        "primary": {"levels_total": levels_total, "levels_per_draw": (levels_total / draws) if n else None, "games": n, "draws": draws,
+                    "base_levels_mean": LEDGER3_REFERENCE["base_levels_mean"], "base_levels_sd": LEDGER3_REFERENCE["base_levels_sd"],
+                    "delta_vs_base": (levels_total / draws - LEDGER3_REFERENCE["base_levels_mean"]) if n else None,
+                    "walls_passed": walls_passed, "walls_passed_n": len(walls_passed), "walls_present": sorted(best),
+                    "walls_total": len(NEVER6_WALLS)},
+        "safety": {"game_overs_total": sum(gos), "game_overs_per_run": (sum(gos) / len(gos)) if gos else None,
+                   "game_overs_runs": len(gos), "base_game_overs_per_run": LEDGER3_REFERENCE["game_overs_per_run"],
+                   "live_cap_score_total": sum(scores), "live_cap_score_per_game": (sum(scores) / len(scores)) if scores else None,
+                   "live_cap_runs": len(scores), "base_live_cap_score_per_game": LEDGER3_REFERENCE["live_cap_score_per_game"]},
     }
-    after_share = out["graft"]["acting_after_refusal_share"]
-    if after_share is None:
-        after_share = out["acting_after_refusal"]["share"]
-    ge3 = out["turns_ge3_analysis"]["share"]
+    first_share = out["graft"]["acted_after_first_refusal_share"]
+    if first_share is None:
+        first_share = out["acted_after_first_refusal"]["share"]
+    ge3 = out["graft"]["turns_ge3_analysis_share"] if grafts else out["turns_ge3_analysis"]["share"]
     gate = {
         "refusals_per_game": {"value": out["refusals_per_game"], "min": PROBE_GATE["refusals_per_game_min"],
                               "ok": out["refusals_per_game"] is not None and out["refusals_per_game"] >= PROBE_GATE["refusals_per_game_min"]},
-        "acting_after_refusal": {"value": after_share, "min": PROBE_GATE["acting_after_refusal_min"],
-                                 "ok": after_share is not None and after_share >= PROBE_GATE["acting_after_refusal_min"]},
-        "turns_ge3_analysis": {"value": ge3, "max": PROBE_GATE["turns_ge3_analysis_max"],
-                               "ok": ge3 is not None and ge3 < PROBE_GATE["turns_ge3_analysis_max"]},
-        "yields_per_draw": {"value": out["yields_per_draw"], "max": PROBE_GATE["yields_per_draw_max"],
-                            "ok": out["yields_per_draw"] is not None and out["yields_per_draw"] < PROBE_GATE["yields_per_draw_max"]},
+        "acted_after_first_refusal": {"value": first_share, "min": PROBE_GATE["acted_after_first_refusal_min"],
+                                      "ok": first_share is not None and first_share >= PROBE_GATE["acted_after_first_refusal_min"]},
         "wall_actions_ratio": {"value": out["wall_actions_ratio"]["median"], "min": PROBE_GATE["wall_actions_ratio_min"],
                                "ok": (out["wall_actions_ratio"]["median"] is not None
                                       and out["wall_actions_ratio"]["median"] >= PROBE_GATE["wall_actions_ratio_min"])},
+        "turns_ge3_analysis": {"value": ge3, "max": PROBE_GATE["turns_ge3_analysis_max"], "secondary": True,
+                               "ok": ge3 is not None and ge3 < PROBE_GATE["turns_ge3_analysis_max"]},
+        "yields_per_draw": {"value": out["yields_per_draw"], "max": PROBE_GATE["yields_per_draw_max"], "secondary": True,
+                            "ok": out["yields_per_draw"] is not None and out["yields_per_draw"] < PROBE_GATE["yields_per_draw_max"]},
     }
-    gate["engaged"] = bool(gate["refusals_per_game"]["ok"] and gate["acting_after_refusal"]["ok"] and gate["turns_ge3_analysis"]["ok"])
+    gate["engaged"] = bool(gate["refusals_per_game"]["ok"] and gate["acted_after_first_refusal"]["ok"]
+                           and gate["wall_actions_ratio"]["ok"])
     out["gate"] = gate
     return out
 
@@ -1457,13 +1570,15 @@ def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: 
         row = rows_by_stem.get(stem, {})
         text = path.read_text(encoding="utf-8", errors="replace")
         recs = by_stem_shim.get(stem, [])
+        events_path = Path(transcripts_dir).parent / "artifacts" / f"{stem}_events.jsonl"
         tel = telemetry_for_game(text, actions_total=row.get("actions"),
                                  shim_records=recs, wallclock_s=row.get("wallclock_s"),
                                  levels_completed=row.get("levels_completed"),
                                  number_of_levels=row.get("number_of_levels"),
                                  calls_budget=calls_budget, wave_preemptions=wave_preemptions,
                                  actions_per_level=row.get("actions_per_level"), baselines=row.get("baselines"),
-                                 graft_counters=(graft_per_game or {}).get(stem))
+                                 graft_counters=(graft_per_game or {}).get(stem),
+                                 game_overs=game_overs_from_events(events_path) if events_path.is_file() else None)
         tel["game_id"] = gid
         tel["draw"] = draw
         tel["levels_completed"] = row.get("levels_completed")
@@ -1916,25 +2031,44 @@ def render_summary(result: dict, telemetry: dict) -> str:
     if "graft_probe" in installed or pb.get("refusals_total"):
         knobs = {k: env.get(k) for k in PROBE_ENV_KEYS if env.get(k) is not None}
         gate = pb.get("gate") or {}
-        ge3, ge3s, aar, gaar = (pb.get("turns_ge3_analysis") or {}), (pb.get("turns_ge3_nonacting") or {}), \
-            (pb.get("acting_after_refusal") or {}), (pb.get("graft") or {})
+        ge3, ge3s, aar, afr, gaar = (pb.get("turns_ge3_analysis") or {}), (pb.get("turns_ge3_nonacting") or {}), \
+            (pb.get("acting_after_refusal") or {}), (pb.get("acted_after_first_refusal") or {}), (pb.get("graft") or {})
         war = pb.get("wall_actions_ratio") or {}
+        pri = pb.get("primary") or {}
+        saf = pb.get("safety") or {}
         lines.append(
             f"  PROBE  refusals {pb.get('refusals_total')} ({_fmt(pb.get('refusals_per_game'), 2)}/game; gate >= {PROBE_GATE['refusals_per_game_min']:g}) "
-            f"games {pb.get('games_with_refusal')} | acting-after-refusal graft {gaar.get('acting_calls_after_refusal')}/{gaar.get('calls_after_refusal')} "
-            f"({_pct(gaar.get('acting_after_refusal_share'))}) transcript {aar.get('acted')}/{aar.get('of')} ({_pct(aar.get('share'))}; gate >= {_pct(PROBE_GATE['acting_after_refusal_min'])}) | "
-            f"turns >=3 analysis-only {ge3.get('turns')}/{ge3.get('of')} ({_pct(ge3.get('share'))}; gate < {_pct(PROBE_GATE['turns_ge3_analysis_max'])}, "
-            f"ledger-3 {_pct(LEDGER3_REFERENCE['turns_ge3_analysis_share'])}) strict incl. refused/errors {_pct(ge3s.get('share'))} | "
-            f"NOACT turns {pb.get('noact_turns_total')} (notices {pb.get('noact_notices_total')}) | "
-            f"call mix {pb.get('call_types')} analysis share {_pct(pb.get('analysis_call_share'))} (ledger-3 {_pct(LEDGER3_REFERENCE['analysis_call_share'])}) | "
+            f"games {pb.get('games_with_refusal')} | acted-after-FIRST-refusal graft {gaar.get('acted_after_first_refusal')}/{gaar.get('first_refusal_followups')} "
+            f"({_pct(gaar.get('acted_after_first_refusal_share'))}; gate >= {_pct(PROBE_GATE['acted_after_first_refusal_min'])}; turn-ending refusals "
+            f"{gaar.get('refusal_turn_ending')} count as non-acting) transcript {afr.get('acted')}/{afr.get('of')} ({_pct(afr.get('share'))}) | "
+            f"after ANY refusal graft {gaar.get('acting_calls_after_refusal')}/{gaar.get('calls_after_refusal')} ({_pct(gaar.get('acting_after_refusal_share'))}) "
+            f"transcript {aar.get('acted')}/{aar.get('of')} | wall actions/baseline median {_fmt(war.get('median'), 2)} (n={war.get('n')}, under 1x {war.get('under_1x')}; "
+            f"gate >= {PROBE_GATE['wall_actions_ratio_min']:g}, ledger-3 {LEDGER3_REFERENCE['wall_actions_ratio_median']}) | "
+            f"ENGAGED = {'YES' if gate.get('engaged') else 'NO'} "
+            f"{{{', '.join(k + ('+' if v.get('ok') else '-') for k, v in gate.items() if isinstance(v, dict) and not v.get('secondary'))}}} | "
             f"grafts {installed} | flags {knobs}")
         lines.append(
-            f"  PROBE-WALL actions/baseline median {_fmt(war.get('median'), 2)} (n={war.get('n')}, under 1x {war.get('under_1x')}; "
-            f"ledger-3 {LEDGER3_REFERENCE['wall_actions_ratio_median']}, target >= {PROBE_GATE['wall_actions_ratio_min']:g}) | "
-            f"turn_time_budget yields {pb.get('yields_turn_time_budget_total')} ({_fmt(pb.get('yields_per_draw'), 1)}/draw; "
-            f"ledger-3 {LEDGER3_REFERENCE['yields_per_draw']}, target < {PROBE_GATE['yields_per_draw_max']}) | "
-            f"ENGAGED (pre-registered: refusals, after-refusal, >=3-analysis) = {'YES' if gate.get('engaged') else 'NO'} "
-            f"{{{', '.join(k + ('+' if v.get('ok') else '-') for k, v in gate.items() if isinstance(v, dict))}}}")
+            f"  PROBE-2ND spans >=3 executed analysis-only (graft) {gaar.get('turns_ge3_analysis')}/{gaar.get('turns_total')} "
+            f"({_pct(gaar.get('turns_ge3_analysis_share'))}; target < {_pct(PROBE_GATE['turns_ge3_analysis_max'])}, ledger-3 "
+            f"{_pct(LEDGER3_REFERENCE['turns_ge3_analysis_share'])}) leak: cap_lifted {gaar.get('leak_cap_lifted')} dead_branch "
+            f"{gaar.get('leak_dead_branch')} unparsable {gaar.get('leak_unparsable')} | transcript turns >=3 A-class {ge3.get('turns')}/{ge3.get('of')} "
+            f"({_pct(ge3.get('share'))}) strict incl. refused/errors {_pct(ge3s.get('share'))} | carried turns {gaar.get('carried_turns')} | "
+            f"turn_time_budget yields {pb.get('yields_turn_time_budget_total')} ({_fmt(pb.get('yields_per_draw'), 1)}/draw; ledger-3 "
+            f"{LEDGER3_REFERENCE['yields_per_draw']}, target < {PROBE_GATE['yields_per_draw_max']}) | NOACT turns {pb.get('noact_turns_total')} "
+            f"(notices {pb.get('noact_notices_total')}) | call mix {pb.get('call_types')} analysis share {_pct(pb.get('analysis_call_share'))} "
+            f"(ledger-3 {_pct(LEDGER3_REFERENCE['analysis_call_share'])})")
+        delta = pri.get("delta_vs_base")
+        lines.append(
+            f"  PROBE-PRIMARY levels {pri.get('levels_total')} over {pri.get('games')} runs / {pri.get('draws')} draw(s) = "
+            f"{_fmt(pri.get('levels_per_draw'), 1)}/draw vs pooled six-draw base {pri.get('base_levels_mean')} (sd {pri.get('base_levels_sd')}) "
+            f"-> delta {('%+.1f' % delta) if delta is not None else '-'} "
+            f"({('%+.2f' % (delta / pri['base_levels_sd'])) if delta is not None else '-'} sd; 25-game waves only; >= 52 step candidate, 45-51 redraw, < 45 dead) | "
+            f"never-passed walls {pri.get('walls_passed_n')}/{pri.get('walls_total')} passed {pri.get('walls_passed')} "
+            f"(present in wave: {len(pri.get('walls_present') or [])}; co-primary target >= 3)")
+        lines.append(
+            f"  PROBE-SAFETY GAME_OVERs {saf.get('game_overs_total')} ({_fmt(saf.get('game_overs_per_run'), 2)}/run over {saf.get('game_overs_runs')} runs; "
+            f"yield900 base {saf.get('base_game_overs_per_run')}) | live-cap score {_fmt(saf.get('live_cap_score_total'), 2)} "
+            f"({_fmt(saf.get('live_cap_score_per_game'), 2)}/game over {saf.get('live_cap_runs')} runs; yield900 base {saf.get('base_live_cap_score_per_game')}/game)")
     w = agg.get("wall") or {}
     if w:
         per_l2 = {stem: (g.get("wall") or {}).get("calls_at_l2") for stem, g in sorted(telemetry.get("per_game", {}).items())}

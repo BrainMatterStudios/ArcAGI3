@@ -1,4 +1,4 @@
-"""Harness-enforced probe discipline (PROBE, 2026-09-08).
+"""Harness-enforced probe discipline (PROBE, 2026-09-08; judge fixes 09-08).
 
 Evidence (docs/research-2026-09-08/R-loss-ledger-3.md): under the 900 s turn
 budget turns average 2.05 calls but the analysis-only call share is unchanged
@@ -7,34 +7,31 @@ executed; ANALYSIS-PARALYSIS is 33% of stuck tails; wall-level exploration
 fell to 0.72x the human baseline. Appended prompt blocks are ignored (uptake
 < 8%, graft_hypo 0.8%), so the discipline is ENFORCED by the harness: the
 model can spend at most PROBE_MAX_ANALYSIS [2] analysis-only python calls per
-turn; the next snippet that would again execute no action is not run and gets
-a tool result demanding a <= PROBE_MAX_PROBE [5]-action test instead.
+turn-span; the next snippet that would again execute no action is not run and
+gets a tool result demanding a <= PROBE_MAX_PROBE [5]-action test instead.
 
 WHERE IT HOOKS (verified on the june_stock bundle, tool_agent.py):
   * ToolAgent.analyze(state_path, action_num, ..., transcript_path=,
-    analysis_step=) is one TURN. Its loop calls the model, dispatches every
-    tool call through _dispatch_tool -> _run_python_tool, and ends the turn
-    on the first dispatch whose `step_executed` is True (or on a 60/900 s
-    yield / stop). The wrapper resets the per-turn counters when a turn
-    starts and records a NOACT turn when it ends with step_executed False.
+    analysis_step=, should_stop=) is one TURN. Its loop calls the model,
+    dispatches every tool call through _dispatch_tool -> _run_python_tool,
+    and ends the turn on the first dispatch whose `step_executed` is True
+    (or on a 60/900 s yield / stop / tool-step cap).
   * ToolAgent._run_python_tool(state_path, arguments) -> _ToolDispatchResult
-    (content=JSON string the model reads as the tool message, step_executed).
-    The stock computes step_executed = any(item["executed"]) over the
-    sandbox's `action_results` (the per-action() payloads the solver's
-    step_env returned) — that is the PAYLOAD read of "did this snippet
-    execute a game action": an action() that failed (invalid action, error
-    payload, terminal state) has executed=False and counts as analysis-only,
-    exactly like a snippet that never called action(). The wrapper counts
-    analysis-only calls from this field; it never re-parses the code for the
-    count.
+    (content=JSON string the model reads, step_executed). The stock computes
+    step_executed = any(item["executed"]) over the sandbox's `action_results`
+    (the per-action() payloads the solver's step_env returned) — that is the
+    PAYLOAD read of "did this snippet execute a game action": an action()
+    that failed (invalid action, error payload, terminal state) has
+    executed=False and counts as analysis-only, exactly like a snippet that
+    never called action(). The wrapper counts analysis-only calls from this
+    field; it never re-parses the code for the count.
   * The REFUSAL must decide BEFORE the snippet runs (the refused snippet is
     not executed), so there is no payload yet: the pre-run predicate is a
     static read of the code — ast.parse, refuse iff the tree contains no
     Call whose func is the Name `action`. A snippet that mentions action()
     (even inside a branch that will not run) is always executed and then
     counted from its payload. A snippet that does not parse is left to the
-    stock syntax-error path (more useful to the model than a refusal) and
-    counts as analysis-only afterwards.
+    stock syntax-error path and counts as analysis-only afterwards.
   * The refusal result goes out the same way a python error does:
     _ToolDispatchResult(self._render_tool_payload({"tool": "python",
     "error": TEXT}, truncate_fields=("stdout", "error", "result")),
@@ -45,22 +42,35 @@ WHERE IT HOOKS (verified on the june_stock bundle, tool_agent.py):
   * ToolAgent._build_user_prompt: after a NOACT turn the next turn's prompt
     for the same game gets ONE informational line prepended (<= 160 chars).
 
+SPAN (judge fix): the analysis-only count and the refusal count are NOT reset
+by a turn that executed nothing. A turn that ends without an action (yield /
+tool-step cap / no tool call) carries its counters into the next turn on the
+SAME level of the same game; the counters reset only after a turn that
+executed an action, on a level change, or on a new game. So a model that
+answers refusals by yielding cannot buy a fresh analysis budget with a new
+turn; the refusal cap PROBE_MAX_REFUSALS [4] bounds the whole span.
+
 FLAGS (read at call time; PROBE_ENABLE=0 or the graft not installed = the
 stock bytes' behaviour, byte-identical transcript):
   PROBE_ENABLE [1 once installed], PROBE_MAX_ANALYSIS [2], PROBE_MAX_PROBE [5],
-  PROBE_MAX_REFUSALS [2] (after this many refusals in one turn the graft
-  stops refusing so a turn can never deadlock), PROBE_NOTE_LINES [3] (lines
-  of the carried note quoted in the refusal).
+  PROBE_MAX_REFUSALS [4] (after this many refusals in one span the graft stops
+  refusing so a span can never deadlock), PROBE_NOTE_LINES [3].
 
 TELEMETRY: transcript markers written with the harness's own
 _append_transcript_section under a "[HARNESS PROBE]" section —
   "[PROBE-REFUSE] game=<id> turn=<analysis_step> analysis_calls=<n> refusal=<k>/<max>"
-  "[PROBE-NOACT] game=<id> turn=<analysis_step> analysis_calls=<n> refusals=<k> reason=<yield|no_capture|…>"
-status(): refusals, turns_with_refusal, noact_turns, analysis_calls_total,
-acting_calls_total, calls_after_refusal, acting_calls_after_refusal (the key
-mechanism read: how often the very next python call after a refusal executed
-an action), turns_total, turns_ge3_analysis (turns whose EXECUTED
-analysis-only calls reached 3 = enforcement leaked), per_game, errors, skips.
+  "[PROBE-NOACT] game=<id> turn=<analysis_step> analysis_calls=<n> refusals=<k> reason=<yield|no_capture>"
+status(): refusals, turns_with_refusal, noact_turns, carried_turns,
+analysis_calls_total, acting_calls_total, calls_after_refusal,
+acting_calls_after_refusal (the very next python call after ANY refusal
+acted), first_refusal_followups / acted_after_first_refusal (the very next
+call after the FIRST refusal of a span acted; a refusal that ended the turn
+is a non-acting follow-up — the pre-registered gate read),
+refusal_turn_ending, turns_total, turns_ge3_analysis (spans whose EXECUTED
+analysis-only calls reached 3 = enforcement leaked) split into
+leak_cap_lifted (the leaking snippet had no action() call: only the refusal
+cap let it through), leak_dead_branch (the snippet contained an action()
+call but executed none) and leak_unparsable; per_game, errors, skips.
 
 Conventions: module-level _STATE/_STOCK, install() rebinds ToolAgent methods
 only, fail-open try/except around every graft branch (an exception returns
@@ -76,30 +86,22 @@ import threading
 from pathlib import Path
 from typing import Any
 
-_STATE: dict[str, Any] = {
-    "installed": False,
-    "refusals": 0,
-    "turns_with_refusal": 0,
-    "noact_turns": 0,
-    "analysis_calls_total": 0,
-    "acting_calls_total": 0,
-    "calls_after_refusal": 0,
-    "acting_calls_after_refusal": 0,
-    "turns_total": 0,
-    "turns_ge3_analysis": 0,
-    "errors": 0,
-    "skips": {},
-    "per_game": {},
-}
+_PER_GAME_KEYS = ("refusals", "turns_with_refusal", "noact_turns", "carried_turns", "analysis_calls_total",
+                  "acting_calls_total", "calls_after_refusal", "acting_calls_after_refusal",
+                  "first_refusal_followups", "acted_after_first_refusal", "refusal_turn_ending",
+                  "turns_total", "turns_ge3_analysis", "leak_cap_lifted", "leak_dead_branch", "leak_unparsable")
+_STATE: dict[str, Any] = {"installed": False, "errors": 0, "skips": {}, "per_game": {}}
+for _k in _PER_GAME_KEYS:
+    _STATE[_k] = 0
 _STOCK: dict[str, Any] = {}
 _LOCK = threading.Lock()
 _OFF = {"0", "false", "no", "off"}
 
 DEFAULT_MAX_ANALYSIS = 2
 DEFAULT_MAX_PROBE = 5
-DEFAULT_MAX_REFUSALS = 2
+DEFAULT_MAX_REFUSALS = 4
 DEFAULT_NOTE_LINES = 3
-LEAK_ANALYSIS_CALLS = 3          # a turn whose executed analysis-only calls reach this = enforcement leaked
+LEAK_ANALYSIS_CALLS = 3          # a span whose executed analysis-only calls reach this = enforcement leaked
 REFUSAL_CHARS = 900              # hard cap on the refusal text
 NOTE_LINE_CHARS = 140
 NOACT_LINE_CHARS = 160
@@ -115,8 +117,6 @@ REFUSAL_TEXT = (
 )
 NOACT_TEXT = "Previous turn executed no action after {n} analysis calls."
 _NO_NOTES = "(none recorded - state one now and test it)"
-_PER_GAME_KEYS = ("refusals", "turns_with_refusal", "noact_turns", "analysis_calls_total", "acting_calls_total",
-                  "calls_after_refusal", "acting_calls_after_refusal", "turns_total", "turns_ge3_analysis")
 
 
 # ----------------------------------------------------------------- flags ---
@@ -152,6 +152,10 @@ def note_lines() -> int:
     return _env_int("PROBE_NOTE_LINES", DEFAULT_NOTE_LINES, 0)
 
 
+def _share(a: int, b: int) -> float | None:
+    return None if not b else a / b
+
+
 def status() -> dict[str, Any]:
     with _LOCK:
         out = {
@@ -164,9 +168,8 @@ def status() -> dict[str, Any]:
         }
         for key in _PER_GAME_KEYS:
             out[key] = _STATE[key]
-        out["acting_after_refusal_share"] = (
-            _STATE["acting_calls_after_refusal"] / _STATE["calls_after_refusal"]
-            if _STATE["calls_after_refusal"] else None)
+        out["acting_after_refusal_share"] = _share(_STATE["acting_calls_after_refusal"], _STATE["calls_after_refusal"])
+        out["acted_after_first_refusal_share"] = _share(_STATE["acted_after_first_refusal"], _STATE["first_refusal_followups"])
         out["errors"] = _STATE["errors"]
         out["skips"] = dict(_STATE["skips"])
         out["per_game"] = {k: dict(v) for k, v in _STATE["per_game"].items()}
@@ -192,7 +195,7 @@ def _bump(game: str, key: str, n: int = 1) -> None:
 
 # ------------------------------------------------------------ per-game state ---
 class ProbeState:
-    """One per agent (= per game run). Turn fields reset on every analyze()."""
+    """One per agent (= per game run). Span counters survive NOACT turns on the same level."""
 
     def __init__(self) -> None:
         self.runtime_dir: Any = None
@@ -201,22 +204,34 @@ class ProbeState:
         self.agent_mod: Any = None
         self.turn: int = 0                 # analysis_step of the turn in flight (or a counter)
         self.in_turn: bool = False
-        # per-turn counters
+        self.level: Any = None             # level index the span belongs to
+        self.carry: bool = False           # the previous turn on this level executed nothing
+        # span counters (reset by reset_span)
         self.analysis_calls: int = 0       # executed python calls that executed no action
         self.acting_calls: int = 0
         self.refusals: int = 0
         self.after_refusal: bool = False   # the next python call is "the call after a refusal"
+        self.first_refusal_pending: bool = False   # the next call resolves acted_after_first_refusal
         self.leak_counted: bool = False
+        self.span_turns: int = 0
+        # per-turn flags
+        self.turn_had_refusal: bool = False
         # cross-turn
         self.noact_pending: dict[str, Any] | None = None
         self.turns_seen: int = 0
 
-    def reset_turn(self) -> None:
+    def reset_span(self) -> None:
         self.analysis_calls = 0
         self.acting_calls = 0
         self.refusals = 0
         self.after_refusal = False
+        self.first_refusal_pending = False
         self.leak_counted = False
+        self.span_turns = 0
+        self.carry = False
+
+    # kept for callers/tests that arm a fake turn
+    reset_turn = reset_span
 
 
 def _pstate(agent: Any, state_path: Any = None) -> ProbeState:
@@ -267,6 +282,23 @@ def _game_key(step_env: Any, transcript_path: Path | None, state_path: Any) -> s
         return Path(state_path).parent.name or "?"
     except Exception:  # noqa: BLE001
         return "?"
+
+
+def _level_of(step_env: Any, state_path: Any, agent_mod: Any) -> Any:
+    """The level in play: the live session's levels_completed (the same seam graft_retry reads),
+    else the runtime state's current frame level, else None (treated as 'same level')."""
+    sess = getattr(step_env, "__self__", None)
+    try:
+        return int(sess.game.current_state.levels_completed)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        frame, _ = agent_mod.load_runtime_state(Path(state_path))
+        if frame is not None:
+            return ("frame", int(frame.level))
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
 
 def _transcript_path(state_path: Any, kwargs: dict[str, Any]) -> Path | None:
@@ -362,6 +394,36 @@ def render_noact_line(info: dict[str, Any]) -> str:
     return line
 
 
+# ------------------------------------------------------------- span bookkeeping ---
+def _resolve_followups(st: ProbeState, acted: bool) -> None:
+    """A python call happened (or the turn ended, acted=False): settle the 'next call after a
+    refusal' reads that were pending."""
+    if st.after_refusal:
+        st.after_refusal = False
+        _bump(st.game, "calls_after_refusal")
+        if acted:
+            _bump(st.game, "acting_calls_after_refusal")
+    if st.first_refusal_pending:
+        st.first_refusal_pending = False
+        _bump(st.game, "first_refusal_followups")
+        if acted:
+            _bump(st.game, "acted_after_first_refusal")
+
+
+def _begin_turn(st: ProbeState, level: Any, step: Any) -> None:
+    st.turns_seen += 1
+    st.turn = int(step) if step is not None else st.turns_seen
+    st.turn_had_refusal = False
+    if st.carry and st.level == level:
+        st.span_turns += 1
+        _bump(st.game, "carried_turns")
+    else:
+        st.reset_span()
+        st.span_turns = 1
+    st.level = level
+    st.in_turn = True
+
+
 # --------------------------------------------------------------- install ---
 def install() -> str:
     if _STATE["installed"]:
@@ -393,11 +455,7 @@ def install() -> str:
                 st.agent_mod = agent_mod
                 st.transcript_path = _transcript_path(state_path, kwargs)
                 st.game = _game_key(step_env, kwargs.get("transcript_path"), state_path)
-                step = kwargs.get("analysis_step")
-                st.turns_seen += 1
-                st.turn = int(step) if step is not None else st.turns_seen
-                st.reset_turn()
-                st.in_turn = True
+                _begin_turn(st, _level_of(step_env, state_path, agent_mod), kwargs.get("analysis_step"))
             except Exception:  # noqa: BLE001
                 _error()
                 st = None
@@ -407,6 +465,8 @@ def install() -> str:
             try:
                 st.in_turn = False
                 _bump(st.game, "turns_total")
+                acted = bool(getattr(result, "step_executed", False)) if result is not None else False
+                retry = bool(getattr(result, "retryable_failure", False)) if result is not None else False
                 stopped = False
                 should_stop = kwargs.get("should_stop")
                 if should_stop is not None and getattr(result, "yielded_control", False):
@@ -414,14 +474,20 @@ def install() -> str:
                         stopped = bool(should_stop())      # the run is ending (stop_requested): not a NOACT turn
                     except Exception:  # noqa: BLE001
                         stopped = False
-                if stopped:
+                if st.after_refusal or st.first_refusal_pending:
+                    if not retry:
+                        _bump(st.game, "refusal_turn_ending")   # a refusal was the turn's last call
+                        _resolve_followups(st, acted=False)
+                if acted:
+                    st.reset_span()                      # an acting turn closes the span at once
+                elif stopped:
                     _skip("stop_requested")
-                elif result is not None and not getattr(result, "retryable_failure", False) \
-                        and not getattr(result, "step_executed", False):
+                elif result is not None and not retry:
                     reason = "yield" if getattr(result, "yielded_control", False) else "no_capture"
                     info = {"analysis_calls": st.analysis_calls, "refusals": st.refusals, "turn": st.turn,
                             "game": st.game, "reason": reason}
                     st.noact_pending = info
+                    st.carry = True
                     _bump(st.game, "noact_turns")
                     _write_marker(agent_mod, st.transcript_path,
                                   f"{NOACT_MARK} game={st.game} turn={st.turn} analysis_calls={st.analysis_calls} "
@@ -434,20 +500,21 @@ def install() -> str:
         st = getattr(self, "_probe", None) if enabled() else None
         if st is not None and not st.in_turn:
             st = None                      # a call outside analyze(): pure pass-through
+        verdict: bool | None = True
         # 1. refusal decision BEFORE the snippet runs
         if st is not None:
             try:
+                verdict = code_calls_action(str((arguments or {}).get("code", "") or ""))
                 if st.analysis_calls >= max_analysis() and st.refusals < max_refusals():
-                    code = str((arguments or {}).get("code", "") or "")
-                    verdict = code_calls_action(code)
                     if verdict is False:
-                        if st.after_refusal:
-                            # a refusal right after a refusal: the model's "next call" did not act
-                            _bump(st.game, "calls_after_refusal")
+                        _resolve_followups(st, acted=False)     # a refusal right after a refusal did not act
                         st.refusals += 1
                         st.after_refusal = True
-                        _bump(st.game, "refusals")
                         if st.refusals == 1:
+                            st.first_refusal_pending = True
+                        _bump(st.game, "refusals")
+                        if not st.turn_had_refusal:
+                            st.turn_had_refusal = True
                             _bump(st.game, "turns_with_refusal")
                         _write_marker(agent_mod, st.transcript_path,
                                       f"{REFUSE_MARK} game={st.game} turn={st.turn} analysis_calls={st.analysis_calls} "
@@ -458,8 +525,8 @@ def install() -> str:
                         return dispatch_cls(content, step_executed=False)
                     if verdict is None:
                         _skip("unparsable_code")
-                elif st.analysis_calls >= max_analysis() and st.refusals >= max_refusals():
-                    _skip("refusal_cap")
+                elif verdict is False and st.analysis_calls >= max_analysis() and st.refusals >= max_refusals():
+                    _skip("refusal_cap")             # would have been refused; the cap lets it run
             except Exception:  # noqa: BLE001
                 _error()
         # 2. the stock call (the snippet runs)
@@ -468,11 +535,7 @@ def install() -> str:
         if st is not None:
             try:
                 acted = bool(getattr(result, "step_executed", False))
-                if st.after_refusal:
-                    st.after_refusal = False
-                    _bump(st.game, "calls_after_refusal")
-                    if acted:
-                        _bump(st.game, "acting_calls_after_refusal")
+                _resolve_followups(st, acted)
                 if acted:
                     st.acting_calls += 1
                     _bump(st.game, "acting_calls_total")
@@ -482,6 +545,12 @@ def install() -> str:
                     if st.analysis_calls >= LEAK_ANALYSIS_CALLS and not st.leak_counted:
                         st.leak_counted = True
                         _bump(st.game, "turns_ge3_analysis")
+                        if verdict is True:
+                            _bump(st.game, "leak_dead_branch")      # had an action() call, executed none
+                        elif verdict is None:
+                            _bump(st.game, "leak_unparsable")
+                        else:
+                            _bump(st.game, "leak_cap_lifted")       # would have been refused but for the cap
             except Exception:  # noqa: BLE001
                 _error()
         return result

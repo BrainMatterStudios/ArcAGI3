@@ -64,10 +64,13 @@ class _FakeSession:
         self.runtime_mod = runtime_mod
         self.state_path = state_path
         self.game = types.SimpleNamespace(game_run=types.SimpleNamespace(game_id=game_id, state="playing"),
-                                          current_state=types.SimpleNamespace(won=False))
+                                          current_state=types.SimpleNamespace(won=False, levels_completed=0))
         self.history_entries = [runtime_mod.HistoryEntry(action="", frame=runtime_mod.Frame(grid=_GRID, step=0, level=1))]
         self.executed: list[str] = []
         self._write()
+
+    def advance_level(self):
+        self.game.current_state.levels_completed += 1
 
     def _write(self):
         self.runtime_mod.write_runtime_state(self.state_path, current_frame=self.history_entries[-1].frame,
@@ -143,7 +146,8 @@ class ProbeTests(unittest.TestCase):
         st.transcript_path = self.transcript
         st.game = "tu93-test_p0"
         st.turn = turn
-        st.reset_turn()
+        st.reset_span()
+        st.level = 0
         st.in_turn = True
         agent._ensure_session(self.state_path)
         agent._step_env_callback = sess.step_env
@@ -250,6 +254,28 @@ class ProbeTests(unittest.TestCase):
         s = pr.status()
         self.assertEqual((s["analysis_calls_total"], s["acting_calls_total"], s["refusals"]), (3, 1, 0))
         self.assertEqual(s["turns_ge3_analysis"], 1)                   # 3 executed analysis-only calls = a leak
+        # the leaking (3rd) snippet had no action() call and refusing was off (budget 9): cap_lifted bucket
+        self.assertEqual((s["leak_cap_lifted"], s["leak_dead_branch"], s["leak_unparsable"]), (1, 0, 0))
+        # dead-branch leak: the 3rd analysis-only call CONTAINED an action() call that did not execute
+        _clear()
+        _reset_counters()
+        st = self._open_turn(agent, sess, turn=2)
+        self._run(agent, A_CODE)
+        self._run(agent, A_CODE)
+        r = self._run(agent, "if False:\n    action(['UP'])\nprint('dead branch')\n")
+        self.assertFalse(r.step_executed)
+        self.assertIn("dead branch", r.content)                        # ran (never refused: it calls action())
+        s = pr.status()
+        self.assertEqual((s["refusals"], s["turns_ge3_analysis"], s["leak_dead_branch"], s["leak_cap_lifted"]), (0, 1, 1, 0))
+        # unparsable leak
+        _reset_counters()
+        st = self._open_turn(agent, sess, turn=3)
+        self._run(agent, A_CODE)
+        self._run(agent, A_CODE)
+        r = self._run(agent, "def broken(:\n")
+        self.assertIn("syntax error", r.content.lower())
+        s = pr.status()
+        self.assertEqual((s["refusals"], s["leak_unparsable"], s["skips"].get("unparsable_code")), (0, 1, 1))
         # the static predicate used BEFORE running
         self.assertIs(pr.code_calls_action(A_CODE), False)
         self.assertIs(pr.code_calls_action(X_CODE), True)
@@ -287,7 +313,7 @@ class ProbeTests(unittest.TestCase):
         self.assertIn("\n- Is the red bar a timer", text)
         self.assertIn("\n- maybe the key must be carried to the exit", text)
         self.assertEqual(self.transcript.read_text().count(
-            "[HARNESS PROBE]\n[PROBE-REFUSE] game=tu93-test_p0 turn=1 analysis_calls=2 refusal=1/2\n"), 1)
+            "[HARNESS PROBE]\n[PROBE-REFUSE] game=tu93-test_p0 turn=1 analysis_calls=2 refusal=1/4\n"), 1)
         # the transcript display of an error-only payload is the bare text (stock _render_tool_result_display)
         self.assertEqual(self.agent_mod._render_tool_result_display(r3.content), text)
         # a 3rd call that DOES call action() is never refused
@@ -298,6 +324,8 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual((s["refusals"], s["turns_with_refusal"], s["calls_after_refusal"], s["acting_calls_after_refusal"]),
                          (1, 1, 1, 1))
         self.assertEqual(s["acting_after_refusal_share"], 1.0)
+        self.assertEqual((s["first_refusal_followups"], s["acted_after_first_refusal"]), (1, 1))
+        self.assertEqual(s["acted_after_first_refusal_share"], 1.0)
         self.assertEqual((st.analysis_calls, st.acting_calls), (2, 1))  # a refused call is not an executed analysis call
 
     # --------------------------------------------------------- 05 deadlock cap
@@ -307,31 +335,41 @@ class ProbeTests(unittest.TestCase):
         st = self._open_turn(agent, sess)
         self._run(agent, A_CODE)
         self._run(agent, A_CODE)
-        r3 = self._run(agent, A_SENTINEL)
-        r4 = self._run(agent, A_SENTINEL)
-        self.assertIn("Analysis budget", r3.content)
-        self.assertIn("Analysis budget", r4.content)
-        self.assertEqual(st.refusals, 2)
-        r5 = self._run(agent, "print('FIFTH RAN')\n")                  # cap reached: the stock loop proceeds
-        self.assertNotIn("Analysis budget", r5.content)
-        self.assertIn("FIFTH RAN", r5.content)
-        self.assertEqual(st.refusals, 2)
+        for i in range(4):                                             # default cap 4
+            r = self._run(agent, A_SENTINEL)
+            self.assertIn("Analysis budget", r.content, i)
+            self.assertNotIn("SENTINEL", r.content)
+        self.assertEqual(st.refusals, 4)
+        r7 = self._run(agent, "print('SEVENTH RAN')\n")                # cap reached: the stock loop proceeds
+        self.assertNotIn("Analysis budget", r7.content)
+        self.assertIn("SEVENTH RAN", r7.content)
+        self.assertEqual(st.refusals, 4)
         s = pr.status()
         self.assertEqual(s["skips"].get("refusal_cap"), 1)
-        self.assertEqual(s["refusals"], 2)
+        self.assertEqual(s["refusals"], 4)
         self.assertEqual(s["turns_with_refusal"], 1)                   # counted once per turn
-        self.assertEqual((s["calls_after_refusal"], s["acting_calls_after_refusal"]), (2, 0))
-        self.assertEqual(s["turns_ge3_analysis"], 1)                   # the 5th call = 3rd executed analysis-only
-        self.assertEqual(self.transcript.read_text().count("[PROBE-REFUSE]"), 2)
-        self.assertIn("refusal=2/2", self.transcript.read_text())
+        self.assertEqual((s["calls_after_refusal"], s["acting_calls_after_refusal"]), (4, 0))
+        self.assertEqual((s["first_refusal_followups"], s["acted_after_first_refusal"]), (1, 0))   # R after the first R
+        self.assertEqual(s["turns_ge3_analysis"], 1)                   # the 7th call = 3rd executed analysis-only
+        self.assertEqual((s["leak_cap_lifted"], s["leak_dead_branch"]), (1, 0))
+        self.assertEqual(self.transcript.read_text().count("[PROBE-REFUSE]"), 4)
+        self.assertIn("refusal=4/4", self.transcript.read_text())
         # PROBE_MAX_REFUSALS=0 disables refusing entirely; PROBE_MAX_ANALYSIS=0 refuses the very first analysis call
         os.environ["PROBE_MAX_REFUSALS"] = "0"
         st = self._open_turn(agent, sess, turn=2)
         for _ in range(4):
             self.assertNotIn("Analysis budget", self._run(agent, A_CODE).content)
         os.environ["PROBE_MAX_REFUSALS"] = "2"
-        os.environ["PROBE_MAX_ANALYSIS"] = "0"
         st = self._open_turn(agent, sess, turn=3)
+        self._run(agent, A_CODE)
+        self._run(agent, A_CODE)
+        self._run(agent, A_SENTINEL)
+        self._run(agent, A_SENTINEL)
+        self.assertEqual(st.refusals, 2)
+        self.assertIn("RAN", self._run(agent, "print('RAN')\n").content)   # the configured cap (2) lifts
+        os.environ["PROBE_MAX_REFUSALS"] = "4"
+        os.environ["PROBE_MAX_ANALYSIS"] = "0"
+        st = self._open_turn(agent, sess, turn=4)
         self.assertIn("Analysis budget for this turn is spent (0 analysis-only calls)", self._run(agent, A_CODE).content)
         self.assertEqual(st.refusals, 1)
 
@@ -361,7 +399,7 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(text.count("[PROBE-REFUSE]"), 1)
         # order in the file: the refused TOOL CALL, the marker, then the TOOL RESULT carrying the text
         i_call = text.index("SENTINEL-MUST-NOT-RUN")
-        i_mark = text.index("[HARNESS PROBE]\n[PROBE-REFUSE] game=tu93-test_p0 turn=1 analysis_calls=2 refusal=1/2")
+        i_mark = text.index("[HARNESS PROBE]\n[PROBE-REFUSE] game=tu93-test_p0 turn=1 analysis_calls=2 refusal=1/4")
         i_res = text.index("[TOOL RESULT: python]\nAnalysis budget for this turn is spent (2 analysis-only calls).")
         self.assertLess(i_call, i_mark)
         self.assertLess(i_mark, i_res)
@@ -389,6 +427,7 @@ class ProbeTests(unittest.TestCase):
         s = pr.status()
         self.assertEqual((s["refusals"], s["turns_total"], s["analysis_calls_total"]), (1, 2, 4))
         self.assertEqual(s["per_game"]["tu93-test_p0"]["refusals"], 1)   # keyed by the run stem
+        self.assertEqual((s["carried_turns"], s["refusal_turn_ending"]), (0, 0))
 
     # --------------------------------------------- 07 NOACT line once, next turn
     def test_07_noact_prefix_once_on_the_next_turn_only(self) -> None:
@@ -459,8 +498,12 @@ class ProbeTests(unittest.TestCase):
                     "calls_after_refusal", "acting_calls_after_refusal", "turns_total", "turns_ge3_analysis",
                     "acting_after_refusal_share", "errors", "skips", "per_game"):
             self.assertIn(key, s)
-        self.assertEqual((s["max_analysis"], s["max_probe"], s["max_refusals"], s["note_lines"]), (2, 5, 2, 3))
+        for key in ("carried_turns", "first_refusal_followups", "acted_after_first_refusal", "acted_after_first_refusal_share",
+                    "refusal_turn_ending", "leak_cap_lifted", "leak_dead_branch", "leak_unparsable"):
+            self.assertIn(key, s)
+        self.assertEqual((s["max_analysis"], s["max_probe"], s["max_refusals"], s["note_lines"]), (2, 5, 4, 3))
         self.assertIsNone(s["acting_after_refusal_share"])
+        self.assertIsNone(s["acted_after_first_refusal_share"])
         os.environ.update({"PROBE_MAX_ANALYSIS": "garbage", "PROBE_MAX_PROBE": "3", "PROBE_MAX_REFUSALS": "-4",
                            "PROBE_NOTE_LINES": "1"})
         s = pr.status()
@@ -473,7 +516,9 @@ class ProbeTests(unittest.TestCase):
             self._run(agent, code)
         s = pr.status()
         pg = s["per_game"]["tu93-test_p0"]
+        self.assertEqual(set(pg), set(pr._PER_GAME_KEYS))
         self.assertEqual(pg["refusals"], 1)
+        self.assertEqual(pg["acted_after_first_refusal"], 1)
         self.assertEqual(pg["acting_calls_after_refusal"], 1)
         self.assertEqual(pg["analysis_calls_total"], 2)
         self.assertEqual(s["acting_after_refusal_share"], 1.0)
@@ -527,7 +572,8 @@ class ProbeTests(unittest.TestCase):
         sess = self._session()
         self._analyze(agent, sess, [self._reply(A_CODE, "c1"), self._reply(A_CODE, "c2"), self._reply(A_CODE, "c3"),
                                     self._reply(X_CODE, "c4")], step=1)
-        self.assertEqual(agent._probe.refusals, 1)
+        self.assertEqual(pr.status()["refusals"], 1)
+        self.assertEqual(agent._probe.refusals, 0)                     # the acting turn closed the span
         other_state = self.root / "artifacts2" / "vc33-test_p0_state.json"
         other_state.parent.mkdir()
         other_tr = self.root / "transcripts" / "vc33-test_p0.txt"
@@ -541,6 +587,124 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(agent._probe.refusals, 0)
         self.assertIn("[PROBE-NOACT] game=vc33-test_p0 turn=1 analysis_calls=1", other_tr.read_text())
         self.assertEqual(set(pr.status()["per_game"]), {"tu93-test_p0", "vc33-test_p0"})
+
+    # ------------------------------------ 12 carry across NOACT turns on the same level
+    def test_12_counters_carry_across_noact_turns_on_the_same_level(self) -> None:
+        """Turn 1 = A A (tool-step cap, no action) -> NOACT. Turn 2 on the same level does NOT get a
+        fresh budget: its first analysis-only snippet is refused at once. An acting turn resets."""
+        agent = self._agent()
+        agent._tool_steps = 2
+        sess = self._session()
+        res = self._analyze(agent, sess, [self._reply(A_CODE, "c1"), self._reply(A_CODE, "c2")], step=1)
+        self.assertFalse(res.step_executed)
+        self.assertTrue(agent._probe.carry)
+        self.assertEqual(agent._probe.analysis_calls, 2)
+        agent._tool_steps = None
+        res = self._analyze(agent, sess, [self._reply(A_SENTINEL, "d1"), self._reply(X_CODE, "d2")], step=2)
+        self.assertTrue(res.step_executed)
+        text = self.transcript.read_text()
+        self.assertIn("[PROBE-REFUSE] game=tu93-test_p0 turn=2 analysis_calls=2 refusal=1/4", text)   # carried: 2 already spent
+        self.assertNotIn("[TOOL RESULT: python]\nSENTINEL", text)
+        self.assertIn("[USER PROMPT]\nPrevious turn executed no action after 2 analysis calls.\n", text)
+        s = pr.status()
+        self.assertEqual((s["carried_turns"], s["noact_turns"], s["refusals"], s["turns_total"]), (1, 1, 1, 2))
+        self.assertEqual((s["first_refusal_followups"], s["acted_after_first_refusal"]), (1, 1))
+        self.assertFalse(agent._probe.carry)                            # the acting turn closed the span
+        self.assertEqual(agent._probe.analysis_calls, 0)
+        # turn 3: fresh budget again -> A A run, 3rd refused
+        res = self._analyze(agent, sess, [self._reply(A_CODE, "e1"), self._reply(A_CODE, "e2"), self._reply(A_SENTINEL, "e3"),
+                                          self._reply(X_CODE, "e4")], step=3, action_num=1)
+        self.assertTrue(res.step_executed)
+        self.assertIn("[PROBE-REFUSE] game=tu93-test_p0 turn=3 analysis_calls=2 refusal=1/4", self.transcript.read_text())
+        self.assertEqual(pr.status()["carried_turns"], 1)
+        # refusals carry too: A A R R (NOACT) then the next turn's refusals continue at 3/4, 4/4, then the cap lifts
+        agent._tool_steps = 4
+        res = self._analyze(agent, sess, [self._reply(A_CODE, "f1"), self._reply(A_CODE, "f2"), self._reply(A_CODE, "f3"),
+                                          self._reply(A_CODE, "f4")], step=4, action_num=2)
+        self.assertFalse(res.step_executed)
+        self.assertEqual(agent._probe.refusals, 2)
+        agent._tool_steps = None
+        res = self._analyze(agent, sess, [self._reply(A_CODE, "g1"), self._reply(A_CODE, "g2"), self._reply(A_CODE, "g3"),
+                                          self._reply(X_CODE, "g4")], step=5, action_num=2)
+        self.assertTrue(res.step_executed)
+        text = self.transcript.read_text()
+        self.assertIn("turn=5 analysis_calls=2 refusal=3/4", text)
+        self.assertIn("turn=5 analysis_calls=2 refusal=4/4", text)
+        self.assertEqual(text.count("[PROBE-REFUSE] game=tu93-test_p0 turn=5"), 2)   # g3 ran (cap lifted), g4 acted
+        s = pr.status()
+        self.assertEqual((s["leak_cap_lifted"], s["turns_ge3_analysis"], s["skips"].get("refusal_cap")), (1, 1, 1))
+        self.assertEqual(s["carried_turns"], 2)
+
+    # ------------------------------------------ 13 a level change resets the span
+    def test_13_level_change_resets_the_span(self) -> None:
+        agent = self._agent()
+        agent._tool_steps = 2
+        sess = self._session()
+        self._analyze(agent, sess, [self._reply(A_CODE, "c1"), self._reply(A_CODE, "c2")], step=1)
+        self.assertTrue(agent._probe.carry)
+        sess.advance_level()                                           # levels_completed 0 -> 1 (e.g. auto-reset/clear)
+        agent._tool_steps = None
+        res = self._analyze(agent, sess, [self._reply(A_CODE, "d1"), self._reply(A_CODE, "d2"), self._reply(A_SENTINEL, "d3"),
+                                          self._reply(X_CODE, "d4")], step=2)
+        self.assertTrue(res.step_executed)
+        text = self.transcript.read_text()
+        self.assertEqual(text.count("[PROBE-REFUSE]"), 1)              # d1/d2 ran on the new level's fresh budget
+        self.assertIn("turn=2 analysis_calls=2 refusal=1/4", text)
+        self.assertIn("Previous turn executed no action after 2 analysis calls.", text)   # the notice still rides
+        self.assertEqual(pr.status()["carried_turns"], 0)
+        self.assertEqual(agent._probe.level, 1)
+        # no session at all (level unknown): treated as the same level -> carry
+        agent2 = self._agent()
+        agent2._tool_steps = 2
+        sess2 = self._session()
+        with mock.patch.object(pr, "_level_of", return_value=None):
+            self._analyze(agent2, sess2, [self._reply(A_CODE, "c1"), self._reply(A_CODE, "c2")], step=1)
+            agent2._tool_steps = None
+            self._analyze(agent2, sess2, [self._reply(A_SENTINEL, "d1"), self._reply(X_CODE, "d2")], step=2)
+        self.assertIn("turn=2 analysis_calls=2 refusal=1/4", self.transcript.read_text())
+        self.assertEqual(pr.status()["carried_turns"], 1)
+
+    # --------------------------------------- 14 a refusal that ends the turn
+    def test_14_turn_ending_refusal_counts_as_non_acting(self) -> None:
+        agent = self._agent()
+        agent._tool_steps = 3
+        sess = self._session()
+        res = self._analyze(agent, sess, [self._reply(A_CODE, "c1"), self._reply(A_CODE, "c2"), self._reply(A_SENTINEL, "c3")], step=1)
+        self.assertFalse(res.step_executed)
+        s = pr.status()
+        self.assertEqual((s["refusals"], s["refusal_turn_ending"], s["noact_turns"]), (1, 1, 1))
+        self.assertEqual((s["calls_after_refusal"], s["acting_calls_after_refusal"]), (1, 0))       # settled non-acting
+        self.assertEqual((s["first_refusal_followups"], s["acted_after_first_refusal"]), (1, 0))
+        self.assertEqual(s["acted_after_first_refusal_share"], 0.0)
+        self.assertIn("[PROBE-NOACT] game=tu93-test_p0 turn=1 analysis_calls=2 refusals=1 reason=no_capture",
+                      self.transcript.read_text())
+        # the next turn (carried) acts at once: that action is NOT credited to the turn-ending refusal
+        agent._tool_steps = None
+        res = self._analyze(agent, sess, [self._reply(X_CODE, "d1")], step=2)
+        self.assertTrue(res.step_executed)
+        s = pr.status()
+        self.assertEqual((s["calls_after_refusal"], s["acting_calls_after_refusal"]), (1, 0))
+        self.assertEqual((s["first_refusal_followups"], s["acted_after_first_refusal"]), (1, 0))
+        self.assertEqual(s["carried_turns"], 1)
+        # a request error right after a refusal is not a turn end for this read (the step is retried)
+        _reset_counters()
+        agent._tool_steps = 3
+        import requests as _rq  # noqa: PLC0415
+        replies = iter([self._reply(A_CODE, "e1"), self._reply(A_CODE, "e2"), self._reply(A_SENTINEL, "e3")])
+
+        def chat(self_, messages, **kwargs):
+            try:
+                return next(replies)
+            except StopIteration:
+                raise _rq.RequestException("boom")
+        agent._tool_steps = None
+        with mock.patch.object(self.agent_mod.ToolAgent, "_chat_completion", chat):
+            res = agent.analyze(self.state_path, 1, valid_actions=["UP"], step_env=sess.step_env,
+                                transcript_path=self.transcript, analysis_step=3)
+        self.assertTrue(res.retryable_failure)
+        s = pr.status()
+        self.assertEqual((s["refusals"], s["refusal_turn_ending"], s["first_refusal_followups"]), (1, 0, 0))
+        self.assertTrue(agent._probe.first_refusal_pending)             # still pending for the retried step
 
 
 if __name__ == "__main__":

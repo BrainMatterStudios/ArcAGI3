@@ -142,7 +142,11 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert d4 == set(rw.PROBE_ENV_KEYS) == {"PROBE_ENABLE", "PROBE_MAX_ANALYSIS", "PROBE_MAX_PROBE", "PROBE_MAX_REFUSALS",
                                             "PROBE_NOTE_LINES"}, d4
     assert {k: rw.KEITH_PROBE_ENV[k] for k in rw.PROBE_ENV_KEYS} == {
-        "PROBE_ENABLE": "1", "PROBE_MAX_ANALYSIS": "2", "PROBE_MAX_PROBE": "5", "PROBE_MAX_REFUSALS": "2", "PROBE_NOTE_LINES": "3"}
+        "PROBE_ENABLE": "1", "PROBE_MAX_ANALYSIS": "2", "PROBE_MAX_PROBE": "5", "PROBE_MAX_REFUSALS": "4", "PROBE_NOTE_LINES": "3"}
+    assert set(rw.NEVER6_WALLS) == {"bp35", "dc22", "g50t", "lf52", "lp85", "ls20", "r11l", "sb26", "sp80", "tn36", "vc33", "wa30"}
+    assert rw.LEDGER3_REFERENCE["base_levels_mean"] == 39.33 and rw.LEDGER3_REFERENCE["base_levels_sd"] == 2.34
+    assert abs(statistics.mean(rw.LEDGER3_REFERENCE["base_levels_six_draws"]) - 39.33) < 0.01
+    assert abs(statistics.stdev(rw.LEDGER3_REFERENCE["base_levels_six_draws"]) - 2.34) < 0.01
     assert rw.KEITH_PROBE_ENV["LOCAL_ANALYZER_YIELD_SECONDS"] == "900" and rw.KEITH_YIELD900_ENV["LOCAL_ANALYZER_YIELD_SECONDS"] == "900"
     assert "PROBE_" in rw.GRAFT_ENV_PREFIXES and set(rw.PROBE_ENV_KEYS) <= set(rw.GRAFT_FLAG_KEYS)
     # 09-06 arms: each differs from the keith base by exactly its own keys
@@ -187,7 +191,7 @@ def test_install_env_never_leaks_graft_flags_into_a_stock_arm():
             assert rec["LOCAL_ANALYZER_YIELD_SECONDS"] == "900"
             os.environ["EVID_ENABLE"] = "1"
             rec = rw.install_env("keith_probe", "http://127.0.0.1:9/v1", "t", Path(tmp))
-            assert "EVID_ENABLE" not in os.environ and os.environ["PROBE_MAX_ANALYSIS"] == "2" and rec["PROBE_MAX_REFUSALS"] == "2"
+            assert "EVID_ENABLE" not in os.environ and os.environ["PROBE_MAX_ANALYSIS"] == "2" and rec["PROBE_MAX_REFUSALS"] == "4"
             assert rec["LOCAL_ANALYZER_YIELD_SECONDS"] == "900" and {k for k in rec if k.startswith("PROBE_")} == set(rw.PROBE_ENV_KEYS)
             assert rec["LOCAL_ANALYZER_API_KEY"] == "<redacted>" and "t" != os.environ["LOCAL_ANALYZER_API_KEY"][:0]
         finally:
@@ -995,9 +999,9 @@ def test_probe_arm_installs_graft_in_memory():
     assert probe["sha"] == rw.STOCK_AGENT_TREE_SHA256
     st = probe["status"]["graft_probe"]
     assert st["installed"] and st["enabled"] and st["errors"] == 0
-    assert (st["max_analysis"], st["max_probe"], st["max_refusals"], st["note_lines"]) == (2, 5, 2, 3)
+    assert (st["max_analysis"], st["max_probe"], st["max_refusals"], st["note_lines"]) == (2, 5, 4, 3)
     assert st["refusals"] == 0 and st["turns_total"] == 0 and st["per_game"] == {}
-    assert probe["env"] == {"PROBE_ENABLE": "1", "PROBE_MAX_ANALYSIS": "2", "PROBE_MAX_PROBE": "5", "PROBE_MAX_REFUSALS": "2",
+    assert probe["env"] == {"PROBE_ENABLE": "1", "PROBE_MAX_ANALYSIS": "2", "PROBE_MAX_PROBE": "5", "PROBE_MAX_REFUSALS": "4",
                             "PROBE_NOTE_LINES": "3"}
     fp = probe["fingerprint"]
     assert fp["context_budget_tokens"] == 31744 and fp["max_output_tokens"] is None and fp["yield_seconds"] == 900.0
@@ -1168,23 +1172,37 @@ def test_extractor_reads_probe_markers_and_ledger_call_types():
     assert [t["nonacting_before_act"] for t in turns] == [3, 5, 0]         # strict: everything before the first X
     assert [t["yield_turn_time_budget"] for t in turns] == [False, True, False]
     assert [(t["calls_after_refusal"], t["acting_after_refusal"]) for t in turns] == [(1, 1), (2, 0), (0, 0)]
+    assert [(t["first_refusal_followups"], t["acted_after_first_refusal"]) for t in turns] == [(1, 1), (1, 0), (0, 0)]
     assert [c["refused"] for c in calls] == [0, 0, 1, 0, 0, 0, 1, 1, 0, 0]
     assert [c["acts_code"] for c in calls] == [False, False, False, True, False, False, False, False, False, True]
     assert parsed["probe_markers"] == {"refusals": 3, "noact_turns": 1, "noact_notices": 1}
+    # a refusal that is the turn's last call is a non-acting follow-up (transcript read): cut turn 1 after its refusal
+    head = PROBE_TRANSCRIPT.split("[MODEL RESPONSE META]\nfinish_reason: tool_calls\ntool_call_count: 1\ncontent_chars: 0\nreasoning_chars: 0\n[TOOL CALL: python]\n<tool_call>\n<function=python>\n<parameter=code>\nr = action(['UP'])", 1)[0]
+    ending = rw.parse_transcript(head + "[ANALYZER STATUS]\nstep_executed: False\nmessage: Yielded control to solver: turn_time_budget.\n")
+    assert (ending["turns"][0]["first_refusal_followups"], ending["turns"][0]["acted_after_first_refusal"]) == (1, 0)
+    assert (ending["turns"][0]["calls_after_refusal"], ending["turns"][0]["acting_after_refusal"]) == (1, 0)
+    graft = {"refusals": 3, "calls_after_refusal": 3, "acting_calls_after_refusal": 1, "first_refusal_followups": 2,
+             "acted_after_first_refusal": 1, "refusal_turn_ending": 1, "carried_turns": 1, "noact_turns": 1, "turns_total": 3,
+             "turns_ge3_analysis": 1, "leak_cap_lifted": 1, "leak_dead_branch": 0, "leak_unparsable": 0,
+             "analysis_calls_total": 5, "acting_calls_total": 2, "turns_with_refusal": 2}
     tel = rw.telemetry_for_game(PROBE_TRANSCRIPT, actions_total=2, levels_completed=0, number_of_levels=9,
-                                actions_per_level=[30, 0, 0], baselines=[19, 16, 34],
-                                graft_counters={"refusals": 3, "calls_after_refusal": 3, "acting_calls_after_refusal": 1,
-                                                "noact_turns": 1, "turns_total": 3, "turns_ge3_analysis": 1,
-                                                "analysis_calls_total": 5, "acting_calls_total": 2, "turns_with_refusal": 2})
+                                actions_per_level=[30, 0, 0], baselines=[19, 16, 34], graft_counters=graft, game_overs=2)
     p = tel["probe"]
     assert (p["refusals"], p["noact_turns"], p["noact_notices"], p["turns_with_refusal"]) == (3, 1, 1, 2)
     assert p["turns_ge3_analysis"] == {"turns": 1, "of": 3, "share": 1 / 3}
     assert p["turns_ge3_nonacting"] == {"turns": 2, "of": 3, "share": 2 / 3}
     assert p["acting_after_refusal"] == {"acted": 1, "of": 3, "share": 1 / 3}
+    assert p["acted_after_first_refusal"] == {"acted": 1, "of": 2, "share": 0.5}
     assert p["call_types"] == {"A": 4, "E": 1, "R": 3, "X": 2} and abs(p["analysis_call_share"] - 0.4) < 1e-9
     assert p["yields_turn_time_budget"] == 1
     assert (p["wall_actions"], p["wall_baseline"]) == (30, 19) and abs(p["wall_actions_ratio"] - 30 / 19) < 1e-9
     assert p["graft"]["acting_after_refusal_share"] == 1 / 3 and p["graft"]["refusals"] == 3
+    assert p["graft"]["acted_after_first_refusal_share"] == 0.5 and p["graft"]["leak_cap_lifted"] == 1
+    assert p["game_overs"] == 2 and p["live_cap_score"] == 0.0            # 0 levels -> 0 live-cap score
+    # live-cap score = the ledger's score(): level 1 cleared in 30 actions vs baseline 19 -> (19/30)^2 * 1 / 45 * 100
+    assert abs(rw.live_cap_score([19, 16, 34, 42, 123, 80, 14, 23, 111], [30, 5], 1) - 100 * (19 / 30) ** 2 / 45) < 1e-9
+    assert abs(rw.live_cap_score([19, 16], [5, 100], 2) - 100 * (1.15 + 2 * (16 / 100) ** 2) / 3) < 1e-9   # cap 1.15 on level 1
+    assert rw.live_cap_score(None, [1], 1) is None and rw.live_cap_score([], [1], 1) is None
     # a won run has no wall ratio; missing baselines -> None
     assert rw.telemetry_for_game(PROBE_TRANSCRIPT, levels_completed=9, number_of_levels=9, actions_per_level=[1] * 9,
                                  baselines=[1] * 9)["probe"]["wall_actions_ratio"] is None
@@ -1194,28 +1212,57 @@ def test_extractor_reads_probe_markers_and_ledger_call_types():
     stock = rw.telemetry_for_game(SYNTHETIC_TRANSCRIPT, levels_completed=1, number_of_levels=4, actions_per_level=[10, 40, 0, 0],
                                   baselines=[20, 20, 20, 20])
     assert stock["probe"]["refusals"] == 0 and stock["probe"]["wall_actions_ratio"] == 2.0
-    tel2 = rw.telemetry_for_game(PROBE_TRANSCRIPT, levels_completed=0, number_of_levels=9, actions_per_level=[5, 0, 0],
-                                 baselines=[19, 16, 34])
+    tel2 = rw.telemetry_for_game(PROBE_TRANSCRIPT, levels_completed=2, number_of_levels=9, actions_per_level=[5, 8, 40],
+                                 baselines=[19, 16, 34], game_overs=0)
     tel2["draw"] = 1
-    agg = rw.aggregate_telemetry({"tu93_p0": tel, "tu93_p1": tel2})
+    for t_, gid, lv in ((tel, "vc33-5430563c", 0), (tel2, "vc33-5430563c", 2)):
+        t_["game_id"], t_["levels_completed"] = gid, lv
+    agg = rw.aggregate_telemetry({"vc33_p0": tel, "vc33_p1": tel2})
     pb = agg["probe"]
     assert pb["refusals_total"] == 6 and pb["refusals_per_game"] == 3.0 and pb["games_with_refusal"] == 2
     assert pb["noact_turns_total"] == 2 and pb["noact_notices_total"] == 2
     assert pb["turns_ge3_analysis"] == {"turns": 2, "of": 6, "share": 1 / 3}
     assert pb["acting_after_refusal"] == {"acted": 2, "of": 6, "share": 1 / 3}
+    assert pb["acted_after_first_refusal"] == {"acted": 2, "of": 4, "share": 0.5}
     assert pb["graft"] == {**pb["graft"], "runs": 1, "calls_after_refusal": 3, "acting_calls_after_refusal": 1,
-                           "acting_after_refusal_share": 1 / 3, "refusals": 3}
+                           "acting_after_refusal_share": 1 / 3, "refusals": 3, "first_refusal_followups": 2,
+                           "acted_after_first_refusal": 1, "acted_after_first_refusal_share": 0.5, "refusal_turn_ending": 1,
+                           "carried_turns": 1, "turns_ge3_analysis": 1, "turns_ge3_analysis_share": 1 / 3,
+                           "leak_cap_lifted": 1, "leak_dead_branch": 0, "leak_unparsable": 0}
     assert pb["call_types"] == {"A": 8, "E": 2, "R": 6, "X": 4}
     assert pb["draws"] == 2 and pb["yields_turn_time_budget_total"] == 2 and pb["yields_per_draw"] == 1.0
-    assert pb["wall_actions_ratio"]["n"] == 2 and pb["wall_actions_ratio"]["under_1x"] == 1
-    assert abs(pb["wall_actions_ratio"]["median"] - (30 / 19 + 5 / 19) / 2) < 1e-9
+    assert pb["wall_actions_ratio"]["n"] == 2 and pb["wall_actions_ratio"]["under_1x"] == 0     # run 2 sits on level 3: 40/34
+    assert abs(pb["wall_actions_ratio"]["median"] - (30 / 19 + 40 / 34) / 2) < 1e-9
+    pri, saf = pb["primary"], pb["safety"]
+    assert (pri["levels_total"], pri["draws"], pri["levels_per_draw"]) == (2, 2, 1.0)
+    assert abs(pri["delta_vs_base"] - (1.0 - 39.33)) < 1e-9 and pri["base_levels_sd"] == 2.34
+    assert pri["walls_present"] == ["vc33"] and pri["walls_passed"] == [] and pri["walls_passed_n"] == 0 and pri["walls_total"] == 12
+    assert (saf["game_overs_total"], saf["game_overs_per_run"], saf["game_overs_runs"]) == (2, 1.0, 2)
+    assert saf["base_game_overs_per_run"] == 0.87 and saf["base_live_cap_score_per_game"] == 8.42
+    # run 2: level 1 capped at 1.15 (5 vs 19), level 2 capped at 1.15 (8 vs 16 -> 4.0), weights 1..3 -> 100*(1.15+2.3)/6
+    assert saf["live_cap_runs"] == 2 and abs(saf["live_cap_score_per_game"] - (0.0 + 100 * (1.15 + 2 * 1.15) / 6) / 2) < 1e-9
     g = pb["gate"]
-    assert g["refusals_per_game"]["ok"] and not g["acting_after_refusal"]["ok"] and not g["turns_ge3_analysis"]["ok"]
-    assert g["yields_per_draw"]["ok"] and not g["wall_actions_ratio"]["ok"] and g["engaged"] is False
+    assert g["refusals_per_game"]["ok"] and g["acted_after_first_refusal"]["ok"] and g["wall_actions_ratio"]["ok"]
+    assert not g["turns_ge3_analysis"]["ok"] and g["turns_ge3_analysis"]["secondary"] and g["yields_per_draw"]["ok"]
+    assert g["engaged"] is True and abs(g["turns_ge3_analysis"]["value"] - 1 / 3) < 1e-9      # graft read (1 of 3 turns)
+    # a wall passed: vc33 reaching level 5 (>= its never-passed wall L4)
+    tel3 = dict(tel2)
+    tel3["levels_completed"] = 4
+    tel3["draw"] = 0
+    pri3 = rw.aggregate_telemetry({"vc33_p0": tel3})["probe"]["primary"]
+    assert pri3["walls_passed"] == ["vc33"] and pri3["walls_passed_n"] == 1
+    # gate fails on the wall ratio alone (compliant but under-exploring)
+    tel4 = rw.telemetry_for_game(PROBE_TRANSCRIPT, levels_completed=0, number_of_levels=9, actions_per_level=[5, 0, 0],
+                                 baselines=[19, 16, 34], graft_counters=graft)
+    g4 = rw.aggregate_telemetry({"a_p0": tel4})["probe"]["gate"]
+    assert g4["refusals_per_game"]["ok"] and g4["acted_after_first_refusal"]["ok"] and not g4["wall_actions_ratio"]["ok"]
+    assert g4["engaged"] is False
     # pooled from a stock run only: nothing refused -> not engaged, no crash
+    stock["game_id"] = "tu93-0768757b"
     agg0 = rw.aggregate_telemetry({"a_p0": stock})
     assert agg0["probe"]["refusals_total"] == 0 and agg0["probe"]["gate"]["engaged"] is False
-    assert agg0["probe"]["acting_after_refusal"]["share"] is None
+    assert agg0["probe"]["acting_after_refusal"]["share"] is None and agg0["probe"]["primary"]["walls_present"] == []
+    assert agg0["probe"]["safety"]["game_overs_per_run"] is None
     # a "[PROBE-REFUSE]" mention in model prose is not a marker
     assert rw.parse_transcript("hello [PROBE-REFUSE] game=x turn=1 analysis_calls=2\n")["probe_markers"]["refusals"] == 0
 
@@ -1247,13 +1294,26 @@ def test_dry_run_keith_probe_arm_end_to_end():
         assert st["refusals"] >= 3 and st["errors"] == 0
         assert pb["refusals_total"] == st["refusals"]                                  # transcript markers == graft counter
         assert pb["games_with_refusal"] == 3 and pb["graft"]["refusals"] == st["refusals"]
-        assert st["acting_calls_after_refusal"] == st["calls_after_refusal"] >= 3         # the mock complies every time
-        assert pb["graft"]["acting_after_refusal_share"] == 1.0 and pb["acting_after_refusal"]["share"] == 1.0
+        # the mock complies with every refusal that is followed by a call; the run's last call may be a refusal
+        # (--max-calls stop), which is settled as a non-acting turn-ending refusal
+        assert st["acting_calls_after_refusal"] == st["calls_after_refusal"] - st["refusal_turn_ending"] >= 3
+        assert st["acted_after_first_refusal"] == st["first_refusal_followups"] - st["refusal_turn_ending"]
+        assert pb["graft"]["acted_after_first_refusal_share"] >= 0.5 and pb["acted_after_first_refusal"]["share"] >= 0.5
+        assert pb["graft"]["acted_after_first_refusal"] == st["acted_after_first_refusal"]
         assert pb["turns_ge3_analysis"]["turns"] == 0 and st["turns_ge3_analysis"] == 0    # never 3 executed analysis calls
+        assert (st["leak_cap_lifted"], st["leak_dead_branch"], st["leak_unparsable"], st["carried_turns"]) == (0, 0, 0, 0)
         assert pb["call_types"].get("R", 0) == st["refusals"] and pb["call_types"].get("X", 0) >= 3
-        assert pb["gate"]["refusals_per_game"]["ok"] and pb["gate"]["acting_after_refusal"]["ok"] and pb["gate"]["engaged"] is True
+        gate = pb["gate"]
+        assert gate["refusals_per_game"]["ok"] and gate["acted_after_first_refusal"]["ok"]
+        assert gate["wall_actions_ratio"]["ok"] is False and gate["engaged"] is False       # 2 actions vs baseline: under-explored
+        assert gate["turns_ge3_analysis"]["ok"] and gate["turns_ge3_analysis"]["secondary"]
         assert pb["wall_actions_ratio"]["n"] == 3 and all(
             g["probe"]["wall_baseline"] and g["probe"]["wall_actions_ratio"] is not None for g in tel["per_game"].values())
+        pri, saf = pb["primary"], pb["safety"]
+        assert pri["games"] == 3 and pri["draws"] == 1 and pri["walls_total"] == 12 and pri["walls_present"] == []   # none of the 3 games is a never-passed wall
+        assert abs(pri["delta_vs_base"] - (pri["levels_total"] - 39.33)) < 1e-9
+        assert saf["game_overs_runs"] == 3 and saf["game_overs_per_run"] is not None and saf["live_cap_runs"] == 3
+        assert all(g["probe"]["game_overs"] is not None and g["probe"]["live_cap_score"] is not None for g in tel["per_game"].values())
         assert all(g["baselines"] for g in res["games"])                                  # offline engine exposes baselines
         per = tel["per_game"]
         assert set(per) == {"tu93-0768757b_p0", "ft09-0d8bbf25_p0", "cd82-fb555c5d_p0"}
@@ -1264,9 +1324,12 @@ def test_dry_run_keith_probe_arm_end_to_end():
             assert text.count("[TOOL RESULT: python]\nAnalysis budget for this turn is spent (2 analysis-only calls)") == g["probe"]["refusals"]
             assert g["probe"]["graft"]["refusals"] == g["probe"]["refusals"]
         summary = (out / "summary.txt").read_text()
-        assert "REGIME WAVE  arm=keith_probe" in summary and "PROBE  refusals" in summary and "PROBE-WALL actions/baseline" in summary
-        assert "ENGAGED (pre-registered: refusals, after-refusal, >=3-analysis) = YES" in summary
-        assert "'PROBE_MAX_ANALYSIS': '2'" in summary and "yield 900 s" in summary
+        assert "REGIME WAVE  arm=keith_probe" in summary and "PROBE  refusals" in summary
+        for line in ("PROBE-2ND spans >=3", "PROBE-PRIMARY levels", "vs pooled six-draw base 39.33 (sd 2.34)", "never-passed walls 0/12",
+                     "PROBE-SAFETY GAME_OVERs", "yield900 base 0.87", "yield900 base 8.42/game", "ENGAGED = NO {refusals_per_game+, "
+                     "acted_after_first_refusal+, wall_actions_ratio-}"):
+            assert line in summary, line
+        assert "'PROBE_MAX_ANALYSIS': '2'" in summary and "'PROBE_MAX_REFUSALS': '4'" in summary and "yield 900 s" in summary
         assert summary.count("\n") < 45
         ms = res["mock_state"]
         assert ms["sentinel_calls"] >= 3 and ms["analysis_calls"] >= 9
