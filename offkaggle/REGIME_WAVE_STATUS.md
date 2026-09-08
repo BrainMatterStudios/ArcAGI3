@@ -598,3 +598,15 @@ PRIMARY (levels, 25 games): ≥ 52 → step candidate (then a counterbalanced dr
 never-passed walls before any slot); 45–51 → positive, counterbalanced redraw; < 45 → dead.
 SECONDARY: wall actions/baseline median (now 0.72) — must rise toward ≥ 1.0 if the mechanism works;
 yields/draw; zero-level games; length-finish ≤ 1% per run (VOID rules as before).
+
+### BUILT 2026-09-08 — `keith_probe` ready (not launched)
+
+Graft `submission/_throughput_v1/graft_probe.py` (11/11 tests on both bundles; real-engine dry run
+`dry_run_probe.py` PASS 10/10; runner suite 26/26). Arm = `keith_yield900` + `PROBE_ENABLE=1
+PROBE_MAX_ANALYSIS=2 PROBE_MAX_PROBE=5 PROBE_MAX_REFUSALS=2 PROBE_NOTE_LINES=3` (differs from
+keith_yield900 by exactly those keys; `PROBE_*` scrubbed for every other arm). Analysis-only = the
+harness's own `_ToolDispatchResult.step_executed` (payload); the pre-run refusal predicate is an AST read
+for an `action()` call. Telemetry: `PROBE` / `PROBE-WALL` summary lines with the pre-registered gate
+(`aggregate.probe.gate.engaged`), the ledger's call classes (A/X/E/N + R refused), wall actions/baseline
+(q7 definition, needs the offline engine's baselines), turn_time_budget yields per draw. Full report,
+exact refusal text, dry-run proof and the launch command: `submission/_throughput_v1/PROBE_STATUS.md`.

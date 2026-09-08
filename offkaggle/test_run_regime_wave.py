@@ -121,7 +121,8 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert diff == {"LOCAL_ANALYZER_CONTEXT_WINDOW", "LOCAL_ANALYZER_MAX_OUTPUT"}, diff
     assert (rw.KEITH_ANALYZER_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"], rw.KEITH_ANALYZER_ENV["LOCAL_ANALYZER_MAX_OUTPUT"]) == ("32768", "0")
     assert (rw.FLIGHT_ANALYZER_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"], rw.FLIGHT_ANALYZER_ENV["LOCAL_ANALYZER_MAX_OUTPUT"]) == ("24576", "4096")
-    assert rw.ARMS == ("keith", "flight", "keith_yield180", "keith_yield900", "keith_retry", "keith_evid", "keith_hypo", "keith_up8")
+    assert rw.ARMS == ("keith", "flight", "keith_yield180", "keith_yield900", "keith_retry", "keith_evid", "keith_hypo", "keith_up8",
+                       "keith_probe")
     # the original single-knob arm differs from the keith base on exactly the yield key
     d2 = {k for k in set(rw.KEITH_ANALYZER_ENV) | set(rw.KEITH_YIELD180_ENV)
           if rw.KEITH_ANALYZER_ENV.get(k) != rw.KEITH_YIELD180_ENV.get(k)}
@@ -134,7 +135,16 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert {k: rw.KEITH_RETRY_ENV[k] for k in rw.RETRY_ENV_KEYS} == {
         "RETRY_ENABLE": "1", "RETRY_K": "3", "RETRY_ABS": "200", "RETRY_COOLDOWN": "150", "RETRY_MAX": "2"}
     assert rw.ARM_GRAFTS == {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",),
-                             "keith_hypo": ("graft_hypo",)}
+                             "keith_hypo": ("graft_hypo",), "keith_probe": ("graft_probe",)}
+    # 09-08: the probe arm differs from keith_yield900 (its base) by exactly the graft's PROBE_* flags
+    d4 = {k for k in set(rw.KEITH_YIELD900_ENV) | set(rw.KEITH_PROBE_ENV)
+          if rw.KEITH_YIELD900_ENV.get(k) != rw.KEITH_PROBE_ENV.get(k)}
+    assert d4 == set(rw.PROBE_ENV_KEYS) == {"PROBE_ENABLE", "PROBE_MAX_ANALYSIS", "PROBE_MAX_PROBE", "PROBE_MAX_REFUSALS",
+                                            "PROBE_NOTE_LINES"}, d4
+    assert {k: rw.KEITH_PROBE_ENV[k] for k in rw.PROBE_ENV_KEYS} == {
+        "PROBE_ENABLE": "1", "PROBE_MAX_ANALYSIS": "2", "PROBE_MAX_PROBE": "5", "PROBE_MAX_REFUSALS": "2", "PROBE_NOTE_LINES": "3"}
+    assert rw.KEITH_PROBE_ENV["LOCAL_ANALYZER_YIELD_SECONDS"] == "900" and rw.KEITH_YIELD900_ENV["LOCAL_ANALYZER_YIELD_SECONDS"] == "900"
+    assert "PROBE_" in rw.GRAFT_ENV_PREFIXES and set(rw.PROBE_ENV_KEYS) <= set(rw.GRAFT_FLAG_KEYS)
     # 09-06 arms: each differs from the keith base by exactly its own keys
     def _diff(env):
         return {k for k in set(rw.KEITH_ANALYZER_ENV) | set(env) if rw.KEITH_ANALYZER_ENV.get(k) != env.get(k)}
@@ -144,9 +154,9 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert _diff(rw.KEITH_HYPO_ENV) == set(rw.HYPO_ENV_KEYS) == {"HYPO_ENABLE"} and rw.KEITH_HYPO_ENV["HYPO_ENABLE"] == "1"
     assert _diff(rw.KEITH_UP8_ENV) == {"MULTIMODAL_UPSCALE"} and rw.KEITH_UP8_ENV["MULTIMODAL_UPSCALE"] == "8"
     assert rw.KEITH_ANALYZER_ENV["MULTIMODAL_UPSCALE"] == "4" and rw.KEITH_UP8_ENV["MULTIMODAL_CONTEXT"] == "current_grid"
-    for arm in ("keith", "flight", "keith_yield180", "keith_up8"):
+    for arm in ("keith", "flight", "keith_yield180", "keith_yield900", "keith_up8"):
         assert not any(k.startswith(rw.GRAFT_ENV_PREFIXES) for k in rw.ARM_ENV[arm]), arm   # stock arms carry no graft flag
-    for arm, prefix in (("keith_retry", "RETRY_"), ("keith_evid", "EVID_"), ("keith_hypo", "HYPO_")):
+    for arm, prefix in (("keith_retry", "RETRY_"), ("keith_evid", "EVID_"), ("keith_hypo", "HYPO_"), ("keith_probe", "PROBE_")):
         assert all(k.startswith(prefix) for k in rw.ARM_ENV[arm] if k.startswith(rw.GRAFT_ENV_PREFIXES)), arm
 
 
@@ -169,6 +179,16 @@ def test_install_env_never_leaks_graft_flags_into_a_stock_arm():
             os.environ["HYPO_ENABLE"] = "1"
             rec = rw.install_env("keith_evid", "http://127.0.0.1:9/v1", "t", Path(tmp))
             assert "HYPO_ENABLE" not in os.environ and os.environ["EVID_ENABLE"] == "1" and rec["EVID_MAX_CHARS"] == "1500"
+            # a stale PROBE_* flag never reaches the yield900 base arm; the probe arm sets exactly its keys
+            os.environ["PROBE_ENABLE"] = "1"
+            os.environ["PROBE_MAX_ANALYSIS"] = "0"
+            rec = rw.install_env("keith_yield900", "http://127.0.0.1:9/v1", "t", Path(tmp))
+            assert not any(k.startswith("PROBE_") for k in os.environ) and not any(k.startswith("PROBE_") for k in rec)
+            assert rec["LOCAL_ANALYZER_YIELD_SECONDS"] == "900"
+            os.environ["EVID_ENABLE"] = "1"
+            rec = rw.install_env("keith_probe", "http://127.0.0.1:9/v1", "t", Path(tmp))
+            assert "EVID_ENABLE" not in os.environ and os.environ["PROBE_MAX_ANALYSIS"] == "2" and rec["PROBE_MAX_REFUSALS"] == "2"
+            assert rec["LOCAL_ANALYZER_YIELD_SECONDS"] == "900" and {k for k in rec if k.startswith("PROBE_")} == set(rw.PROBE_ENV_KEYS)
             assert rec["LOCAL_ANALYZER_API_KEY"] == "<redacted>" and "t" != os.environ["LOCAL_ANALYZER_API_KEY"][:0]
         finally:
             for k in [k for k in os.environ if k.startswith(rw.GRAFT_ENV_PREFIXES)]:
@@ -959,6 +979,315 @@ print(json.dumps({"grafts": grafts, "rebound": {k: after[k] is not before[k] for
                   "tag": rw.current_game_tag(), "stem": rw.current_run_stem(),
                   "fingerprint": rw.analyzer_config_fingerprint(agent)}))
 '''
+
+
+def test_probe_arm_installs_graft_in_memory():
+    """keith_probe: graft_probe rebinds analyze, _run_python_tool AND _build_user_prompt; the stock tree
+    sha holds; the factory-built ToolAgent carries the yield900 regime (900 s yield, keith window)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        code = (_AID_GRAFT_PROBE.replace("__HERE__", repr(str(HERE))).replace("__TMP__", repr(tmp))
+                .replace("__ARM__", repr("keith_probe")))
+        r = subprocess.run([PYTHON, "-c", code], capture_output=True, text=True, cwd=str(REPO), timeout=300)
+        assert r.returncode == 0, r.stderr[-2000:]
+        probe = json.loads(r.stdout.strip().splitlines()[-1])
+    assert probe["grafts"] == {"graft_probe": "probe: OK"}
+    assert probe["rebound"] == {"run": True, "prompt": True, "analyze": True}, probe["rebound"]
+    assert probe["sha"] == rw.STOCK_AGENT_TREE_SHA256
+    st = probe["status"]["graft_probe"]
+    assert st["installed"] and st["enabled"] and st["errors"] == 0
+    assert (st["max_analysis"], st["max_probe"], st["max_refusals"], st["note_lines"]) == (2, 5, 2, 3)
+    assert st["refusals"] == 0 and st["turns_total"] == 0 and st["per_game"] == {}
+    assert probe["env"] == {"PROBE_ENABLE": "1", "PROBE_MAX_ANALYSIS": "2", "PROBE_MAX_PROBE": "5", "PROBE_MAX_REFUSALS": "2",
+                            "PROBE_NOTE_LINES": "3"}
+    fp = probe["fingerprint"]
+    assert fp["context_budget_tokens"] == 31744 and fp["max_output_tokens"] is None and fp["yield_seconds"] == 900.0
+
+
+PROBE_TRANSCRIPT = """
+--- analysis_step=1 | action=0 | 10:00:00 | tool-agent ---
+[SYSTEM PROMPT]
+sys
+[USER PROMPT]
+No previous sequence has been executed yet.
+Current state: step 1, level 1.
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 3
+[THINKING]
+abc
+[TOOL CALL: python]
+<tool_call>
+<function=python>
+<parameter=code>
+print(len(history))
+</parameter>
+</function>
+</tool_call>
+[TOOL RESULT: python]
+0
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 0
+[TOOL CALL: python]
+{"code": "x = 1 / 0"}
+[TOOL RESULT: python]
+Traceback (most recent call last):
+  File "<python_tool>", line 1, in <module>
+ZeroDivisionError: division by zero
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 0
+[TOOL CALL: python]
+<tool_call>
+<function=python>
+<parameter=code>
+print('third analysis')
+</parameter>
+</function>
+</tool_call>
+[HARNESS PROBE]
+[PROBE-REFUSE] game=tu93-0768757b_p0 turn=1 analysis_calls=2 refusal=1/2
+
+[TOOL RESULT: python]
+Analysis budget for this turn is spent (2 analysis-only calls). Only a snippet that executes a game action is accepted now: run a <=5-action test of your leading hypothesis with action([...]) and read the result. Untested hypotheses in your notes: (none recorded - state one now and test it)
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 0
+[TOOL CALL: python]
+<tool_call>
+<function=python>
+<parameter=code>
+r = action(['UP'])
+print(r)
+</parameter>
+</function>
+</tool_call>
+[TOOL RESULT: python]
+{'executed': True}
+[ANALYZER STATUS]
+step_executed: True
+message: Step executed.
+
+--- analysis_step=2 | action=1 | 10:01:00 | tool-agent ---
+[USER PROMPT]
+The code executed 1 action in the previous sequence.
+Current state: step 2, level 1.
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 0
+[TOOL CALL: python]
+{"code": "print(1)"}
+[TOOL RESULT: python]
+1
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 0
+[TOOL CALL: python]
+{"code": "print(2)"}
+[TOOL RESULT: python]
+2
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 0
+[TOOL CALL: python]
+{"code": "print(3)"}
+[HARNESS PROBE]
+[PROBE-REFUSE] game=tu93-0768757b_p0 turn=2 analysis_calls=2 refusal=1/2
+
+[TOOL RESULT: python]
+Analysis budget for this turn is spent (2 analysis-only calls). Only a snippet that executes a game action is accepted now: run a <=5-action test of your leading hypothesis with action([...]) and read the result. Untested hypotheses in your notes: (none recorded - state one now and test it)
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 0
+[TOOL CALL: python]
+{"code": "print(4)"}
+[HARNESS PROBE]
+[PROBE-REFUSE] game=tu93-0768757b_p0 turn=2 analysis_calls=2 refusal=2/2
+
+[TOOL RESULT: python]
+Analysis budget for this turn is spent (2 analysis-only calls). Only a snippet that executes a game action is accepted now: run a <=5-action test of your leading hypothesis with action([...]) and read the result. Untested hypotheses in your notes: (none recorded - state one now and test it)
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 0
+[TOOL CALL: python]
+{"code": "print(5)"}
+[TOOL RESULT: python]
+5
+[ANALYZER STATUS]
+step_executed: False
+message: Yielded control to solver: turn_time_budget.
+[HARNESS PROBE]
+[PROBE-NOACT] game=tu93-0768757b_p0 turn=2 analysis_calls=3 refusals=2 reason=yield
+
+--- analysis_step=2 | action=1 | 10:16:00 | tool-agent ---
+[USER PROMPT]
+Previous turn executed no action after 3 analysis calls (2 refused).
+The code executed 1 action in the previous sequence.
+Current state: step 2, level 1.
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 0
+[TOOL CALL: python]
+{"code": "action(['DOWN'])"}
+[TOOL RESULT: python]
+{'executed': True}
+[ANALYZER STATUS]
+step_executed: True
+message: Step executed.
+"""
+
+
+def test_extractor_reads_probe_markers_and_ledger_call_types():
+    parsed = rw.parse_transcript(PROBE_TRANSCRIPT)
+    turns, calls = parsed["turns"], parsed["calls"]
+    assert [t["call_types"] for t in turns] == ["AERX", "AARRA", "X"]
+    assert [t["probe_refusals"] for t in turns] == [1, 2, 0]
+    assert [t["probe_noact"] for t in turns] == [0, 1, 0]
+    assert [t["probe_noact_notice"] for t in turns] == [0, 0, 1]
+    assert [t["analysis_before_act"] for t in turns] == [1, 3, 0]          # A-class only (E, R excluded)
+    assert [t["nonacting_before_act"] for t in turns] == [3, 5, 0]         # strict: everything before the first X
+    assert [t["yield_turn_time_budget"] for t in turns] == [False, True, False]
+    assert [(t["calls_after_refusal"], t["acting_after_refusal"]) for t in turns] == [(1, 1), (2, 0), (0, 0)]
+    assert [c["refused"] for c in calls] == [0, 0, 1, 0, 0, 0, 1, 1, 0, 0]
+    assert [c["acts_code"] for c in calls] == [False, False, False, True, False, False, False, False, False, True]
+    assert parsed["probe_markers"] == {"refusals": 3, "noact_turns": 1, "noact_notices": 1}
+    tel = rw.telemetry_for_game(PROBE_TRANSCRIPT, actions_total=2, levels_completed=0, number_of_levels=9,
+                                actions_per_level=[30, 0, 0], baselines=[19, 16, 34],
+                                graft_counters={"refusals": 3, "calls_after_refusal": 3, "acting_calls_after_refusal": 1,
+                                                "noact_turns": 1, "turns_total": 3, "turns_ge3_analysis": 1,
+                                                "analysis_calls_total": 5, "acting_calls_total": 2, "turns_with_refusal": 2})
+    p = tel["probe"]
+    assert (p["refusals"], p["noact_turns"], p["noact_notices"], p["turns_with_refusal"]) == (3, 1, 1, 2)
+    assert p["turns_ge3_analysis"] == {"turns": 1, "of": 3, "share": 1 / 3}
+    assert p["turns_ge3_nonacting"] == {"turns": 2, "of": 3, "share": 2 / 3}
+    assert p["acting_after_refusal"] == {"acted": 1, "of": 3, "share": 1 / 3}
+    assert p["call_types"] == {"A": 4, "E": 1, "R": 3, "X": 2} and abs(p["analysis_call_share"] - 0.4) < 1e-9
+    assert p["yields_turn_time_budget"] == 1
+    assert (p["wall_actions"], p["wall_baseline"]) == (30, 19) and abs(p["wall_actions_ratio"] - 30 / 19) < 1e-9
+    assert p["graft"]["acting_after_refusal_share"] == 1 / 3 and p["graft"]["refusals"] == 3
+    # a won run has no wall ratio; missing baselines -> None
+    assert rw.telemetry_for_game(PROBE_TRANSCRIPT, levels_completed=9, number_of_levels=9, actions_per_level=[1] * 9,
+                                 baselines=[1] * 9)["probe"]["wall_actions_ratio"] is None
+    assert rw.telemetry_for_game(PROBE_TRANSCRIPT, levels_completed=0, number_of_levels=9, actions_per_level=[30],
+                                 baselines=None)["probe"]["wall_actions_ratio"] is None
+    # stock transcripts: no markers, ratio still computed, gate NOT engaged
+    stock = rw.telemetry_for_game(SYNTHETIC_TRANSCRIPT, levels_completed=1, number_of_levels=4, actions_per_level=[10, 40, 0, 0],
+                                  baselines=[20, 20, 20, 20])
+    assert stock["probe"]["refusals"] == 0 and stock["probe"]["wall_actions_ratio"] == 2.0
+    tel2 = rw.telemetry_for_game(PROBE_TRANSCRIPT, levels_completed=0, number_of_levels=9, actions_per_level=[5, 0, 0],
+                                 baselines=[19, 16, 34])
+    tel2["draw"] = 1
+    agg = rw.aggregate_telemetry({"tu93_p0": tel, "tu93_p1": tel2})
+    pb = agg["probe"]
+    assert pb["refusals_total"] == 6 and pb["refusals_per_game"] == 3.0 and pb["games_with_refusal"] == 2
+    assert pb["noact_turns_total"] == 2 and pb["noact_notices_total"] == 2
+    assert pb["turns_ge3_analysis"] == {"turns": 2, "of": 6, "share": 1 / 3}
+    assert pb["acting_after_refusal"] == {"acted": 2, "of": 6, "share": 1 / 3}
+    assert pb["graft"] == {**pb["graft"], "runs": 1, "calls_after_refusal": 3, "acting_calls_after_refusal": 1,
+                           "acting_after_refusal_share": 1 / 3, "refusals": 3}
+    assert pb["call_types"] == {"A": 8, "E": 2, "R": 6, "X": 4}
+    assert pb["draws"] == 2 and pb["yields_turn_time_budget_total"] == 2 and pb["yields_per_draw"] == 1.0
+    assert pb["wall_actions_ratio"]["n"] == 2 and pb["wall_actions_ratio"]["under_1x"] == 1
+    assert abs(pb["wall_actions_ratio"]["median"] - (30 / 19 + 5 / 19) / 2) < 1e-9
+    g = pb["gate"]
+    assert g["refusals_per_game"]["ok"] and not g["acting_after_refusal"]["ok"] and not g["turns_ge3_analysis"]["ok"]
+    assert g["yields_per_draw"]["ok"] and not g["wall_actions_ratio"]["ok"] and g["engaged"] is False
+    # pooled from a stock run only: nothing refused -> not engaged, no crash
+    agg0 = rw.aggregate_telemetry({"a_p0": stock})
+    assert agg0["probe"]["refusals_total"] == 0 and agg0["probe"]["gate"]["engaged"] is False
+    assert agg0["probe"]["acting_after_refusal"]["share"] is None
+    # a "[PROBE-REFUSE]" mention in model prose is not a marker
+    assert rw.parse_transcript("hello [PROBE-REFUSE] game=x turn=1 analysis_calls=2\n")["probe_markers"]["refusals"] == 0
+
+
+def test_dry_run_keith_probe_arm_end_to_end():
+    """The pre-registered launch shape on the loopback mock (+ the real engine): the mock answers the first
+    3 python calls of every turn with analysis-only snippets, the graft refuses the 3rd (the sentinel never
+    runs), the next call acts, and the PROBE / PROBE-WALL summary lines + telemetry carry the reads."""
+    with tempfile.TemporaryDirectory() as tmp:
+        r = subprocess.run([PYTHON, str(HERE / "run_regime_wave.py"), "--dry-run", "--arm", "keith_probe",
+                            "--games", "tu93,ft09,cd82", "--concurrency", "3", "--max-calls", "12",
+                            "--per-game-s", "20", "--wave-cap-s", "90", "--progress-every", "60", "--out", tmp],
+                           capture_output=True, text=True, cwd=str(REPO), timeout=400)
+        assert r.returncode == 0, (r.returncode, r.stderr[-3000:], r.stdout[-3000:])
+        runs = list(Path(tmp).glob("*-regime-keith_probe-dry"))
+        assert len(runs) == 1, runs
+        out = runs[0]
+        res = json.loads((out / "results.json").read_text())
+        tel = json.loads((out / "telemetry.json").read_text())
+        assert res["status"] == "done" and res["arm"] == "keith_probe" and res["mock_analysis_calls"] == 3
+        assert res["stock"]["agent_tree_sha256"] == rw.STOCK_AGENT_TREE_SHA256
+        assert res["grafts"]["installed"] == {"graft_probe": "probe: OK"}
+        assert res["analyzer_env"]["LOCAL_ANALYZER_YIELD_SECONDS"] == "900" and res["analyzer_env"]["PROBE_ENABLE"] == "1"
+        assert res["analyzer_env"]["LOCAL_ANALYZER_CONTEXT_WINDOW"] == "32768" and "knob_overrides" not in res
+        cfg = tel["aggregate"]["analyzer_status_config_first"]
+        assert cfg == {"max_output_tokens": "server default", "context_budget_tokens": "31744", "yield_seconds": "900.0"}, cfg
+        st = res["grafts"]["status"]["graft_probe"]
+        pb = tel["aggregate"]["probe"]
+        assert st["refusals"] >= 3 and st["errors"] == 0
+        assert pb["refusals_total"] == st["refusals"]                                  # transcript markers == graft counter
+        assert pb["games_with_refusal"] == 3 and pb["graft"]["refusals"] == st["refusals"]
+        assert st["acting_calls_after_refusal"] == st["calls_after_refusal"] >= 3         # the mock complies every time
+        assert pb["graft"]["acting_after_refusal_share"] == 1.0 and pb["acting_after_refusal"]["share"] == 1.0
+        assert pb["turns_ge3_analysis"]["turns"] == 0 and st["turns_ge3_analysis"] == 0    # never 3 executed analysis calls
+        assert pb["call_types"].get("R", 0) == st["refusals"] and pb["call_types"].get("X", 0) >= 3
+        assert pb["gate"]["refusals_per_game"]["ok"] and pb["gate"]["acting_after_refusal"]["ok"] and pb["gate"]["engaged"] is True
+        assert pb["wall_actions_ratio"]["n"] == 3 and all(
+            g["probe"]["wall_baseline"] and g["probe"]["wall_actions_ratio"] is not None for g in tel["per_game"].values())
+        assert all(g["baselines"] for g in res["games"])                                  # offline engine exposes baselines
+        per = tel["per_game"]
+        assert set(per) == {"tu93-0768757b_p0", "ft09-0d8bbf25_p0", "cd82-fb555c5d_p0"}
+        for stem, g in per.items():
+            text = (out / "transcripts" / f"{stem}.txt").read_text()
+            assert text.count("[HARNESS PROBE]\n[PROBE-REFUSE] game=" + stem) == g["probe"]["refusals"] == st["per_game"][stem]["refusals"]
+            assert "[TOOL RESULT: python]\n" + rw.MOCK_SENTINEL not in text               # the refused snippet never ran
+            assert text.count("[TOOL RESULT: python]\nAnalysis budget for this turn is spent (2 analysis-only calls)") == g["probe"]["refusals"]
+            assert g["probe"]["graft"]["refusals"] == g["probe"]["refusals"]
+        summary = (out / "summary.txt").read_text()
+        assert "REGIME WAVE  arm=keith_probe" in summary and "PROBE  refusals" in summary and "PROBE-WALL actions/baseline" in summary
+        assert "ENGAGED (pre-registered: refusals, after-refusal, >=3-analysis) = YES" in summary
+        assert "'PROBE_MAX_ANALYSIS': '2'" in summary and "yield 900 s" in summary
+        assert summary.count("\n") < 45
+        ms = res["mock_state"]
+        assert ms["sentinel_calls"] >= 3 and ms["analysis_calls"] >= 9
+        for path in out.rglob("*"):
+            if path.is_file() and path.suffix in (".json", ".txt", ".prom", ".jsonl", ".log"):
+                assert "dry-run-token" not in path.read_text(encoding="utf-8", errors="replace"), path
+    # a stock arm with the same mock knob RUNS the sentinel (the refusal is the graft, not the mock)
+    with tempfile.TemporaryDirectory() as tmp:
+        r = subprocess.run([PYTHON, str(HERE / "run_regime_wave.py"), "--dry-run", "--arm", "keith_yield900",
+                            "--games", "tu93", "--concurrency", "1", "--max-calls", "6", "--mock-analysis-calls", "3",
+                            "--per-game-s", "12", "--wave-cap-s", "60", "--progress-every", "60", "--out", tmp],
+                           capture_output=True, text=True, cwd=str(REPO), timeout=400)
+        assert r.returncode == 0, (r.returncode, r.stderr[-3000:], r.stdout[-3000:])
+        out = list(Path(tmp).glob("*-regime-keith_yield900-dry"))[0]
+        text = (out / "transcripts" / "tu93-0768757b_p0.txt").read_text()
+        assert "[TOOL RESULT: python]\n" + rw.MOCK_SENTINEL in text and "[PROBE-REFUSE]" not in text
+        tel = json.loads((out / "telemetry.json").read_text())
+        assert tel["aggregate"]["probe"]["refusals_total"] == 0 and tel["aggregate"]["probe"]["turns_ge3_analysis"]["turns"] >= 1
+        summary = (out / "summary.txt").read_text()
+        assert "PROBE  refusals" not in summary.split("\n  run ")[0]          # stock arm: no PROBE lines
+        assert json.loads((out / "results.json").read_text())["mock_analysis_calls"] == 3
 
 
 def test_aid_arms_install_grafts_in_memory():

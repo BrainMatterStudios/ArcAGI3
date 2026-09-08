@@ -31,6 +31,14 @@ What runs (mirrors the public keithtyser V14 notebook cell by cell):
                        appended to every analyzer prompt), flag HYPO_ENABLE=1
       keith_up8      : keith + MULTIMODAL_UPSCALE=8 (the current-grid PNG 512 px
                        instead of 256 px: 256 vision tokens per image instead of 64)
+      keith_probe    : keith_yield900 + graft_probe (harness-enforced probe
+                       discipline: after PROBE_MAX_ANALYSIS=2 analysis-only python
+                       calls in a turn the next analysis-only snippet is refused
+                       with a "run a <=5-action test" tool result, at most
+                       PROBE_MAX_REFUSALS=2 refusals per turn; one-line notice on
+                       the turn after a no-action turn), flags PROBE_ENABLE=1
+                       PROBE_MAX_ANALYSIS=2 PROBE_MAX_PROBE=5 PROBE_MAX_REFUSALS=2
+                       PROBE_NOTE_LINES=3
   --draws N plays the selected games N times as independent runs in one wave
   (taaf Benchmark.n_passes; run stems <gid>_p0, <gid>_p1, ...); --per-game-s
   caps each run (default 7920 = public geometry).
@@ -192,14 +200,26 @@ KEITH_HYPO_ENV = {**KEITH_ANALYZER_ENV, "HYPO_ENABLE": "1"}
 #      call time (64x64 grid -> 512x512 px PNG instead of 256x256; 16-px patches x 2 merge = 32 px per
 #      vision token -> 256 tokens/image instead of 64)
 KEITH_UP8_ENV = {**KEITH_ANALYZER_ENV, "MULTIMODAL_UPSCALE": "8"}
+# 09-08 loss-ledger-3 #1: harness-enforced probe discipline on the 900 s regime — graft_probe
+# (submission/_throughput_v1/graft_probe.py) installed in memory; flags read at call time. Differs
+# from keith_yield900 by exactly the PROBE_* keys. Pre-registration: offkaggle/REGIME_WAVE_STATUS.md.
+PROBE_ENV_KEYS = ("PROBE_ENABLE", "PROBE_MAX_ANALYSIS", "PROBE_MAX_PROBE", "PROBE_MAX_REFUSALS", "PROBE_NOTE_LINES")
+KEITH_PROBE_ENV = {**KEITH_YIELD900_ENV, "PROBE_ENABLE": "1", "PROBE_MAX_ANALYSIS": "2", "PROBE_MAX_PROBE": "5",
+                   "PROBE_MAX_REFUSALS": "2", "PROBE_NOTE_LINES": "3"}
 ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV, "keith_yield900": KEITH_YIELD900_ENV,
            "keith_retry": KEITH_RETRY_ENV, "keith_evid": KEITH_EVID_ENV, "keith_hypo": KEITH_HYPO_ENV,
-           "keith_up8": KEITH_UP8_ENV}
+           "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV}
 ARMS = tuple(ARM_ENV)
 # grafts (submission/_throughput_v1/<name>.py, install() -> "<name>: OK") an arm installs in memory
-ARM_GRAFTS = {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",), "keith_hypo": ("graft_hypo",)}
-GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_")     # every graft flag; scrubbed from the shell for every arm
-GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS
+ARM_GRAFTS = {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",), "keith_hypo": ("graft_hypo",),
+              "keith_probe": ("graft_probe",)}
+GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_", "PROBE_")     # every graft flag; scrubbed from the shell for every arm
+GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEYS
+# loss-ledger-3 reference reads for the PROBE gate (docs/research-2026-09-08/R-loss-ledger-3.md, yield900 regime)
+LEDGER3_REFERENCE = {"turns_ge3_analysis_share": 0.15, "wall_actions_ratio_median": 0.72, "yields_per_draw": "27-30",
+                     "analysis_call_share": 0.49}
+PROBE_GATE = {"refusals_per_game_min": 1.0, "acting_after_refusal_min": 0.5, "turns_ge3_analysis_max": 0.05,
+              "yields_per_draw_max": 20, "wall_actions_ratio_min": 1.0}
 GRAFT_DIR = REPO / "submission/_throughput_v1"
 RUNTIME_ENV_KEYS = ("LOCAL_ANALYZER_BASE_URL", "OPENAI_BASE_URL", "LOCAL_ANALYZER_API_KEY")
 
@@ -252,6 +272,22 @@ TELEMETRY_DEFINITIONS = {
     "max_calls": "--max-calls N: in-memory stop after N analyzer calls per run (results.json:max_calls_stops).",
     "draws": "--draws N = taaf n_passes: each game played N times as independent runs (<gid>_p<draw>); "
              "per_game is keyed by run stem and carries game_id + draw.",
+    "call_types": "loss-ledger-3 call classes from the transcript (scratchpad loss-ledger-3/q3.py ctype): N = no tool "
+                  "call; R = refused by graft_probe ([PROBE-REFUSE] marker inside the [TOOL CALL] section); E = python "
+                  "error (Traceback|Error: in the result) without action( in the code; X = code contains action( ; "
+                  "A = analysis-only (tool call, no action( in the code, no error). The ledger reads the CODE, not the "
+                  "payload: an action() that failed is X here but analysis-only for the graft.",
+    "probe": "graft_probe reads per run: refusals / noact_turns = '[PROBE-REFUSE]' / '[PROBE-NOACT]' marker lines; "
+             "turns_ge3_analysis = turns with >= 3 A-class calls before the first X (the ledger's 15 %; refused calls "
+             "excluded because they were not executed); turns_ge3_nonacting = >= 3 of any non-X class before the first X "
+             "(refusals, errors and no-tool replies included: the strict read); acting_after_refusal = the next python "
+             "call after a refusal in the same turn is X (transcript, code-based) — the graft's own payload-based count "
+             "is in probe.graft (per run) and aggregate.probe.graft; yields_turn_time_budget = turns whose status says "
+             "turn_time_budget; wall_actions_ratio = actions_per_level[wall] / base_actions_per_level[wall] "
+             "(loss-ledger-3 q7: 'wall-level actions/baseline', median 0.72 on yield900).",
+    "probe_gate": "pre-registered ENGAGEMENT (offkaggle/REGIME_WAVE_STATUS.md 09-08): refusals >= 1/game AND "
+                  "acting-after-refusal >= 50 % AND turns_ge3_analysis share < 5 %; ledger-3 secondary reads: "
+                  "turn_time_budget yields < 20/draw and wall actions/baseline median >= 1.0.",
 }
 
 # ---------------------------------------------------------------------------
@@ -912,7 +948,8 @@ def parse_transcript(text: str) -> dict:
             turns.append({"step": int(m.group("step")), "action": int(m.group("action")),
                           "time": m.group("time"), "calls": 0, "status_messages": [],
                           "step_executed": False, "outcome": "incomplete",
-                          "level": None, "hypo": 0, "evid": 0, "evid_level_flags": 0, "quotes": 0})
+                          "level": None, "hypo": 0, "evid": 0, "evid_level_flags": 0, "quotes": 0,
+                          "probe_refusals": 0, "probe_noact": 0, "probe_noact_notice": 0})
             continue
         label = m.group("label")
         if label in ("THINKING", "ASSISTANT") and turns:
@@ -924,12 +961,27 @@ def parse_transcript(text: str) -> dict:
                 if lm:
                     t["level"] = int(lm.group(1))
             t["hypo"] += len(_HYPO_MARK.findall(body))
+            t["probe_noact_notice"] += len(_PROBE_NOTICE_RE.findall(body))
+        elif label.startswith("TOOL CALL: ") and calls:
+            c = calls[-1]
+            if c["turn_index"] == len(turns) - 1 and label == "TOOL CALL: python":
+                c["python_calls"] += 1
+                code = _tool_call_code(body)
+                c["code_chars"] += len(code)
+                c["acts_code"] = c["acts_code"] or bool(_ACTION_CALL_RE.search(code))
+                refused = len(_PROBE_REFUSE_MARK.findall(body))
+                c["refused"] += refused
+                if turns:
+                    turns[-1]["probe_refusals"] += refused
         elif label.startswith("TOOL RESULT: ") and turns:
             turns[-1]["evid"] += len(_EVID_MARK.findall(body))
             turns[-1]["evid_level_flags"] += len(_EVID_LEVEL_MARK.findall(body))
+            if calls and calls[-1]["turn_index"] == len(turns) - 1 and label == "TOOL RESULT: python":
+                calls[-1]["pyerr"] = calls[-1]["pyerr"] or bool(_PYERR_RE.search(body))
         if label == "MODEL RESPONSE META":
             call = {"turn_index": len(turns) - 1, "finish_reason": None, "tool_call_count": 0,
-                    "content_chars": 0, "reasoning_chars_meta": 0, "reasoning_chars": 0}
+                    "content_chars": 0, "reasoning_chars_meta": 0, "reasoning_chars": 0,
+                    "python_calls": 0, "code_chars": 0, "acts_code": False, "refused": 0, "pyerr": False}
             for line in body.splitlines():
                 k, _, v = line.partition(":")
                 k, v = k.strip(), v.strip()
@@ -964,6 +1016,27 @@ def parse_transcript(text: str) -> dict:
                 t["status_messages"].append("request_error")
             elif first.startswith("error:"):
                 t["status_messages"].append("error")
+            t["probe_noact"] += len(_PROBE_NOACT_MARK.findall(body))   # written right after the turn's status
+    for c in calls:
+        c["ledger_type"] = _ledger_call_type(c)
+    for ti, t in enumerate(turns):
+        seq = [c for c in calls if c["turn_index"] == ti]
+        t["call_types"] = "".join(c["ledger_type"] for c in seq)
+        before = t["call_types"].split("X", 1)[0]
+        t["analysis_before_act"] = before.count("A")
+        t["nonacting_before_act"] = len(before)
+        t["yield_turn_time_budget"] = any("turn_time_budget" in m for m in t["status_messages"])
+        # the next python call after a refusal, inside the turn: did it act (code-based)?
+        after, acted = 0, 0
+        pending = False
+        for c in seq:
+            if pending and c["tool_call_count"] > 0:
+                after += 1
+                acted += bool(c["acts_code"] and not c["refused"])
+                pending = False
+            if c["refused"]:
+                pending = True
+        t["calls_after_refusal"], t["acting_after_refusal"] = after, acted
     for t in turns:
         msgs = " | ".join(t["status_messages"])
         if "Step executed" in msgs:
@@ -982,13 +1055,51 @@ def parse_transcript(text: str) -> dict:
     aid_markers = {"evid_markers": sum(t["evid"] for t in turns),
                    "evid_level_flags": sum(t["evid_level_flags"] for t in turns),
                    "hypo_markers": sum(t["hypo"] for t in turns)}
+    probe_markers = {"refusals": sum(t["probe_refusals"] for t in turns),
+                     "noact_turns": sum(t["probe_noact"] for t in turns),
+                     "noact_notices": sum(t["probe_noact_notice"] for t in turns)}
     return {"turns": turns, "calls": calls, "analyzer_status_config": status_cfg, "retry_markers": retry_markers,
-            "aid_markers": aid_markers, "request_errors": request_errors}
+            "aid_markers": aid_markers, "probe_markers": probe_markers, "request_errors": request_errors}
+
+
+def _tool_call_code(body: str) -> str:
+    """The snippet inside a [TOOL CALL: python] section: the stock markup rendering
+    (<parameter=code>...</parameter>) or the JSON fallback ({"code": ...})."""
+    m = _CODE_PARAM_RE.search(body)
+    if m:
+        return m.group(1)
+    try:
+        obj = json.loads(body.strip().split("\n[HARNESS PROBE]", 1)[0])
+        if isinstance(obj, dict) and isinstance(obj.get("code"), str):
+            return obj["code"]
+    except (ValueError, TypeError):
+        pass
+    return ""
+
+
+def _ledger_call_type(c: dict) -> str:
+    """loss-ledger-3 q3.py ctype, plus R for a call graft_probe refused."""
+    if c["tool_call_count"] == 0:
+        return "N"
+    if c["refused"]:
+        return "R"
+    if c["pyerr"] and not c["acts_code"]:
+        return "E"
+    return "X" if c["acts_code"] else "A"
 
 
 # graft_retry marker lines (written under a "[HARNESS RETRY]" transcript section)
 _RETRY_MARK = re.compile(r"^\[RETRY\] game=\S+ level=\d+ actions=\d+", re.M)
 _RETRY_CLEAR_MARK = re.compile(r"^\[RETRY-CLEAR\] game=\S+ level=\d+ actions=", re.M)
+# graft_probe: refusal marker (inside the refused call's [TOOL CALL] section), NOACT marker (after the turn's
+# [ANALYZER STATUS]), the one-line notice at the top of the next [USER PROMPT]
+_PROBE_REFUSE_MARK = re.compile(r"^\[PROBE-REFUSE\] game=\S+ turn=\d+ analysis_calls=\d+", re.M)
+_PROBE_NOACT_MARK = re.compile(r"^\[PROBE-NOACT\] game=\S+ turn=\d+ analysis_calls=\d+", re.M)
+_PROBE_NOTICE_RE = re.compile(r"^Previous turn executed no action after \d+ analysis calls", re.M)
+# loss-ledger-3 load.py: code from the tool-call markup, act = r'\baction\(' on the code, pyerr on the result
+_CODE_PARAM_RE = re.compile(r"<parameter=code>\n?([\s\S]*?)</parameter>")
+_ACTION_CALL_RE = re.compile(r"\baction\(")
+_PYERR_RE = re.compile(r"Traceback|Error:")
 # graft_evidence / graft_hypo blocks (line-anchored on the block's fixed header, inside the section they ride)
 _EVID_MARK = re.compile(r"^\[EVID\] harness object diff for ", re.M)
 _EVID_LEVEL_MARK = re.compile(r"^LEVEL CLEARED after action \d+ ", re.M)
@@ -1059,11 +1170,55 @@ def _stats(values: list[float]) -> dict:
             "p90": vs[min(len(vs) - 1, int(round(0.9 * (len(vs) - 1))))], "max": vs[-1], "sum": sum(vs)}
 
 
+def probe_reads(turns: list[dict], calls: list[dict], probe_markers: dict, *, actions_per_level: list | None,
+                baselines: list | None, levels_completed: int | None, number_of_levels: int | None,
+                graft_counters: dict | None = None) -> dict:
+    """graft_probe mechanism reads for one run (TELEMETRY_DEFINITIONS['probe'])."""
+    n_turns = len(turns)
+    ge3 = sum(1 for t in turns if t.get("analysis_before_act", 0) >= 3)
+    ge3_strict = sum(1 for t in turns if t.get("nonacting_before_act", 0) >= 3)
+    after = sum(t.get("calls_after_refusal", 0) for t in turns)
+    acted = sum(t.get("acting_after_refusal", 0) for t in turns)
+    types: dict[str, int] = {}
+    for c in calls:
+        types[c.get("ledger_type", "?")] = types.get(c.get("ledger_type", "?"), 0) + 1
+    ratio = wall_actions = wall_baseline = None
+    if (levels_completed is not None and number_of_levels and levels_completed < number_of_levels
+            and actions_per_level and baselines and levels_completed < len(actions_per_level)
+            and levels_completed < len(baselines)):
+        wall_actions = actions_per_level[levels_completed]
+        wall_baseline = baselines[levels_completed]
+        if wall_baseline:
+            ratio = wall_actions / wall_baseline
+    out = {
+        "refusals": probe_markers.get("refusals", 0),
+        "noact_turns": probe_markers.get("noact_turns", 0),
+        "noact_notices": probe_markers.get("noact_notices", 0),
+        "turns_with_refusal": sum(1 for t in turns if t.get("probe_refusals")),
+        "turns_ge3_analysis": {"turns": ge3, "of": n_turns, "share": _share(ge3, n_turns)},
+        "turns_ge3_nonacting": {"turns": ge3_strict, "of": n_turns, "share": _share(ge3_strict, n_turns)},
+        "acting_after_refusal": {"acted": acted, "of": after, "share": _share(acted, after)},
+        "call_types": types,
+        "analysis_call_share": _share(types.get("A", 0), len(calls)),
+        "yields_turn_time_budget": sum(1 for t in turns if t.get("yield_turn_time_budget")),
+        "wall_actions": wall_actions, "wall_baseline": wall_baseline, "wall_actions_ratio": ratio,
+    }
+    if graft_counters:
+        g = graft_counters
+        out["graft"] = {k: g.get(k) for k in ("refusals", "turns_with_refusal", "noact_turns", "analysis_calls_total",
+                                                 "acting_calls_total", "calls_after_refusal", "acting_calls_after_refusal",
+                                                 "turns_total", "turns_ge3_analysis")}
+        out["graft"]["acting_after_refusal_share"] = _share(g.get("acting_calls_after_refusal", 0), g.get("calls_after_refusal", 0))
+    return out
+
+
 def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None,
                        shim_records: list[dict] | None = None,
                        wallclock_s: float | None = None,
                        levels_completed: int | None = None, number_of_levels: int | None = None,
-                       calls_budget: int | None = None, wave_preemptions: float | None = None) -> dict:
+                       calls_budget: int | None = None, wave_preemptions: float | None = None,
+                       actions_per_level: list | None = None, baselines: list | None = None,
+                       graft_counters: dict | None = None) -> dict:
     parsed = parse_transcript(transcript_text)
     calls, turns = parsed["calls"], parsed["turns"]
     turn_levels = [t["level"] for t in turns]
@@ -1111,6 +1266,9 @@ def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None
         "level_reached": level_reached,
         "wall_level": wall_level,
         "engagement": engagement(turns, wall_level),
+        "probe": probe_reads(turns, calls, parsed["probe_markers"], actions_per_level=actions_per_level,
+                             baselines=baselines, levels_completed=levels_completed, number_of_levels=number_of_levels,
+                             graft_counters=graft_counters),
     }
     client_errors = sum(1 for r in (shim_records or []) if r.get("error") or (r.get("status") or 0) >= 400)
     tel["wall"] = wall_reads(turns, wall_level=wall_level, levels_completed=levels_completed, calls_budget=calls_budget,
@@ -1180,9 +1338,72 @@ def aggregate_telemetry(per_game: dict[str, dict]) -> dict:
         "hypo_markers_per_game": sum(g.get("hypo_markers") or 0 for g in games) / n,
         "engagement": _pooled_engagement(games),
         "wall": _pooled_wall(games),
+        "probe": _pooled_probe(games),
         "first_call_prompt_tokens": _stats([g["first_call_prompt_tokens"] for g in games
                                             if g.get("first_call_prompt_tokens") is not None]),
     }
+
+
+def _pooled_probe(games: list[dict]) -> dict:
+    ps = [g.get("probe") or {} for g in games]
+    n = len(ps)
+    draws = max((int(g.get("draw") or 0) for g in games), default=0) + 1
+
+    def pooled(key: str, num: str, den: str) -> dict:
+        a = sum(((p.get(key) or {}).get(num, 0)) for p in ps)
+        b = sum(((p.get(key) or {}).get(den, 0)) for p in ps)
+        return {num: a, den: b, "share": _share(a, b)}
+
+    types: dict[str, int] = {}
+    for p in ps:
+        for k, v in (p.get("call_types") or {}).items():
+            types[k] = types.get(k, 0) + v
+    ratios = [p["wall_actions_ratio"] for p in ps if p.get("wall_actions_ratio") is not None]
+    refusals = sum(p.get("refusals", 0) for p in ps)
+    yields = sum(p.get("yields_turn_time_budget", 0) for p in ps)
+    grafts = [p["graft"] for p in ps if p.get("graft")]
+    g_after = sum((g.get("calls_after_refusal") or 0) for g in grafts)
+    g_acted = sum((g.get("acting_calls_after_refusal") or 0) for g in grafts)
+    out = {
+        "refusals_total": refusals, "refusals_per_game": _div(refusals, n),
+        "games_with_refusal": sum(1 for p in ps if p.get("refusals", 0) > 0),
+        "noact_turns_total": sum(p.get("noact_turns", 0) for p in ps),
+        "noact_notices_total": sum(p.get("noact_notices", 0) for p in ps),
+        "turns_ge3_analysis": pooled("turns_ge3_analysis", "turns", "of"),
+        "turns_ge3_nonacting": pooled("turns_ge3_nonacting", "turns", "of"),
+        "acting_after_refusal": pooled("acting_after_refusal", "acted", "of"),
+        "graft": {"runs": len(grafts), "calls_after_refusal": g_after, "acting_calls_after_refusal": g_acted,
+                  "acting_after_refusal_share": _share(g_acted, g_after),
+                  "refusals": sum((g.get("refusals") or 0) for g in grafts),
+                  "turns_ge3_analysis": sum((g.get("turns_ge3_analysis") or 0) for g in grafts),
+                  "analysis_calls_total": sum((g.get("analysis_calls_total") or 0) for g in grafts),
+                  "acting_calls_total": sum((g.get("acting_calls_total") or 0) for g in grafts)},
+        "call_types": types,
+        "analysis_call_share": _share(types.get("A", 0), sum(types.values())),
+        "yields_turn_time_budget_total": yields, "draws": draws, "yields_per_draw": _div(yields, draws),
+        "wall_actions_ratio": {"n": len(ratios), "median": statistics.median(ratios) if ratios else None,
+                               "under_1x": sum(1 for r in ratios if r < 1.0)},
+    }
+    after_share = out["graft"]["acting_after_refusal_share"]
+    if after_share is None:
+        after_share = out["acting_after_refusal"]["share"]
+    ge3 = out["turns_ge3_analysis"]["share"]
+    gate = {
+        "refusals_per_game": {"value": out["refusals_per_game"], "min": PROBE_GATE["refusals_per_game_min"],
+                              "ok": out["refusals_per_game"] is not None and out["refusals_per_game"] >= PROBE_GATE["refusals_per_game_min"]},
+        "acting_after_refusal": {"value": after_share, "min": PROBE_GATE["acting_after_refusal_min"],
+                                 "ok": after_share is not None and after_share >= PROBE_GATE["acting_after_refusal_min"]},
+        "turns_ge3_analysis": {"value": ge3, "max": PROBE_GATE["turns_ge3_analysis_max"],
+                               "ok": ge3 is not None and ge3 < PROBE_GATE["turns_ge3_analysis_max"]},
+        "yields_per_draw": {"value": out["yields_per_draw"], "max": PROBE_GATE["yields_per_draw_max"],
+                            "ok": out["yields_per_draw"] is not None and out["yields_per_draw"] < PROBE_GATE["yields_per_draw_max"]},
+        "wall_actions_ratio": {"value": out["wall_actions_ratio"]["median"], "min": PROBE_GATE["wall_actions_ratio_min"],
+                               "ok": (out["wall_actions_ratio"]["median"] is not None
+                                      and out["wall_actions_ratio"]["median"] >= PROBE_GATE["wall_actions_ratio_min"])},
+    }
+    gate["engaged"] = bool(gate["refusals_per_game"]["ok"] and gate["acting_after_refusal"]["ok"] and gate["turns_ge3_analysis"]["ok"])
+    out["gate"] = gate
+    return out
 
 
 def _pooled_wall(games: list[dict]) -> dict:
@@ -1211,10 +1432,12 @@ _STEM_RE = re.compile(r"^(?P<gid>.+)_p(?P<draw>\d+)\.txt$")
 
 
 def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: list[dict], *,
-                    calls_budget: int | None = None, wave_preemptions: float | None = None) -> dict:
+                    calls_budget: int | None = None, wave_preemptions: float | None = None,
+                    graft_per_game: dict | None = None) -> dict:
     """Per-run + pooled telemetry from <out>/transcripts/<gid>_p<draw>.txt, the
     benchmark rows (actions, wallclock, levels) and the client shim records.
-    per_game is keyed by run stem (<gid>_p<draw>; one entry per game per draw)."""
+    per_game is keyed by run stem (<gid>_p<draw>; one entry per game per draw).
+    graft_per_game: graft_probe.status()['per_game'] (keyed by run stem) when installed."""
     by_stem_shim: dict[str, list[dict]] = {}
     for r in shim_records:
         key = r.get("run_stem") or f"{r.get('game_id')}_p0"
@@ -1238,7 +1461,9 @@ def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: 
                                  shim_records=recs, wallclock_s=row.get("wallclock_s"),
                                  levels_completed=row.get("levels_completed"),
                                  number_of_levels=row.get("number_of_levels"),
-                                 calls_budget=calls_budget, wave_preemptions=wave_preemptions)
+                                 calls_budget=calls_budget, wave_preemptions=wave_preemptions,
+                                 actions_per_level=row.get("actions_per_level"), baselines=row.get("baselines"),
+                                 graft_counters=(graft_per_game or {}).get(stem))
         tel["game_id"] = gid
         tel["draw"] = draw
         tel["levels_completed"] = row.get("levels_completed")
@@ -1290,6 +1515,31 @@ MOCK_TOOL_CODE = (
 )
 
 
+MOCK_ANALYSIS_CODE = "seg = current_frame.segmentation\nprint('mock-analysis', len(history), len(seg) if seg else 0)\n"
+MOCK_SENTINEL = "MOCK-SENTINEL-ANALYSIS"
+MOCK_SENTINEL_CODE = f"print('{MOCK_SENTINEL}', len(history))\n"
+
+
+def mock_turn_position(messages: list) -> int:
+    """Python calls already made in the turn in flight = tool messages after the last user
+    message that carries the turn's own prompt ('Current state: step ...'; the inline
+    'You have not acted yet' follow-ups do not)."""
+    def text(m):
+        c = m.get("content")
+        if isinstance(c, str):
+            return c
+        if isinstance(c, list):
+            return "\n".join(str(p.get("text", "")) for p in c if isinstance(p, dict) and p.get("type") == "text")
+        return ""
+    last = None
+    for i, m in enumerate(messages):
+        if isinstance(m, dict) and m.get("role") == "user" and "Current state: step" in text(m):
+            last = i
+    if last is None:
+        return 0
+    return sum(1 for m in messages[last + 1:] if isinstance(m, dict) and m.get("role") == "tool")
+
+
 class MockVLLM:
     """Loopback OpenAI-compatible server for --dry-run. Serves /v1/models,
     /health, /metrics (vLLM-shaped counters), /arc3/identity and
@@ -1300,16 +1550,19 @@ class MockVLLM:
     real `action(...)`."""
 
     def __init__(self, token: str, served_model: str = SERVED_MODEL_NAME, latency_s: float = 0.25,
-                 profile: str = DEFAULT_EXPECT_PROFILE) -> None:
+                 profile: str = DEFAULT_EXPECT_PROFILE, analysis_calls_per_turn: int = 0) -> None:
         import http.server  # noqa: PLC0415
         self.token = token
         self.served_model = served_model
         self.profile = profile          # what the mock's /arc3/identity reports (the preflight gate reads it)
         self.latency_s = latency_s
+        # --mock-analysis-calls N: the first N python calls of every turn are analysis-only (no action());
+        # the Nth prints MOCK_SENTINEL, so a probe arm must refuse it and a stock arm runs it
+        self.analysis_calls_per_turn = max(0, int(analysis_calls_per_turn or 0))
         self.lock = threading.Lock()
         self.state = {"calls": 0, "redirected": 0, "poll_with_auth": 0, "poll_without_auth": 0,
                       "prompt_tokens": 0, "generation_tokens": 0, "e2e_sum": 0.0,
-                      "unauthorized": 0, "stop": 0, "tool_calls": 0}
+                      "unauthorized": 0, "stop": 0, "tool_calls": 0, "analysis_calls": 0, "sentinel_calls": 0}
         self.pending: dict[str, bytes] = {}
         mock = self
 
@@ -1429,9 +1682,17 @@ class MockVLLM:
             with self.lock:
                 self.state["stop"] += 1
         else:
-            message = {"role": "assistant", "content": None, "reasoning": reasoning,
+            code = MOCK_TOOL_CODE
+            pos = mock_turn_position(payload.get("messages") or []) if self.analysis_calls_per_turn else 0
+            if self.analysis_calls_per_turn and pos < self.analysis_calls_per_turn:
+                code = MOCK_SENTINEL_CODE if pos == self.analysis_calls_per_turn - 1 else MOCK_ANALYSIS_CODE
+                with self.lock:
+                    self.state["analysis_calls"] += 1
+                    self.state["sentinel_calls"] += code is MOCK_SENTINEL_CODE
+            message = {"role": "assistant", "content": "Open questions: what does SPACE do; is the bar a timer.",
+                       "reasoning": reasoning,
                        "tool_calls": [{"id": f"call-{k}", "type": "function",
-                                       "function": {"name": "python", "arguments": json.dumps({"code": MOCK_TOOL_CODE})}}]}
+                                       "function": {"name": "python", "arguments": json.dumps({"code": code})}}]}
             finish = "tool_calls"
             with self.lock:
                 self.state["tool_calls"] += 1
@@ -1543,6 +1804,8 @@ def game_rows(bm) -> list[dict]:
             "number_of_levels": int(getattr(gr, "number_of_levels", 0) or 0),
             "actions": len(hist),
             "actions_per_level": list(getattr(gr, "actions_per_level", None) or []),
+            # per-level HUMAN baselines (taaf game_api copies arcengine baseline_actions offline; None in submission mode)
+            "baselines": (list(getattr(gr, "base_actions_per_level", None) or []) or None),
             "state": str(getattr(gr, "state", None)),
             "score": getattr(gr, "final_score", None),
             "wallclock_s": getattr(gr, "final_wallclock_seconds", None),
@@ -1649,6 +1912,29 @@ def render_summary(result: dict, telemetry: dict) -> str:
             f"engagement wall {_pct((eng.get('hypo_wall') or {}).get('share'))} "
             f"({(eng.get('hypo_wall') or {}).get('turns')}/{(eng.get('hypo_wall') or {}).get('of')}) all {_pct((eng.get('hypo') or {}).get('share'))} | "
             f"grafts {installed} | flags {knobs}")
+    pb = agg.get("probe") or {}
+    if "graft_probe" in installed or pb.get("refusals_total"):
+        knobs = {k: env.get(k) for k in PROBE_ENV_KEYS if env.get(k) is not None}
+        gate = pb.get("gate") or {}
+        ge3, ge3s, aar, gaar = (pb.get("turns_ge3_analysis") or {}), (pb.get("turns_ge3_nonacting") or {}), \
+            (pb.get("acting_after_refusal") or {}), (pb.get("graft") or {})
+        war = pb.get("wall_actions_ratio") or {}
+        lines.append(
+            f"  PROBE  refusals {pb.get('refusals_total')} ({_fmt(pb.get('refusals_per_game'), 2)}/game; gate >= {PROBE_GATE['refusals_per_game_min']:g}) "
+            f"games {pb.get('games_with_refusal')} | acting-after-refusal graft {gaar.get('acting_calls_after_refusal')}/{gaar.get('calls_after_refusal')} "
+            f"({_pct(gaar.get('acting_after_refusal_share'))}) transcript {aar.get('acted')}/{aar.get('of')} ({_pct(aar.get('share'))}; gate >= {_pct(PROBE_GATE['acting_after_refusal_min'])}) | "
+            f"turns >=3 analysis-only {ge3.get('turns')}/{ge3.get('of')} ({_pct(ge3.get('share'))}; gate < {_pct(PROBE_GATE['turns_ge3_analysis_max'])}, "
+            f"ledger-3 {_pct(LEDGER3_REFERENCE['turns_ge3_analysis_share'])}) strict incl. refused/errors {_pct(ge3s.get('share'))} | "
+            f"NOACT turns {pb.get('noact_turns_total')} (notices {pb.get('noact_notices_total')}) | "
+            f"call mix {pb.get('call_types')} analysis share {_pct(pb.get('analysis_call_share'))} (ledger-3 {_pct(LEDGER3_REFERENCE['analysis_call_share'])}) | "
+            f"grafts {installed} | flags {knobs}")
+        lines.append(
+            f"  PROBE-WALL actions/baseline median {_fmt(war.get('median'), 2)} (n={war.get('n')}, under 1x {war.get('under_1x')}; "
+            f"ledger-3 {LEDGER3_REFERENCE['wall_actions_ratio_median']}, target >= {PROBE_GATE['wall_actions_ratio_min']:g}) | "
+            f"turn_time_budget yields {pb.get('yields_turn_time_budget_total')} ({_fmt(pb.get('yields_per_draw'), 1)}/draw; "
+            f"ledger-3 {LEDGER3_REFERENCE['yields_per_draw']}, target < {PROBE_GATE['yields_per_draw_max']}) | "
+            f"ENGAGED (pre-registered: refusals, after-refusal, >=3-analysis) = {'YES' if gate.get('engaged') else 'NO'} "
+            f"{{{', '.join(k + ('+' if v.get('ok') else '-') for k, v in gate.items() if isinstance(v, dict))}}}")
     w = agg.get("wall") or {}
     if w:
         per_l2 = {stem: (g.get("wall") or {}).get("calls_at_l2") for stem, g in sorted(telemetry.get("per_game", {}).items())}
@@ -1673,19 +1959,22 @@ def render_summary(result: dict, telemetry: dict) -> str:
         lines.append(f"  DRAWS {agg.get('draws')} | levels per (game, draw): {per_draw}")
     if result.get("knob_overrides"):
         lines.append(f"  KNOB OVERRIDES (not the pinned arm env): {result['knob_overrides']}")
-    lines.append("  run               lv/n    act  calls turns reas_mean  len%  notool%  e2e_s   score  retry  evid  hypo  wall%  upt%  c@L2 att void  state")
+    lines.append("  run               lv/n    act  calls turns reas_mean  len%  notool%  e2e_s   score  retry probe wall/b  evid  hypo  wall%  upt%  c@L2 att void  state")
     for stem, g in sorted(telemetry.get("per_game", {}).items()):
         r = g.get("reasoning_chars") or {}
         c = (g.get("client") or {}).get("e2e_s") or {}
         e = g.get("engagement") or {}
+        p = g.get("probe") or {}
         retry_col = f"{g.get('retries_fired') or 0}/{g.get('retry_clears') or 0}"
+        probe_col = f"{p.get('refusals') or 0}/{p.get('noact_turns') or 0}"
         wall_share = (e.get("evid_wall") or {}).get("share") if g.get("evid_markers") else (e.get("hypo_wall") or {}).get("share")
         lines.append(
             f"  {stem:17s} {str(g.get('levels_completed')) + '/' + str(g.get('number_of_levels')):>5} "
             f"{_fmt(g.get('actions_total')):>6} {g.get('calls'):>5} {g.get('turns'):>5} "
             f"{_fmt(r.get('mean'), 0):>9} {_pct(g.get('length_finish_share')):>6} "
             f"{_pct(g.get('no_tool_call_share')):>7} {_fmt(c.get('mean')):>6} {_fmt(g.get('score'), 2):>7} "
-            f"{retry_col:>6} {g.get('evid_markers') or 0:>5} {g.get('hypo_markers') or 0:>5} {_pct(wall_share):>6} "
+            f"{retry_col:>6} {probe_col:>5} {_fmt(p.get('wall_actions_ratio'), 2):>6} "
+            f"{g.get('evid_markers') or 0:>5} {g.get('hypo_markers') or 0:>5} {_pct(wall_share):>6} "
             f"{_pct(((g.get('wall') or {}).get('uptake_wall') or {}).get('share')):>5} "
             f"{str((g.get('wall') or {}).get('calls_at_l2', '-')):>5} {'Y' if (g.get('wall') or {}).get('attempt') else '-':>3} "
             f"{'VOID' if (g.get('wall') or {}).get('void') else '-':>4}  "
@@ -1857,13 +2146,15 @@ class Wave:
                                "redirected": self.shim.redirected, "path": str(self.shim.path)}
         shim_records = load_shim_records(self.shim.path)
         md = self.result["metrics"].get("delta") or {}
+        self.result["grafts"]["status"] = graft_status(self.arm)   # the graft's own counters (retry_log, skips, ...)
+        probe_per_game = (self.result["grafts"]["status"].get("graft_probe") or {}).get("per_game")
         telemetry = build_telemetry(self.out_dir / "transcripts", rows, shim_records,
-                                    calls_budget=self.max_calls, wave_preemptions=md.get("preemptions"))
+                                    calls_budget=self.max_calls, wave_preemptions=md.get("preemptions"),
+                                    graft_per_game=probe_per_game)
         self.result["max_calls_stops"] = dict(_MAX_CALLS.get("stops") or {})
         self.result["concurrency_override"] = self.concurrency != GEOMETRY["concurrency"]
         telemetry["arm"] = self.arm
         telemetry["dry_run"] = self.dry_run
-        self.result["grafts"]["status"] = graft_status(self.arm)   # the graft's own counters (retry_log, skips, ...)
         telemetry["grafts"] = self.result["grafts"]
         cfgs = [g.get("analyzer_status_config") for g in telemetry["per_game"].values() if g.get("analyzer_status_config")]
         telemetry["aggregate"]["analyzer_status_config_first"] = cfgs[0] if cfgs else None
@@ -1922,6 +2213,10 @@ def main(argv: list[str] | None = None) -> int:
                         "the run refuses to start on any other profile")
     p.add_argument("--mock-profile", default=None,
                    help="dry-run only: the profile the mock identity reports (to exercise the gate)")
+    p.add_argument("--mock-analysis-calls", type=int, default=None,
+                   help="dry-run only: the mock answers the first N python calls of every turn with analysis-only "
+                        "snippets (the Nth prints a sentinel) so graft_probe's refusal is exercised; default 3 for an "
+                        "arm that installs graft_probe, else 0 (recorded in results.json:mock_analysis_calls)")
     p.add_argument("--preflight-timeout", type=float, default=2400.0)
     p.add_argument("--progress-every", type=float, default=120.0)
     p.add_argument("--knob", action="append", default=None, metavar="KEY=VALUE",
@@ -1946,11 +2241,17 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=False)
 
     mock = None
+    mock_analysis_calls = 0
     if args.dry_run:
+        mock_analysis_calls = args.mock_analysis_calls if args.mock_analysis_calls is not None else (
+            3 if "graft_probe" in ARM_GRAFTS.get(args.arm, ()) else 0)
         mock = MockVLLM(token, latency_s=args.mock_latency_s,
-                        profile=args.mock_profile or args.expect_profile).start()
+                        profile=args.mock_profile or args.expect_profile,
+                        analysis_calls_per_turn=mock_analysis_calls).start()
         base_url = mock.base_url
-        print(f"[regime] DRY RUN: mock vLLM on {base_url} (303 legs every 3rd call, text-only every 7th)", flush=True)
+        print(f"[regime] DRY RUN: mock vLLM on {base_url} (303 legs every 3rd call, text-only every 7th"
+              f"{', first ' + str(mock_analysis_calls) + ' python calls per turn analysis-only' if mock_analysis_calls else ''})",
+              flush=True)
     else:
         base_url = args.base_url.rstrip("/")
         if not base_url.endswith("/v1"):
@@ -1990,6 +2291,8 @@ def main(argv: list[str] | None = None) -> int:
                 max_calls=args.max_calls)
     wave.result["grafts"]["installed"] = grafts
     wave.result["expect_profile"] = args.expect_profile
+    if args.dry_run:
+        wave.result["mock_analysis_calls"] = mock_analysis_calls
     if knobs:
         wave.result["knob_overrides"] = knobs
     wave.setup(recorded_env, stock, endpoint)
