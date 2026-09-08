@@ -801,3 +801,48 @@ the block is worth 8 play calls is exactly what the wave measures; the CARRY-SAF
 candidate / 45-47 counterbalanced redraw / <= 44 or engaged-and-flat dead; co-primary walls >= 3 of 12; safety; and
 fit-the-clock), at `CARRY_TARGET_FRACTION=0.75`, **first in a fresh Modal boot** (the container from this kill test is
 allowed to scale to zero first, per the standing order-control law).
+
+### RESULT 2026-09-09 — `keith_carry` @ 0.75, 25-GAME WAVE: ENGAGED, FLAT → **DEAD** (pre-registered read)
+
+Wave `offkaggle/results/20260908T2110-keith_carry75` (first in a FRESH boot 21:27Z, identity ok: kv5 on RTX PRO 6000;
+2.24 h, ≈$9). Live geometry (25 games, conc 28, 7,920 s/game).
+
+**ENGAGED = YES, cleanly:** 232 compactions (9.28/game), 2 failures of 234 (0.9 %), **0 requests over the 32,768
+window** (max 31,304), 1,055/1,374 calls (76.8 %) carried the block, first block at call #13 (median), block 3,849
+chars mean, 130.7 s each. Context fill 18,514 tok = **58 % of budget** (0.5 arm 48 %, stock 64 %) — the knob held at
+scale. The mechanism did exactly what it was built to do, on 25 games.
+
+**PRIMARY: 41 levels vs the pooled six-draw base 39.33 (sd 2.34) → +1.7 = +0.71 sd — INSIDE the band ⇒ DEAD**
+(bands: ≥48 step candidate / 45-47 redraw / ≤44 or engaged-and-flat dead). Note the coincidence: the 09-08 probe
+wave also landed on exactly 41 (+1.7, +0.71 sd). **CO-PRIMARY: 0 of the 12 six-draw never-passed walls passed**
+(target ≥3), with all 12 present in the wave — a cleaner negative than the level total, because the walls are the
+thing persistent knowledge was supposed to break.
+Per game: ar25 4, ft09 5, lp85 4, re86 3, vc33 3, cd82 2, r11l 2, su15 2, tn36 2, tu93 2, and 12 games at 1;
+zero-level games 3 (bp35, sc25, sk48 — the base's zero games, failing the same way).
+
+**COSTS, measured:** requests/game 64.2 (55 play + 9.28 compaction) vs the stock's 52-55 — compaction is a **14 %
+tax on the request budget**; vLLM KV **preemptions 386 vs the 110-180 regime constant** (2-3×, from the extra
+concurrent requests, not from bigger contexts — fill is *below* the stock's); **GAME_OVERs 1.36/run vs the base's
+0.87 (+56 %)**. The one gain is efficiency: live-cap score 9.47/game vs 8.42 (+12 %) — but per R-score-arithmetic the
+entire efficiency term is worth ≤0.8 LB ever, while 98 % of the loss is levels, so it does not buy a step.
+Fit-the-clock: 55 × 123 s + 9.28 × 131 s ≈ 7,980 s vs the 7,920 s cap — the arm is marginally OVER, i.e. not
+live-eligible without trading away play calls.
+
+**VERDICT: A1 (carry + compact) is DEAD as a step on this brain.** Two doses (target 0.5 and 0.75), both engaged,
+neither outside the base band; the 0.75 dose fixed the 0.5 dose's regression and still bought nothing. This is the
+**fifth engaged-and-flat replication** on this instrument (patch 21, yield900, probe discipline, carry 0.5, carry 0.75).
+No redraw is bought: the pre-registration said dead, and the campaign's own law ("two draws of +5 prove nothing")
+applies with more force to one draw of +1.7.
+
+**WHAT THIS DOES AND DOES NOT KILL.** It kills "give the agent better *prose* knowledge that persists" — the blocks
+were excellent (verified mechanics with coordinates, refuted hypotheses) and changed nothing. It does NOT directly
+kill the executable half of the thesis (NVIDIA NOOA / Polyphony persist an *executable, verified* model and a
+per-game toolkit, not a summary), which is A2/A3/A4. It does downgrade the prior on A2 (persistent workspace),
+because A2 is 3-4 days of build on the same "the agent is model-starved" premise.
+**RECOMMENDED NEXT (Ahmed's call, not started):** before spending 3-4 days on A2, run the reopen audit's #1 — the
+**Stage-0 rerun on Flash-Next** (~1 day, ≈$5, `docs/research-2026-09-02/S0-stage0-kill-test.md` §1-3): given recorded
+frontier transitions plus a backtest tool, can the deployed brain emit a backtest-green executable model at all? That
+lane was killed on Qwen3.6/3.8-27B whose failure was thinking non-termination — a failure mode Flash-Next does not
+have. It is decisive for the whole executable-model lane (A2 included): ≥2/3 green ⇒ build A2/protocol-lite with
+evidence; 0/3 ⇒ A2 is dead by construction and Track A becomes A3/A4 (port NOOA / Polyphony as alternative loops)
+plus Track D (Oct-1 absorption).
