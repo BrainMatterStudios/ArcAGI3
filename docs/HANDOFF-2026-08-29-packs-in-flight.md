@@ -619,3 +619,21 @@ turns re-list untested hypotheses. Ceiling +0.27 (paralysis) to +0.53 (all compr
 realistically lower. Rig arm ≈$9, first in a fresh session; rule: ENGAGEMENT turns with ≥3
 analysis-only calls < 5% (now 15%) and wall actions/baseline ≥ 1.0 (now 0.72); PRIMARY ≥ 52 levels
 AND ≥ 3 of the 12 never-passed walls → step candidate; 45–51 redraw; < 45 dead.
+
+## §33 — 2026-09-08: probe discipline (harness-enforced act-after-2-analysis) ENGAGED and FLAT → DEAD
+
+Built (`submission/_throughput_v1/graft_probe.py`, judge SHIP-WITH-FIXES applied: refusal cap 4, span carry
+across no-action turns, acted-after-first-refusal gate, leak split; 14/14 + dry-run 16/16 + runner 26/26;
+commit 03a10ec) and flown once on a cold Modal boot in live geometry ($9): ENGAGED (2.64 refusals/game, 87.5 %
+acted after the first refusal, wall actions/baseline 0.72 → 1.00, analysis share 49 → 32 %, yields 27–30 → 0),
+**41 levels vs pooled base 39.33 (sd 2.34) → +0.71 sd, inside the band → DEAD** per the locked read. Paired vs
+the four Modal base draws +0.07 lv/game (se 0.15). 2/12 never-passed walls passed (dc22 L2, r11l L3) — within
+a null draw; no redraw. GAME_OVERs 1.28/run (yield900 0.74, yield-60 1.34): short forced probes die like the
+60 s regime. Runner safety-line bug (compact-JSON `game_over` pre-filter) found and fixed with a test.
+
+Standing reading after four replications (patch 21, yield900, probe; plus evid/hypo/retry/up8 dead):
+behaviour-shaping harness levers on Flash-Next are closed at the ±0.5 lv/game resolution the rig can see.
+What is left is (a) levers that change what the model perceives or knows — the two tried (evidence aid,
+hypothesis block) were dead; (b) the model axis, blocked by the 96 GB box (Flash-Next loads at 81.8 GiB);
+(c) a different loop entirely; (d) the Sept-30 open-sourcing absorption. Live: yield900 draw 2 (sub
+56088705) pending at 10:15Z; draw 3 armed 09-09 02:00Z; 3-draw rule unchanged.

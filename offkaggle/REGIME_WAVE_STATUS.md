@@ -621,4 +621,40 @@ READ (locked before launch, 09-08): PRIMARY levels >= 52 -> step candidate (coun
 39.33 +/- 2.34 -> dead. NOT ENGAGED -> the lever is unread regardless of levels (a mechanism failure, not a
 score). VOID rules unchanged (request errors > 0, preemptions > 0, length-finish > 1 %); first in a fresh boot.
 Judge's prior: weakly positive, +0 to +3 levels; the modal outcome is a null.
+
+### RESULT 2026-09-08 — `keith_probe` ENGAGED, FLAT → DEAD (pre-registered read)
+
+Wave `offkaggle/results/20260908T0752-keith_probe` (first in a fresh boot 07:52Z, identity ok: kv5 profile on
+RTX PRO 6000, no override; 2.25 h; e2e 150 s, MTP 59 %, vLLM KV preemptions 121 — same 109–181 band as every
+full-clock run of this regime; length-finish 0.5 %; one proxy 502 at +74 min + the usual end-of-clock read
+timeouts; per-run VOID tags fire on every wave of this regime and are ignored as before). Cost ≈ $9.
+
+ENGAGED = YES, strongly: refusals 66 (2.64/game, 23/25 games); acted after the FIRST refusal 56/64 = 87.5 %
+(transcript read 96.9 %); wall actions/baseline median 1.00 (ledger-3: 0.72); spans with ≥ 3 executed
+analysis-only calls 1.4 % (was 15 %; 10 of the 11 are dead-branch `if found: action(...)`, cap lifted 0);
+analysis share of calls 32 % (was 49 %); turn-budget yields 0 (was 27–30/draw); calls/turn 1.68; actions
+158/game (yield900 102, yield-60 154); NOACT turns 0. The harness reshaped the model's behaviour exactly as
+designed.
+
+PRIMARY: **41 levels** vs pooled six-draw base 39.33 (sd 2.34) → +1.7 (+0.71 sd) — inside the band →
+**DEAD** under the locked read (engaged-but-flat). Paired per game vs the four Modal base draws
+(M1 36, M4 40, Y1 41, Y2 40): mean +0.07, sd 0.74, se 0.15. Four games above their 4-draw max (cd82 2,
+dc22 2, r11l 3, su15 2), one below its 4-draw min (tn36 0, a high-variance game). Co-primary: 2/12
+never-passed walls passed (dc22 L2, r11l L3; target ≥ 3). Local score 7.44; live-cap 7.92/game (base 8.42).
+
+SAFETY (corrected after the wave — runner bug, see below): GAME_OVERs 32 = 1.28/run vs yield900 Modal
+0.74/run (17, 20) and yield-60 Modal 1.34/run — forced ≤ 5-action probes die about as often as the 60 s
+regime did; the yield900 regime's lower death rate came from its longer analysis, which the probe removes.
+
+Instrument bug found and fixed (commit after this block): `game_overs_from_events` pre-filtered lines on
+`'"game_over": true'` (with a space) but the harness writes compact JSON, so the PROBE-SAFETY line read 0;
+fixed to pre-filter on the key only; regression test `test_game_overs_from_events_counts_compact_json`;
+a dated PROBE-SAFETY-CORRECTION line was appended to the wave's summary.txt (the original line is kept).
+
+Reading: fourth replication that reshaping the loop's behaviour without changing what the model understands
+does not move levels — patch 21 (×1.40 actions, −25 % levels), yield900 (2× calls/turn, 118 = 118),
+probe discipline (analysis → action, wall ratio 0.72 → 1.00, +0.07/game). The 2/12 wall passes and 4-above-max
+are within what a null draw produces (many capped games tie at 1, so exceeding the max is rare per game but
+25 games give several chances); no redraw is bought for it — the pre-registration said dead and the
+"two draws of +5 prove nothing" law applies with more force to one draw of +1.7.
 Full report, exact refusal text, dry-run proof and the launch command: `submission/_throughput_v1/PROBE_STATUS.md`.

@@ -1161,6 +1161,23 @@ message: Step executed.
 """
 
 
+def test_game_overs_from_events_counts_compact_json(tmp_path):
+    """The harness writes events.jsonl with json.dumps(separators=(",", ":")) — no space after the colon.
+    The 09-08 probe wave read 0 GAME_OVERs because the pre-filter looked for '"game_over": true'."""
+    import json as _json
+    f = tmp_path / "x_events.jsonl"
+    rows = [{"type": "initial", "game_over": False},
+            {"type": "action", "game_over": True, "action_display": "ACTION1"},
+            {"type": "action", "game_over": False},
+            {"type": "action", "game_over": True},
+            {"type": "level", "game_over": True}]          # not an action row -> not counted
+    compact = "\n".join(_json.dumps(r, separators=(",", ":")) for r in rows)
+    spaced = "\n".join(_json.dumps(r) for r in rows)
+    f.write_text(compact + "\n" + spaced, encoding="utf-8")
+    assert rw.game_overs_from_events(f) == 4
+    assert rw.game_overs_from_events(tmp_path / "missing_events.jsonl") is None
+
+
 def test_extractor_reads_probe_markers_and_ledger_call_types():
     parsed = rw.parse_transcript(PROBE_TRANSCRIPT)
     turns, calls = parsed["turns"], parsed["calls"]

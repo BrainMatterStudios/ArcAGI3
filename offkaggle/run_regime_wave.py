@@ -260,7 +260,7 @@ def game_overs_from_events(path: Path) -> int | None:
         return None
     n = 0
     for line in text.splitlines():
-        if '"game_over": true' not in line:
+        if '"game_over"' not in line:      # the harness writes compact JSON ("game_over":true) — never pre-filter on spacing
             continue
         try:
             rec = json.loads(line)
