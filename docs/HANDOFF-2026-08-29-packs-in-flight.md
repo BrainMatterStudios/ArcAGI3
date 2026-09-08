@@ -599,3 +599,23 @@ original lever of the campaign to survive live.
 - 09-08 02:10Z: yield900 draw 2 submitted (sub 56088705, byte-identical to 56080757). Score ~11:15Z.
   After it: draw 3 on 09-09 (arm from scripts/submit_keithyield900_20260908.py with dates/marker
   bumped) unless Ahmed stops; then the 3-draw verdict.
+
+## 32. 09-08 — loss-ledger-3: yield900 is a NULL on levels (75 vs 75 runs: 118 = 118)
+
+Pooled three runs each (rig ×2 + Kaggle commit): yield900 118 levels, base 118 levels; paired
+per-game Δ 0.00 ± 0.11; actions per cleared level 34.5 vs 34.9; live-cap score/game 8.42 vs 9.06.
+The 41/40 vs 36 read was inside one sd of a 25-game total (≈6 levels). Mechanism correction: the 60 s
+yield never discarded a response (it stayed in history); "turn ended after one call" was cosmetic —
+the analysis-only call share is unchanged (45% → 49%). What did change: actions/game 143 → 115,
+GAME_OVERs 1.31 → 0.87/run, post-goal thrash 20% → 10%, note staleness 7 → 3 turns, but wall-level
+exploration FELL (0.84× → 0.72× baseline) and analysis-paralysis rose (20% → 33% of stuck tails).
+⇒ The 4.31 draw is most likely a tail draw of a base-equivalent config (cohort 3.33 ± 0.55: +1.8 sd).
+Keep the pre-registered 3-draw read (draws 2, 3 are already armed; harmless, base-equivalent), but
+do NOT treat 4.31 as a lever until the mean of three says so. H1 timer discipline DEAD (bar
+exhaustion = 8% of GAME_OVERs, 1.6% of actions); H2 post-goal thrash ≤ +0.21.
+Next candidate (#1, unbuilt): HARNESS-ENFORCED probe discipline — cap analysis-only calls at 2 per
+turn; the 3rd call's tool result demands a ≤5-action test of the leading hypothesis; non-acting
+turns re-list untested hypotheses. Ceiling +0.27 (paralysis) to +0.53 (all comprehension),
+realistically lower. Rig arm ≈$9, first in a fresh session; rule: ENGAGEMENT turns with ≥3
+analysis-only calls < 5% (now 15%) and wall actions/baseline ≥ 1.0 (now 0.72); PRIMARY ≥ 52 levels
+AND ≥ 3 of the 12 never-passed walls → step candidate; 45–51 redraw; < 45 dead.
