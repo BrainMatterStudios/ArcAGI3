@@ -658,3 +658,40 @@ are within what a null draw produces (many capped games tie at 1, so exceeding t
 25 games give several chances); no redraw is bought for it — the pre-registration said dead and the
 "two draws of +5 prove nothing" law applies with more force to one draw of +1.7.
 Full report, exact refusal text, dry-run proof and the launch command: `submission/_throughput_v1/PROBE_STATUS.md`.
+
+## PRE-REGISTERED — arm `keith_carry` (Track A1: compaction instead of eviction; written 2026-09-08 before launch)
+
+Prerequisite read (docs/research-2026-09-08/R-reasoning-carriage-0908.md): prior-turn reasoning ALREADY reaches the
+model in the stock regime (template keeps every `<think>` block; vLLM maps `reasoning` → `reasoning_content`; the
+server's prompt-token deltas match tokenized reasoning to ~30 tokens on 1,268 request pairs). The plan's "reasoning
+is wiped every second call" premise is withdrawn; what is lost is what the trimmer EVICTS (27 % of consecutive
+requests evict; the window fills after ~10 turns). So A1 = compaction instead of eviction; reasoning carriage is
+MEASURED, not re-injected.
+
+Knob: graft_carry on the yield900 base (arm `keith_carry` = keith_yield900 + CARRY_ENABLE=1 CARRY_TARGET_FRACTION=0.5
+CARRY_SUMMARY_CHARS=4800 CARRY_INPUT_CHARS=48000 CARRY_COMPACT_MAX_TOKENS=1500 CARRY_COMPACT_THINKING=0
+CARRY_MIN_DROP_MSGS=2). When the trimmer must drop, the graft drops a chunk down to 50 % of the 31,744 budget and asks
+the model (one extra no-tools call, thinking off, ≤ 1500 tokens) to fold the dropped turns into a compacted-knowledge
+block that rides the system message of every later request; the stock trimmer still enforces the hard budget.
+Expected ~7 compactions per 52-call game (each a queued ~150 s call ≈ 13 % of the clock). Everything else = keith_yield900.
+Full build + tests: submission/_throughput_v1/CARRY_STATUS.md.
+
+KILL TEST (first, fresh boot, ≈ $3): `--games cd82,dc22,lf52 --draws 2 --concurrency 3 --max-calls 60 --per-game-s 7920`
+(the 09-06 3-wall instrument geometry with the long clock; that base read cd82 1/1, dc22 2/2, lf52 1/1 = 8 levels / 6
+runs). READ: ENGAGED (compactions ≥ 1/run, failures ≤ 10 %, no request > 32,768 tokens, ≥ 40 % of calls carry the block)
+AND levels ≥ 7 → the 25-game wave; ENGAGED but levels ≤ 6 → stop and read the blocks before spending more; NOT
+ENGAGED → mechanism failure, fix before any wave. Also read the blocks themselves (transcript `SUMMARY:` sections):
+concrete (coordinates/actions/results) vs generic, and whether refuted hypotheses are listed.
+
+25-GAME WAVE (fresh boot, live geometry, ≈ $9, with a Monitor): ENGAGEMENT gate as above (CARRY line).
+PRIMARY = levels vs the pooled six-draw base 39.33 (sd 2.34): ≥ 48 step candidate → counterbalanced redraw → live 3-draw
+rule; 45–47 → counterbalanced redraw; ≤ 44, or ENGAGED with levels inside 39.33 ± 2.34 → dead (engaged-but-flat).
+CO-PRIMARY = walls passed among the 12 six-draw-never-passed walls (target ≥ 3). SAFETY = GAME_OVERs/run vs 0.87 and
+live-cap score/game vs 8.42. FIT-THE-CLOCK = (play calls × e2e) + (compactions × compaction e2e) ≤ 7,920 s per game,
+read from the CARRY-SAFETY line and the CARRY line; an arm that does not fit is not live-eligible whatever it scores.
+SECONDARY: prompt tok/call mean (base ≈ 20.3k) and max (must stay < 32,768), calls/game (base 51–54) — compactions
+displace play calls; zero-level games (base 1–4); reasoning msgs carried per request (a new stock fact: expected several).
+VOID rules unchanged (Modal container preemption; identity gate must print the kv5 profile on an RTX PRO 6000; vLLM
+KV preemptions ~110–180 are a regime constant); first in a fresh boot. Judge's prior: the mechanism is the field's
+converged method (Astra provider adapter, Tufa's own unfinished lever), but the compactor here is Flash-Next with
+thinking off summarising itself; modal outcome unknown — this is the first read of the thesis on this brain.

@@ -122,7 +122,7 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert (rw.KEITH_ANALYZER_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"], rw.KEITH_ANALYZER_ENV["LOCAL_ANALYZER_MAX_OUTPUT"]) == ("32768", "0")
     assert (rw.FLIGHT_ANALYZER_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"], rw.FLIGHT_ANALYZER_ENV["LOCAL_ANALYZER_MAX_OUTPUT"]) == ("24576", "4096")
     assert rw.ARMS == ("keith", "flight", "keith_yield180", "keith_yield900", "keith_retry", "keith_evid", "keith_hypo", "keith_up8",
-                       "keith_probe")
+                       "keith_probe", "keith_carry")
     # the original single-knob arm differs from the keith base on exactly the yield key
     d2 = {k for k in set(rw.KEITH_ANALYZER_ENV) | set(rw.KEITH_YIELD180_ENV)
           if rw.KEITH_ANALYZER_ENV.get(k) != rw.KEITH_YIELD180_ENV.get(k)}
@@ -135,7 +135,22 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert {k: rw.KEITH_RETRY_ENV[k] for k in rw.RETRY_ENV_KEYS} == {
         "RETRY_ENABLE": "1", "RETRY_K": "3", "RETRY_ABS": "200", "RETRY_COOLDOWN": "150", "RETRY_MAX": "2"}
     assert rw.ARM_GRAFTS == {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",),
-                             "keith_hypo": ("graft_hypo",), "keith_probe": ("graft_probe",)}
+                             "keith_hypo": ("graft_hypo",), "keith_probe": ("graft_probe",), "keith_carry": ("graft_carry",)}
+    # 09-08 Track A1: the carry arm differs from keith_yield900 (its base) by exactly the graft's CARRY_* flags
+    d5 = {k for k in set(rw.KEITH_YIELD900_ENV) | set(rw.KEITH_CARRY_ENV)
+          if rw.KEITH_YIELD900_ENV.get(k) != rw.KEITH_CARRY_ENV.get(k)}
+    assert d5 == set(rw.CARRY_ENV_KEYS) == {"CARRY_ENABLE", "CARRY_TARGET_FRACTION", "CARRY_SUMMARY_CHARS", "CARRY_INPUT_CHARS",
+                                            "CARRY_COMPACT_MAX_TOKENS", "CARRY_COMPACT_THINKING", "CARRY_MIN_DROP_MSGS"}, d5
+    assert {k: rw.KEITH_CARRY_ENV[k] for k in rw.CARRY_ENV_KEYS} == {
+        "CARRY_ENABLE": "1", "CARRY_TARGET_FRACTION": "0.5", "CARRY_SUMMARY_CHARS": "4800", "CARRY_INPUT_CHARS": "48000",
+        "CARRY_COMPACT_MAX_TOKENS": "1500", "CARRY_COMPACT_THINKING": "0", "CARRY_MIN_DROP_MSGS": "2"}
+    assert rw.KEITH_CARRY_ENV["LOCAL_ANALYZER_YIELD_SECONDS"] == "900" and rw.KEITH_CARRY_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"] == "32768"
+    assert "CARRY_" in rw.GRAFT_ENV_PREFIXES and set(rw.CARRY_ENV_KEYS) <= set(rw.GRAFT_FLAG_KEYS)
+    sys.path.insert(0, str(rw.GRAFT_DIR))
+    import graft_carry  # noqa: PLC0415
+    assert graft_carry.COMPACT_SYSTEM_HEAD == rw.CARRY_COMPACT_HEAD                      # the mock recognises compaction requests
+    assert graft_carry.DEFAULT_WINDOW_TOKENS == rw.CARRY_WINDOW_TOKENS
+    assert graft_carry._PER_GAME_KEYS == rw._CARRY_GRAFT_KEYS
     # 09-08: the probe arm differs from keith_yield900 (its base) by exactly the graft's PROBE_* flags
     d4 = {k for k in set(rw.KEITH_YIELD900_ENV) | set(rw.KEITH_PROBE_ENV)
           if rw.KEITH_YIELD900_ENV.get(k) != rw.KEITH_PROBE_ENV.get(k)}
@@ -160,7 +175,8 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert rw.KEITH_ANALYZER_ENV["MULTIMODAL_UPSCALE"] == "4" and rw.KEITH_UP8_ENV["MULTIMODAL_CONTEXT"] == "current_grid"
     for arm in ("keith", "flight", "keith_yield180", "keith_yield900", "keith_up8"):
         assert not any(k.startswith(rw.GRAFT_ENV_PREFIXES) for k in rw.ARM_ENV[arm]), arm   # stock arms carry no graft flag
-    for arm, prefix in (("keith_retry", "RETRY_"), ("keith_evid", "EVID_"), ("keith_hypo", "HYPO_"), ("keith_probe", "PROBE_")):
+    for arm, prefix in (("keith_retry", "RETRY_"), ("keith_evid", "EVID_"), ("keith_hypo", "HYPO_"), ("keith_probe", "PROBE_"),
+                        ("keith_carry", "CARRY_")):
         assert all(k.startswith(prefix) for k in rw.ARM_ENV[arm] if k.startswith(rw.GRAFT_ENV_PREFIXES)), arm
 
 
@@ -1161,10 +1177,14 @@ message: Step executed.
 """
 
 
-def test_game_overs_from_events_counts_compact_json(tmp_path):
+def test_game_overs_from_events_counts_compact_json(tmp_path=None):
     """The harness writes events.jsonl with json.dumps(separators=(",", ":")) — no space after the colon.
-    The 09-08 probe wave read 0 GAME_OVERs because the pre-filter looked for '"game_over": true'."""
+    The 09-08 probe wave read 0 GAME_OVERs because the pre-filter looked for '"game_over": true'.
+    (tmp_path is pytest's fixture; the script runner passes nothing and gets a TemporaryDirectory.)"""
     import json as _json
+    if tmp_path is None:
+        _tmp = tempfile.TemporaryDirectory()
+        tmp_path = Path(_tmp.name)
     f = tmp_path / "x_events.jsonl"
     rows = [{"type": "initial", "game_over": False},
             {"type": "action", "game_over": True, "action_display": "ACTION1"},
@@ -1465,6 +1485,254 @@ def test_dry_run_keith_evid_draws_end_to_end():
         for path in out.rglob("*"):
             if path.is_file() and path.suffix in (".json", ".txt", ".prom", ".jsonl", ".log"):
                 assert "dry-run-token" not in path.read_text(encoding="utf-8", errors="replace"), path
+
+
+# --- 09-08 Track A1: keith_carry (graft_carry, compaction instead of eviction) ----------------------
+
+_CARRY_INSTALL_CODE = r'''
+import json, os, sys
+sys.path.insert(0, __HERE__)
+import run_regime_wave as rw
+from pathlib import Path
+out = Path(__TMP__)
+env = rw.install_env("keith_carry", "http://127.0.0.1:9/v1", "carry-token", out)
+rw.install_paths()
+rw.verify_imports()
+from inference.agent import tool_agent as ta
+before = {"analyze": ta.ToolAgent.analyze, "trim": ta.ToolAgent._trim_messages_for_context, "chat": ta.ToolAgent._chat_completion,
+          "run": ta.ToolAgent._run_python_tool}
+grafts = rw.install_grafts("keith_carry")
+after = {"analyze": ta.ToolAgent.analyze, "trim": ta.ToolAgent._trim_messages_for_context, "chat": ta.ToolAgent._chat_completion,
+         "run": ta.ToolAgent._run_python_tool}
+stock = rw.assert_stock_tree()
+bm, target = rw.load_bundle(out)
+factory = rw.make_tagging_analyzer_factory(bm.solver, n_games=2)
+class _G:
+    class game_run: game_id = "cd82-fb555c5d"
+agent = factory(_G(), 3)
+print(json.dumps({"grafts": grafts, "rebound": {k: after[k] is not before[k] for k in before},
+                  "sha": stock["agent_tree_sha256"], "status": rw.graft_status("keith_carry"),
+                  "env": {k: os.environ.get(k) for k in rw.GRAFT_FLAG_KEYS if os.environ.get(k) is not None},
+                  "fingerprint": rw.analyzer_config_fingerprint(agent)}))
+'''
+
+
+def test_carry_arm_installs_graft_in_memory():
+    """keith_carry: graft_carry rebinds analyze, _trim_messages_for_context and _chat_completion (NOT the python
+    tool); the stock tree sha holds; the factory-built ToolAgent carries the yield900 regime."""
+    with tempfile.TemporaryDirectory() as tmp:
+        code = _CARRY_INSTALL_CODE.replace("__HERE__", repr(str(HERE))).replace("__TMP__", repr(tmp))
+        r = subprocess.run([PYTHON, "-c", code], capture_output=True, text=True, cwd=str(REPO), timeout=300)
+        assert r.returncode == 0, r.stderr[-2000:]
+        probe = json.loads(r.stdout.strip().splitlines()[-1])
+    assert probe["grafts"] == {"graft_carry": "carry: OK"}
+    assert probe["rebound"] == {"analyze": True, "trim": True, "chat": True, "run": False}, probe["rebound"]
+    assert probe["sha"] == rw.STOCK_AGENT_TREE_SHA256
+    st = probe["status"]["graft_carry"]
+    assert st["installed"] and st["enabled"] and st["errors"] == 0
+    assert (st["target_fraction"], st["summary_chars_cap"], st["input_chars_cap"], st["compact_max_tokens"], st["compact_thinking"],
+            st["min_drop_msgs"], st["window_tokens"]) == (0.5, 4800, 48000, 1500, False, 2, 32768)
+    assert st["compactions"] == 0 and st["calls_total"] == 0 and st["per_game"] == {}
+    assert probe["env"] == {k: rw.KEITH_CARRY_ENV[k] for k in rw.CARRY_ENV_KEYS}
+    fp = probe["fingerprint"]
+    assert fp["context_budget_tokens"] == 31744 and fp["max_output_tokens"] is None and fp["yield_seconds"] == 900.0
+
+
+CARRY_TRANSCRIPT = """
+--- analysis_step=1 | action=0 | 10:00:00 | tool-agent ---
+[SYSTEM PROMPT]
+sys
+[USER PROMPT]
+No previous sequence has been executed yet.
+Current state: step 1, level 1.
+[HARNESS CARRY]
+[CARRY-CALL] game=g_p0 turn=1 req=1 msgs=2 reasoning_msgs=0 reasoning_chars=0 summary_chars=0 prompt_tokens=4000 completion_tokens=100
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 3
+[THINKING]
+abc
+[TOOL CALL: python]
+{"code": "r = action(['UP'])"}
+[TOOL RESULT: python]
+ok
+[ANALYZER STATUS]
+step_executed: True
+message: Step executed.
+
+--- analysis_step=2 | action=1 | 10:01:00 | tool-agent ---
+[USER PROMPT]
+Current state: step 2, level 1.
+[HARNESS CARRY]
+[CARRY-COMPACT] game=g_p0 turn=2 dropped_msgs=6 input_chars=9000 summary_chars=800 prompt_tokens=2600 completion_tokens=210 e2e_s=12.5 ok=1
+SUMMARY:
+MECHANICS VERIFIED
+- UP moves the block.
+[HARNESS CARRY]
+[CARRY-CALL] game=g_p0 turn=2 req=1 msgs=6 reasoning_msgs=2 reasoning_chars=5000 summary_chars=800 prompt_tokens=33000 completion_tokens=150
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 3
+[THINKING]
+def
+[TOOL CALL: python]
+{"code": "print(1)"}
+[TOOL RESULT: python]
+1
+[HARNESS CARRY]
+[CARRY-COMPACT] game=g_p0 turn=2 dropped_msgs=2 input_chars=3000 summary_chars=0 prompt_tokens=None completion_tokens=None e2e_s=0.4 ok=0 err=ConnectionError
+[HARNESS CARRY]
+[CARRY-CALL] game=g_p0 turn=2 req=2 msgs=8 reasoning_msgs=3 reasoning_chars=6000 summary_chars=800 prompt_tokens=30000 completion_tokens=90
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 0
+[TOOL CALL: python]
+{"code": "r = action(['DOWN'])"}
+[TOOL RESULT: python]
+ok
+[ANALYZER STATUS]
+step_executed: True
+message: Step executed.
+"""
+
+
+def test_extractor_reads_carry_markers():
+    parsed = rw.parse_transcript(CARRY_TRANSCRIPT)
+    turns, calls = parsed["turns"], parsed["calls"]
+    assert len(turns) == 2 and len(calls) == 3
+    assert [c["reasoning_chars"] for c in calls] == [3, 3, 0]                  # META -> THINKING adjacency survives the sections
+    assert [t["call_types"] for t in turns] == ["X", "AX"]
+    assert [t["carry_compactions"] for t in turns] == [0, 2]
+    cm = parsed["carry_markers"]
+    assert [c["prompt_tokens"] for c in cm["calls"]] == [4000, 33000, 30000]
+    assert [c["reasoning_msgs"] for c in cm["calls"]] == [0, 2, 3] and [c["summary_chars"] for c in cm["calls"]] == [0, 800, 800]
+    assert [c["ok"] for c in cm["compactions"]] == [True, False]
+    assert cm["compactions"][0] == {"turn_index": 1, "ok": True, "dropped_msgs": 6, "input_chars": 9000, "summary_chars": 800,
+                                    "prompt_tokens": 2600, "completion_tokens": 210, "e2e_s": 12.5}
+    assert cm["compactions"][1]["prompt_tokens"] is None and cm["compactions"][1]["e2e_s"] == 0.4
+    rd = rw.carry_reads(cm)
+    assert (rd["compactions"], rd["compaction_failures"], rd["compaction_attempts"], rd["dropped_msgs"], rd["input_chars"]) == (1, 1, 2, 8, 12000)
+    assert rd["summary_chars"]["mean"] == 800 and rd["compaction_e2e_s"]["n"] == 2 and rd["compaction_prompt_tokens"]["n"] == 1
+    assert (rd["calls_marked"], rd["reasoning_msgs_total"], rd["reasoning_chars_total"]) == (3, 5, 11000)
+    assert rd["calls_with_summary"] == 2 and abs(rd["calls_with_summary_share"] - 2 / 3) < 1e-9 and rd["first_call_with_block"] == 2
+    assert rd["prompt_tokens"]["max"] == 33000 and rd["prompt_over_window"] == 1
+    assert "graft" not in rd
+    rd2 = rw.carry_reads(cm, {"compactions": 1, "compaction_failures": 1, "calls_total": 3, "prompt_tokens_max": 33000, "prompt_over_window": 1})
+    assert rd2["graft"]["compactions"] == 1 and rd2["graft"]["prompt_over_window"] == 1 and set(rd2["graft"]) == set(rw._CARRY_GRAFT_KEYS)
+    tel = rw.telemetry_for_game(CARRY_TRANSCRIPT, levels_completed=1, number_of_levels=6,
+                                carry_counters={"compactions": 1, "compaction_failures": 1, "calls_total": 3})
+    assert tel["carry"]["compactions"] == 1 and tel["carry"]["graft"]["calls_total"] == 3
+    tel["game_id"], tel["draw"] = "g", 0
+    tel2 = dict(tel)
+    tel2["draw"] = 1
+    agg = rw.aggregate_telemetry({"g_p0": tel, "g_p1": tel2})["carry"]
+    assert (agg["compactions_total"], agg["compaction_failures_total"], agg["compaction_attempts"], agg["compactions_per_game"]) == (2, 2, 4, 1.0)
+    assert agg["failure_share"] == 0.5 and agg["games_with_compaction"] == 2 and agg["dropped_msgs_per_compaction"] == 4.0
+    assert agg["summary_chars_mean"] == 800 and abs(agg["compaction_e2e_s_mean"] - (12.5 + 0.4) / 2) < 1e-9
+    assert (agg["calls_marked"], agg["calls_with_summary"]) == (6, 4) and abs(agg["calls_with_summary_share"] - 2 / 3) < 1e-9
+    assert agg["prompt_tokens_max"] == 33000 and agg["prompt_over_window"] == 2 and agg["first_call_with_block"]["median"] == 2
+    assert abs(agg["reasoning_msgs_per_call"] - 10 / 6) < 1e-9 and agg["graft"]["runs"] == 2 and agg["graft"]["compactions"] == 2
+    g = agg["gate"]
+    assert g["compactions_per_game"]["ok"] and g["calls_with_summary_share"]["ok"]
+    assert not g["failure_share"]["ok"] and not g["prompt_over_window"]["ok"] and g["engaged"] is False
+    # a clean run: engaged
+    clean = CARRY_TRANSCRIPT.replace("prompt_tokens=33000", "prompt_tokens=23000").replace("prompt_tokens=30000", "prompt_tokens=25000")
+    clean = clean.split("[HARNESS CARRY]\n[CARRY-COMPACT] game=g_p0 turn=2 dropped_msgs=2", 1)[0] + "[HARNESS CARRY]\n" + \
+        clean.split("[HARNESS CARRY]\n[CARRY-COMPACT] game=g_p0 turn=2 dropped_msgs=2", 1)[1].split("[HARNESS CARRY]\n", 1)[1]
+    telc = rw.telemetry_for_game(clean)
+    telc["game_id"], telc["draw"] = "g", 0
+    aggc = rw.aggregate_telemetry({"g_p0": telc})["carry"]
+    assert aggc["compaction_failures_total"] == 0 and aggc["prompt_over_window"] == 0 and aggc["gate"]["engaged"] is True
+    # a stock transcript: no markers, nothing engaged, no crash
+    agg0 = rw.aggregate_telemetry({"a_p0": {**rw.telemetry_for_game(PROBE_TRANSCRIPT), "game_id": "tu93", "draw": 0}})["carry"]
+    assert agg0["compactions_total"] == 0 and agg0["calls_marked"] == 0 and agg0["gate"]["engaged"] is False
+    # a marker mentioned in prose is not a marker
+    assert rw.parse_transcript("hello [CARRY-COMPACT] game=x turn=1 dropped_msgs=1 input_chars=1 summary_chars=1 prompt_tokens=1 "
+                               "completion_tokens=1 e2e_s=1 ok=1\n")["carry_markers"]["compactions"] == []
+
+
+def test_dry_run_keith_carry_arm_end_to_end():
+    """The pre-registered launch shape on the loopback mock (+ the real engine) with the window shrunk to
+    9,000 tokens so the trimmer must evict inside 14 calls (and a 120 s game cap: the graft skips compaction
+    in the last 30 s of a game, so the dry-run default of 25 s/game would skip every one): compactions fire in every run, the mock answers
+    them with a summary block, the block rides the system message of later requests, the window is never
+    exceeded, and the CARRY / CARRY-WINDOW / CARRY-PRIMARY / CARRY-SAFETY summary lines carry the reads."""
+    with tempfile.TemporaryDirectory() as tmp:
+        r = subprocess.run([PYTHON, str(HERE / "run_regime_wave.py"), "--dry-run", "--arm", "keith_carry",
+                            "--games", "tu93,ft09,cd82", "--concurrency", "3", "--max-calls", "14",
+                            "--per-game-s", "120", "--wave-cap-s", "200", "--progress-every", "60",
+                            "--knob", "LOCAL_ANALYZER_CONTEXT_WINDOW=9000", "--out", tmp],
+                           capture_output=True, text=True, cwd=str(REPO), timeout=400)
+        assert r.returncode == 0, (r.returncode, r.stderr[-3000:], r.stdout[-3000:])
+        runs = list(Path(tmp).glob("*-regime-keith_carry-dry"))
+        assert len(runs) == 1, runs
+        out = runs[0]
+        res = json.loads((out / "results.json").read_text())
+        tel = json.loads((out / "telemetry.json").read_text())
+        assert res["status"] == "done" and res["arm"] == "keith_carry" and res["knob_overrides"] == {"LOCAL_ANALYZER_CONTEXT_WINDOW": "9000"}
+        assert res["stock"]["agent_tree_sha256"] == rw.STOCK_AGENT_TREE_SHA256
+        assert res["grafts"]["installed"] == {"graft_carry": "carry: OK"}
+        assert res["analyzer_env"]["LOCAL_ANALYZER_YIELD_SECONDS"] == "900" and res["analyzer_env"]["CARRY_ENABLE"] == "1"
+        cfg = tel["aggregate"]["analyzer_status_config_first"]
+        assert cfg == {"max_output_tokens": "server default", "context_budget_tokens": "7976", "yield_seconds": "900.0"}, cfg
+        st = res["grafts"]["status"]["graft_carry"]
+        ca = tel["aggregate"]["carry"]
+        assert st["errors"] == 0 and st["compaction_failures"] == 0
+        assert ca["compactions_total"] == st["compactions"] == res["mock_state"]["compactions"] >= 3   # markers == graft == mock
+        assert ca["games_with_compaction"] == 3 and ca["compaction_failures_total"] == 0
+        assert ca["prompt_over_window"] == 0 and st["prompt_over_window"] == 0
+        assert ca["calls_marked"] == st["calls_total"] == tel["aggregate"]["calls_total"]                # one CARRY-CALL per model call
+        assert ca["graft"]["compactions"] == st["compactions"] and ca["graft"]["runs"] == 3
+        assert ca["summary_chars_mean"] and ca["summary_chars_mean"] <= 4800 and ca["dropped_msgs_per_compaction"] >= 2
+        assert ca["reasoning_msgs_per_call"] > 0                                                        # the stock carries reasoning
+        gate = ca["gate"]
+        assert gate["compactions_per_game"]["ok"] and gate["failure_share"]["ok"] and gate["prompt_over_window"]["ok"]
+        assert gate["calls_with_summary_share"]["ok"] and gate["engaged"] is True, gate
+        per = tel["per_game"]
+        assert set(per) == {"tu93-0768757b_p0", "ft09-0d8bbf25_p0", "cd82-fb555c5d_p0"}
+        for stem, g in per.items():
+            text = (out / "transcripts" / f"{stem}.txt").read_text()
+            c = g["carry"]
+            assert c["compactions"] >= 1 and c["compactions"] == st["per_game"][stem]["compactions"]
+            assert text.count("[HARNESS CARRY]\n[CARRY-COMPACT] game=" + stem) == c["compactions"]
+            assert text.count("SUMMARY:\nMECHANICS VERIFIED\n- " + rw.MOCK_COMPACT_SUMMARY) == c["compactions"]
+            assert text.count("[HARNESS CARRY]\n[CARRY-CALL] game=" + stem) == c["calls_marked"] == g["calls"]
+            assert c["prompt_tokens"]["max"] <= rw.CARRY_WINDOW_TOKENS and c["calls_with_summary"] >= 1
+            # the block reaches the model: the latest prompt-log snapshot renders it inside the system message
+            log = (out / "prompts" / f"{stem}.log").read_text()
+            assert "# Compacted knowledge from your earlier turns" in log and rw.MOCK_COMPACT_SUMMARY in log
+        summary = (out / "summary.txt").read_text()
+        assert "REGIME WAVE  arm=keith_carry" in summary
+        for line in ("CARRY  compactions", "ENGAGED = YES {compactions_per_game+, failure_share+, prompt_over_window+, calls_with_summary_share+}",
+                     "CARRY-WINDOW prompt tok/call", "over 32768: 0 (gate 0)", "reasoning carried per request:",
+                     "CARRY-PRIMARY levels", "vs pooled six-draw base 39.33 (sd 2.34)", ">= 48 step candidate, 45-47 redraw, <= 44 dead",
+                     "CARRY-SAFETY GAME_OVERs", "fit-the-clock: calls/game", "KNOB OVERRIDES (not the pinned arm env)"):
+            assert line in summary, line
+        assert "'CARRY_TARGET_FRACTION': '0.5'" in summary and "yield 900 s" in summary
+        assert summary.count("\n") < 45
+        for path in out.rglob("*"):
+            if path.is_file() and path.suffix in (".json", ".txt", ".prom", ".jsonl", ".log"):
+                assert "dry-run-token" not in path.read_text(encoding="utf-8", errors="replace"), path
+    # the stock yield900 arm under the same knob: the trimmer EVICTS (no compaction request, no CARRY lines)
+    with tempfile.TemporaryDirectory() as tmp:
+        r = subprocess.run([PYTHON, str(HERE / "run_regime_wave.py"), "--dry-run", "--arm", "keith_yield900",
+                            "--games", "tu93", "--concurrency", "1", "--max-calls", "10", "--per-game-s", "20",
+                            "--wave-cap-s", "90", "--progress-every", "60", "--knob", "LOCAL_ANALYZER_CONTEXT_WINDOW=9000", "--out", tmp],
+                           capture_output=True, text=True, cwd=str(REPO), timeout=400)
+        assert r.returncode == 0, (r.returncode, r.stderr[-3000:], r.stdout[-3000:])
+        out = list(Path(tmp).glob("*-regime-keith_yield900-dry"))[0]
+        res = json.loads((out / "results.json").read_text())
+        assert res["mock_state"]["compactions"] == 0 and res["grafts"]["installed"] == {}
+        text = (out / "transcripts" / "tu93-0768757b_p0.txt").read_text()
+        assert "[HARNESS CARRY]" not in text
+        summary = (out / "summary.txt").read_text()
+        assert "CARRY  compactions" not in summary.split("\n  run ")[0]
 
 
 # --- runner -----------------------------------------------------------------

@@ -40,6 +40,16 @@ What runs (mirrors the public keithtyser V14 notebook cell by cell):
                        on the turn after a no-action turn), flags PROBE_ENABLE=1
                        PROBE_MAX_ANALYSIS=2 PROBE_MAX_PROBE=5 PROBE_MAX_REFUSALS=4
                        PROBE_NOTE_LINES=3
+      keith_carry    : keith_yield900 + graft_carry (Track A1, 09-08: compaction
+                       instead of eviction — when the trimmer must drop history it
+                       drops a chunk down to CARRY_TARGET_FRACTION of the budget and
+                       asks the model, in one extra no-tools call, to fold the
+                       dropped turns into a compacted-knowledge block kept in the
+                       system message; prior-turn reasoning is already carried by
+                       the stock and is MEASURED per call), flags CARRY_ENABLE=1
+                       CARRY_TARGET_FRACTION=0.5 CARRY_SUMMARY_CHARS=4800
+                       CARRY_INPUT_CHARS=48000 CARRY_COMPACT_MAX_TOKENS=1500
+                       CARRY_COMPACT_THINKING=0 CARRY_MIN_DROP_MSGS=2
   --draws N plays the selected games N times as independent runs in one wave
   (taaf Benchmark.n_passes; run stems <gid>_p0, <gid>_p1, ...); --per-game-s
   caps each run (default 7920 = public geometry).
@@ -207,15 +217,23 @@ KEITH_UP8_ENV = {**KEITH_ANALYZER_ENV, "MULTIMODAL_UPSCALE": "8"}
 PROBE_ENV_KEYS = ("PROBE_ENABLE", "PROBE_MAX_ANALYSIS", "PROBE_MAX_PROBE", "PROBE_MAX_REFUSALS", "PROBE_NOTE_LINES")
 KEITH_PROBE_ENV = {**KEITH_YIELD900_ENV, "PROBE_ENABLE": "1", "PROBE_MAX_ANALYSIS": "2", "PROBE_MAX_PROBE": "5",
                    "PROBE_MAX_REFUSALS": "4", "PROBE_NOTE_LINES": "3"}
+# 09-08 Track A1 (docs/PLAN-2026-09-08-revised-plan-to-7plus.md §6): compaction instead of eviction — graft_carry
+# (submission/_throughput_v1/graft_carry.py) on the yield900 base; flags read at call time. Differs from
+# keith_yield900 by exactly the CARRY_* keys. Pre-registration: offkaggle/REGIME_WAVE_STATUS.md.
+CARRY_ENV_KEYS = ("CARRY_ENABLE", "CARRY_TARGET_FRACTION", "CARRY_SUMMARY_CHARS", "CARRY_INPUT_CHARS",
+                  "CARRY_COMPACT_MAX_TOKENS", "CARRY_COMPACT_THINKING", "CARRY_MIN_DROP_MSGS")
+KEITH_CARRY_ENV = {**KEITH_YIELD900_ENV, "CARRY_ENABLE": "1", "CARRY_TARGET_FRACTION": "0.5", "CARRY_SUMMARY_CHARS": "4800",
+                   "CARRY_INPUT_CHARS": "48000", "CARRY_COMPACT_MAX_TOKENS": "1500", "CARRY_COMPACT_THINKING": "0",
+                   "CARRY_MIN_DROP_MSGS": "2"}
 ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV, "keith_yield900": KEITH_YIELD900_ENV,
            "keith_retry": KEITH_RETRY_ENV, "keith_evid": KEITH_EVID_ENV, "keith_hypo": KEITH_HYPO_ENV,
-           "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV}
+           "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV, "keith_carry": KEITH_CARRY_ENV}
 ARMS = tuple(ARM_ENV)
 # grafts (submission/_throughput_v1/<name>.py, install() -> "<name>: OK") an arm installs in memory
 ARM_GRAFTS = {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",), "keith_hypo": ("graft_hypo",),
-              "keith_probe": ("graft_probe",)}
-GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_", "PROBE_")     # every graft flag; scrubbed from the shell for every arm
-GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEYS
+              "keith_probe": ("graft_probe",), "keith_carry": ("graft_carry",)}
+GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_", "PROBE_", "CARRY_")     # every graft flag; scrubbed from the shell for every arm
+GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEYS + CARRY_ENV_KEYS
 # loss-ledger-3 reference reads for the PROBE gate (docs/research-2026-09-08/R-loss-ledger-3.md, yield900 regime)
 LEDGER3_REFERENCE = {"turns_ge3_analysis_share": 0.15, "wall_actions_ratio_median": 0.72, "yields_per_draw": "27-30",
                      "analysis_call_share": 0.49,
@@ -233,6 +251,13 @@ NEVER6_WALLS = {"bp35": 2, "dc22": 2, "g50t": 2, "lf52": 2, "lp85": 6, "ls20": 2
 # secondary: turns with >= 3 executed analysis-only calls (leak split) and turn_time_budget yields per draw
 PROBE_GATE = {"refusals_per_game_min": 1.0, "acted_after_first_refusal_min": 0.5, "wall_actions_ratio_min": 0.9,
               "turns_ge3_analysis_max": 0.05, "yields_per_draw_max": 20}
+# pre-registered ENGAGEMENT gate for keith_carry (09-08): compactions >= 1 per game AND compaction failures <= 10 % of
+# attempts AND no request over the 32,768-token window AND >= 40 % of model calls carry the compacted block
+CARRY_GATE = {"compactions_per_game_min": 1.0, "failure_share_max": 0.10, "prompt_over_window_max": 0,
+              "calls_with_summary_share_min": 0.40}
+CARRY_WINDOW_TOKENS = 32768                          # vLLM --max-model-len (KEITH_REGIME.md); usage.prompt_tokens must stay under
+CARRY_COMPACT_HEAD = "You are the same agent that played the turns below"   # == graft_carry.COMPACT_SYSTEM_HEAD (asserted in tests)
+MOCK_COMPACT_SUMMARY = "MOCK-COMPACT-SUMMARY"
 LIVE_CAP = 1.15
 
 
@@ -346,6 +371,17 @@ TELEMETRY_DEFINITIONS = {
     "probe_span": "graft_probe counters are per SPAN: a turn that executed nothing carries its analysis/refusal counts "
                   "into the next turn on the same level (carried_turns); the span resets after an acting turn, a level "
                   "change or a new game.",
+    "carry": "graft_carry reads per run from '[HARNESS CARRY]' sections: one '[CARRY-CALL]' per model call (msgs in the "
+             "request, reasoning_msgs / reasoning_chars = assistant messages carrying a `reasoning` field — the stock "
+             "already carries them and the template renders them, MEASURED here —, summary_chars = size of the compacted "
+             "block in the system message, usage prompt/completion tokens) and one '[CARRY-COMPACT]' per compaction "
+             "(dropped_msgs, input_chars fed to the compactor, summary_chars, tokens, e2e_s, ok=1|0 + err). carry.graft = "
+             "the graft's own counters for the run. prompt_over_window = calls whose usage.prompt_tokens > 32768.",
+    "carry_gate": "ENGAGEMENT (pre-registered 09-08): compactions >= 1 per game AND compaction failures <= 10 % of attempts "
+                  "AND no call over the 32,768-token window AND >= 40 % of calls carry the block. PRIMARY / co-primary / "
+                  "SAFETY are the probe arm's (levels vs 39.33 sd 2.34 with >= 48 step candidate / 45-47 redraw / <= 44 dead; "
+                  "walls passed among NEVER6_WALLS >= 3; GAME_OVERs/run vs 0.87; live-cap vs 8.42) plus fit-the-clock "
+                  "(calls/game x e2e + compaction calls <= 7,920 s).",
 }
 
 # ---------------------------------------------------------------------------
@@ -981,7 +1017,21 @@ def metrics_delta(before: dict | None, after: dict | None, wall_s: float | None)
 
 _TURN_HEADER = r"--- analysis_step=(?P<step>\d+) \| action=(?P<action>\d+) \| (?P<time>\d\d:\d\d:\d\d) \| tool-agent ---"
 _SECTION = (r"\[(?P<label>SYSTEM PROMPT|USER PROMPT|MODEL RESPONSE META|THINKING|ASSISTANT|"
-            r"ANALYZER STATUS|TOOL CALL: [^\]\n]+|TOOL RESULT: [^\]\n]+)\]")
+            r"ANALYZER STATUS|HARNESS CARRY|TOOL CALL: [^\]\n]+|TOOL RESULT: [^\]\n]+)\]")
+# graft_carry markers (one [HARNESS CARRY] section each; written BEFORE the call's [MODEL RESPONSE META])
+_CARRY_CALL_RE = re.compile(r"^\[CARRY-CALL\] game=\S+ turn=(?P<turn>\d+) req=(?P<req>\d+) msgs=(?P<msgs>\d+) "
+                            r"reasoning_msgs=(?P<rmsgs>\d+) reasoning_chars=(?P<rchars>\d+) summary_chars=(?P<schars>\d+) "
+                            r"prompt_tokens=(?P<pt>\S+) completion_tokens=(?P<ct>\S+)$", re.M)
+_CARRY_COMPACT_RE = re.compile(r"^\[CARRY-COMPACT\] game=\S+ turn=(?P<turn>\d+) dropped_msgs=(?P<dropped>\d+) "
+                               r"input_chars=(?P<ichars>\d+) summary_chars=(?P<schars>\d+) prompt_tokens=(?P<pt>\S+) "
+                               r"completion_tokens=(?P<ct>\S+) e2e_s=(?P<e2e>\S+) ok=(?P<ok>[01])", re.M)
+
+
+def _num(v: str):
+    try:
+        return float(v) if "." in v else int(v)
+    except (TypeError, ValueError):
+        return None
 _EVENT_RE = re.compile(rf"^(?:{_TURN_HEADER}|{_SECTION})$", re.M)
 
 
@@ -998,6 +1048,8 @@ def parse_transcript(text: str) -> dict:
         events.append((m.start(), m.end(), m))
     turns: list[dict] = []
     calls: list[dict] = []
+    carry_calls: list[dict] = []
+    carry_compactions: list[dict] = []
     status_cfg: dict = {}
     for i, (start, end, m) in enumerate(events):
         body_end = events[i + 1][0] if i + 1 < len(events) else len(text)
@@ -1007,9 +1059,23 @@ def parse_transcript(text: str) -> dict:
                           "time": m.group("time"), "calls": 0, "status_messages": [],
                           "step_executed": False, "outcome": "incomplete",
                           "level": None, "hypo": 0, "evid": 0, "evid_level_flags": 0, "quotes": 0,
-                          "probe_refusals": 0, "probe_noact": 0, "probe_noact_notice": 0})
+                          "probe_refusals": 0, "probe_noact": 0, "probe_noact_notice": 0, "carry_compactions": 0})
             continue
         label = m.group("label")
+        if label == "HARNESS CARRY":
+            for cm in _CARRY_CALL_RE.finditer(body):
+                carry_calls.append({"turn_index": len(turns) - 1, "msgs": int(cm.group("msgs")),
+                                    "reasoning_msgs": int(cm.group("rmsgs")), "reasoning_chars": int(cm.group("rchars")),
+                                    "summary_chars": int(cm.group("schars")), "prompt_tokens": _num(cm.group("pt")),
+                                    "completion_tokens": _num(cm.group("ct"))})
+            for cm in _CARRY_COMPACT_RE.finditer(body):
+                carry_compactions.append({"turn_index": len(turns) - 1, "ok": cm.group("ok") == "1",
+                                          "dropped_msgs": int(cm.group("dropped")), "input_chars": int(cm.group("ichars")),
+                                          "summary_chars": int(cm.group("schars")), "prompt_tokens": _num(cm.group("pt")),
+                                          "completion_tokens": _num(cm.group("ct")), "e2e_s": _num(cm.group("e2e"))})
+                if turns:
+                    turns[-1]["carry_compactions"] += 1
+            continue
         if label in ("THINKING", "ASSISTANT") and turns:
             turns[-1]["quotes"] += len(_QUOTE_RE.findall(body))
         if label == "USER PROMPT" and turns:
@@ -1131,7 +1197,8 @@ def parse_transcript(text: str) -> dict:
                      "noact_turns": sum(t["probe_noact"] for t in turns),
                      "noact_notices": sum(t["probe_noact_notice"] for t in turns)}
     return {"turns": turns, "calls": calls, "analyzer_status_config": status_cfg, "retry_markers": retry_markers,
-            "aid_markers": aid_markers, "probe_markers": probe_markers, "request_errors": request_errors}
+            "aid_markers": aid_markers, "probe_markers": probe_markers, "request_errors": request_errors,
+            "carry_markers": {"calls": carry_calls, "compactions": carry_compactions}}
 
 
 def _tool_call_code(body: str) -> str:
@@ -1294,13 +1361,52 @@ def probe_reads(turns: list[dict], calls: list[dict], probe_markers: dict, *, ac
     return out
 
 
+_CARRY_GRAFT_KEYS = ("calls_total", "calls_with_summary", "reasoning_msgs_total", "reasoning_chars_total", "prompt_tokens_total",
+                     "prompt_tokens_max", "prompt_over_window", "compactions", "compaction_failures", "dropped_msgs_total",
+                     "dropped_chars_total", "summary_chars_total", "compaction_prompt_tokens", "compaction_completion_tokens",
+                     "compaction_e2e_s", "turns_total")
+
+
+def carry_reads(carry_markers: dict, graft_counters: dict | None = None) -> dict:
+    """graft_carry mechanism reads for one run (TELEMETRY_DEFINITIONS['carry']) from the transcript markers."""
+    calls = list((carry_markers or {}).get("calls") or [])
+    comps = list((carry_markers or {}).get("compactions") or [])
+    ok = [c for c in comps if c.get("ok")]
+    bad = [c for c in comps if not c.get("ok")]
+    pt = [c["prompt_tokens"] for c in calls if isinstance(c.get("prompt_tokens"), (int, float))]
+    first_with_block = next((i + 1 for i, c in enumerate(calls) if c.get("summary_chars", 0) > 0), None)
+    out = {
+        "compactions": len(ok), "compaction_failures": len(bad), "compaction_attempts": len(comps),
+        "dropped_msgs": sum(c.get("dropped_msgs", 0) for c in comps),
+        "input_chars": sum(c.get("input_chars", 0) for c in comps),
+        "summary_chars": _stats([c["summary_chars"] for c in ok]),
+        "compaction_e2e_s": _stats([c["e2e_s"] for c in comps if isinstance(c.get("e2e_s"), (int, float))]),
+        "compaction_prompt_tokens": _stats([c["prompt_tokens"] for c in comps if isinstance(c.get("prompt_tokens"), (int, float))]),
+        "compaction_completion_tokens": _stats([c["completion_tokens"] for c in comps if isinstance(c.get("completion_tokens"), (int, float))]),
+        "calls_marked": len(calls),
+        "reasoning_msgs_total": sum(c.get("reasoning_msgs", 0) for c in calls),
+        "reasoning_chars_total": sum(c.get("reasoning_chars", 0) for c in calls),
+        "reasoning_msgs_per_call": _div(sum(c.get("reasoning_msgs", 0) for c in calls), len(calls)),
+        "reasoning_chars_per_call": _div(sum(c.get("reasoning_chars", 0) for c in calls), len(calls)),
+        "calls_with_summary": sum(1 for c in calls if c.get("summary_chars", 0) > 0),
+        "calls_with_summary_share": _share(sum(1 for c in calls if c.get("summary_chars", 0) > 0), len(calls)),
+        "first_call_with_block": first_with_block,
+        "prompt_tokens": _stats(pt),
+        "prompt_over_window": sum(1 for p in pt if p > CARRY_WINDOW_TOKENS),
+    }
+    if graft_counters:
+        out["graft"] = {k: graft_counters.get(k) for k in _CARRY_GRAFT_KEYS}
+    return out
+
+
 def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None,
                        shim_records: list[dict] | None = None,
                        wallclock_s: float | None = None,
                        levels_completed: int | None = None, number_of_levels: int | None = None,
                        calls_budget: int | None = None, wave_preemptions: float | None = None,
                        actions_per_level: list | None = None, baselines: list | None = None,
-                       graft_counters: dict | None = None, game_overs: int | None = None) -> dict:
+                       graft_counters: dict | None = None, game_overs: int | None = None,
+                       carry_counters: dict | None = None) -> dict:
     parsed = parse_transcript(transcript_text)
     calls, turns = parsed["calls"], parsed["turns"]
     turn_levels = [t["level"] for t in turns]
@@ -1351,6 +1457,7 @@ def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None
         "probe": probe_reads(turns, calls, parsed["probe_markers"], actions_per_level=actions_per_level,
                              baselines=baselines, levels_completed=levels_completed, number_of_levels=number_of_levels,
                              graft_counters=graft_counters, game_overs=game_overs),
+        "carry": carry_reads(parsed["carry_markers"], carry_counters),
     }
     client_errors = sum(1 for r in (shim_records or []) if r.get("error") or (r.get("status") or 0) >= 400)
     tel["wall"] = wall_reads(turns, wall_level=wall_level, levels_completed=levels_completed, calls_budget=calls_budget,
@@ -1421,9 +1528,73 @@ def aggregate_telemetry(per_game: dict[str, dict]) -> dict:
         "engagement": _pooled_engagement(games),
         "wall": _pooled_wall(games),
         "probe": _pooled_probe(games),
+        "carry": _pooled_carry(games),
         "first_call_prompt_tokens": _stats([g["first_call_prompt_tokens"] for g in games
                                             if g.get("first_call_prompt_tokens") is not None]),
     }
+
+
+def _pooled_carry(games: list[dict]) -> dict:
+    """Pooled graft_carry reads + the pre-registered ENGAGEMENT gate (CARRY_GATE)."""
+    cs = [g.get("carry") or {} for g in games]
+    n = len(cs)
+    comps = sum(c.get("compactions", 0) for c in cs)
+    fails = sum(c.get("compaction_failures", 0) for c in cs)
+    attempts = comps + fails
+    calls = sum(c.get("calls_marked", 0) for c in cs)
+    with_block = sum(c.get("calls_with_summary", 0) for c in cs)
+    over = sum(c.get("prompt_over_window", 0) for c in cs)
+    pt_max = max([((c.get("prompt_tokens") or {}).get("max") or 0) for c in cs] + [0])
+    pt_means = [((c.get("prompt_tokens") or {}).get("mean"), c.get("calls_marked", 0)) for c in cs]
+    pt_mean = _div(sum(m * k for m, k in pt_means if m is not None), sum(k for m, k in pt_means if m is not None))
+    grafts = [c["graft"] for c in cs if c.get("graft")]
+
+    def gsum(key: str) -> float:
+        return sum((g.get(key) or 0) for g in grafts)
+
+    def gmax(key: str) -> float:
+        return max([(g.get(key) or 0) for g in grafts] + [0])
+
+    out = {
+        "compactions_total": comps, "compactions_per_game": (comps / n) if n else None,
+        "compaction_failures_total": fails, "compaction_attempts": attempts,
+        "failure_share": _share(fails, attempts),
+        "games_with_compaction": sum(1 for c in cs if c.get("compactions", 0) > 0),
+        "dropped_msgs_per_compaction": _div(sum(c.get("dropped_msgs", 0) for c in cs), attempts),
+        "input_chars_per_compaction": _div(sum(c.get("input_chars", 0) for c in cs), attempts),
+        "summary_chars_mean": _div(sum(((c.get("summary_chars") or {}).get("mean") or 0) * c.get("compactions", 0) for c in cs), comps),
+        "compaction_e2e_s_mean": _div(sum(((c.get("compaction_e2e_s") or {}).get("mean") or 0) * ((c.get("compaction_e2e_s") or {}).get("n") or 0) for c in cs),
+                                      sum(((c.get("compaction_e2e_s") or {}).get("n") or 0) for c in cs)),
+        "compaction_completion_tokens_mean": _div(sum(((c.get("compaction_completion_tokens") or {}).get("mean") or 0) * ((c.get("compaction_completion_tokens") or {}).get("n") or 0) for c in cs),
+                                                  sum(((c.get("compaction_completion_tokens") or {}).get("n") or 0) for c in cs)),
+        "compaction_prompt_tokens_mean": _div(sum(((c.get("compaction_prompt_tokens") or {}).get("mean") or 0) * ((c.get("compaction_prompt_tokens") or {}).get("n") or 0) for c in cs),
+                                              sum(((c.get("compaction_prompt_tokens") or {}).get("n") or 0) for c in cs)),
+        "calls_marked": calls, "calls_with_summary": with_block, "calls_with_summary_share": _share(with_block, calls),
+        "first_call_with_block": _stats([c["first_call_with_block"] for c in cs if c.get("first_call_with_block") is not None]),
+        "reasoning_msgs_per_call": _div(sum(c.get("reasoning_msgs_total", 0) for c in cs), calls),
+        "reasoning_chars_per_call": _div(sum(c.get("reasoning_chars_total", 0) for c in cs), calls),
+        "prompt_tokens_mean": pt_mean, "prompt_tokens_max": pt_max, "prompt_over_window": over,
+        "graft": {"runs": len(grafts), "compactions": gsum("compactions"), "compaction_failures": gsum("compaction_failures"),
+                  "calls_total": gsum("calls_total"), "calls_with_summary": gsum("calls_with_summary"),
+                  "prompt_tokens_max": gmax("prompt_tokens_max"), "prompt_over_window": gsum("prompt_over_window"),
+                  "reasoning_msgs_per_call": _div(gsum("reasoning_msgs_total"), gsum("calls_total")),
+                  "compaction_e2e_s": gsum("compaction_e2e_s"), "dropped_msgs_total": gsum("dropped_msgs_total"),
+                  "turns_total": gsum("turns_total")},
+        "per_run_compactions": {},
+    }
+    gate = {
+        "compactions_per_game": {"value": out["compactions_per_game"], "min": CARRY_GATE["compactions_per_game_min"],
+                                 "ok": out["compactions_per_game"] is not None and out["compactions_per_game"] >= CARRY_GATE["compactions_per_game_min"]},
+        "failure_share": {"value": out["failure_share"], "max": CARRY_GATE["failure_share_max"],
+                          "ok": attempts > 0 and (fails / attempts) <= CARRY_GATE["failure_share_max"]},
+        "prompt_over_window": {"value": over, "max": CARRY_GATE["prompt_over_window_max"], "ok": over <= CARRY_GATE["prompt_over_window_max"]},
+        "calls_with_summary_share": {"value": out["calls_with_summary_share"], "min": CARRY_GATE["calls_with_summary_share_min"],
+                                     "ok": out["calls_with_summary_share"] is not None
+                                     and out["calls_with_summary_share"] >= CARRY_GATE["calls_with_summary_share_min"]},
+    }
+    gate["engaged"] = bool(all(v["ok"] for v in gate.values() if isinstance(v, dict)))
+    out["gate"] = gate
+    return out
 
 
 def _pooled_probe(games: list[dict]) -> dict:
@@ -1546,7 +1717,7 @@ _STEM_RE = re.compile(r"^(?P<gid>.+)_p(?P<draw>\d+)\.txt$")
 
 def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: list[dict], *,
                     calls_budget: int | None = None, wave_preemptions: float | None = None,
-                    graft_per_game: dict | None = None) -> dict:
+                    graft_per_game: dict | None = None, carry_per_game: dict | None = None) -> dict:
     """Per-run + pooled telemetry from <out>/transcripts/<gid>_p<draw>.txt, the
     benchmark rows (actions, wallclock, levels) and the client shim records.
     per_game is keyed by run stem (<gid>_p<draw>; one entry per game per draw).
@@ -1578,7 +1749,8 @@ def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: 
                                  calls_budget=calls_budget, wave_preemptions=wave_preemptions,
                                  actions_per_level=row.get("actions_per_level"), baselines=row.get("baselines"),
                                  graft_counters=(graft_per_game or {}).get(stem),
-                                 game_overs=game_overs_from_events(events_path) if events_path.is_file() else None)
+                                 game_overs=game_overs_from_events(events_path) if events_path.is_file() else None,
+                                 carry_counters=(carry_per_game or {}).get(stem))
         tel["game_id"] = gid
         tel["draw"] = draw
         tel["levels_completed"] = row.get("levels_completed")
@@ -1677,7 +1849,8 @@ class MockVLLM:
         self.lock = threading.Lock()
         self.state = {"calls": 0, "redirected": 0, "poll_with_auth": 0, "poll_without_auth": 0,
                       "prompt_tokens": 0, "generation_tokens": 0, "e2e_sum": 0.0,
-                      "unauthorized": 0, "stop": 0, "tool_calls": 0, "analysis_calls": 0, "sentinel_calls": 0}
+                      "unauthorized": 0, "stop": 0, "tool_calls": 0, "analysis_calls": 0, "sentinel_calls": 0,
+                      "compactions": 0}
         self.pending: dict[str, bytes] = {}
         mock = self
 
@@ -1790,6 +1963,21 @@ class MockVLLM:
         frac = (k * 0.6180339887) % 1.0
         reasoning = ("Mock reasoning about the board; step %d. " % k) * max(1, int(1 + 90 * frac * frac))
         prompt_tokens = max(1, len(json.dumps(payload.get("messages") or [])) // 4)
+        msgs = payload.get("messages") or []
+        if (not payload.get("tools") and msgs and isinstance(msgs[0], dict) and msgs[0].get("role") == "system"
+                and str(msgs[0].get("content", "")).startswith(CARRY_COMPACT_HEAD)):
+            # a graft_carry compaction request: no tools, the compaction system prompt -> a summary block
+            with self.lock:
+                self.state["compactions"] += 1
+                c = self.state["compactions"]
+                self.state["prompt_tokens"] += prompt_tokens
+                self.state["generation_tokens"] += 40
+            text = (f"MECHANICS VERIFIED\n- {MOCK_COMPACT_SUMMARY} #{c}: the chosen action moved a block one cell.\n"
+                    "HYPOTHESES REFUTED\n- clicking the HUD bar did nothing.\nCURRENT PLAN\n- keep cycling the valid actions.")
+            body = {"id": f"chatcmpl-mock-{k}", "object": "chat.completion", "model": self.served_model,
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": 40, "total_tokens": prompt_tokens + 40}}
+            return json.dumps(body).encode()
         if k % 7 == 3:
             content = "World model: still exploring. Plan: inspect the segmentation next."
             message = {"role": "assistant", "content": content, "reasoning": reasoning}
@@ -2069,6 +2257,45 @@ def render_summary(result: dict, telemetry: dict) -> str:
             f"  PROBE-SAFETY GAME_OVERs {saf.get('game_overs_total')} ({_fmt(saf.get('game_overs_per_run'), 2)}/run over {saf.get('game_overs_runs')} runs; "
             f"yield900 base {saf.get('base_game_overs_per_run')}) | live-cap score {_fmt(saf.get('live_cap_score_total'), 2)} "
             f"({_fmt(saf.get('live_cap_score_per_game'), 2)}/game over {saf.get('live_cap_runs')} runs; yield900 base {saf.get('base_live_cap_score_per_game')}/game)")
+    ca = agg.get("carry") or {}
+    if "graft_carry" in installed or ca.get("compactions_total") or ca.get("calls_marked"):
+        knobs = {k: env.get(k) for k in CARRY_ENV_KEYS if env.get(k) is not None}
+        gate = ca.get("gate") or {}
+        pri = (agg.get("probe") or {}).get("primary") or {}
+        saf = (agg.get("probe") or {}).get("safety") or {}
+        fcb = ca.get("first_call_with_block") or {}
+        per_run = {stem: f"{(g.get('carry') or {}).get('compactions', 0)}/{(g.get('carry') or {}).get('compaction_failures', 0)}"
+                   for stem, g in sorted(telemetry.get("per_game", {}).items())}
+        lines.append(
+            f"  CARRY  compactions {ca.get('compactions_total')} ({_fmt(ca.get('compactions_per_game'), 2)}/game; gate >= "
+            f"{CARRY_GATE['compactions_per_game_min']:g}) in {ca.get('games_with_compaction')} runs | failures {ca.get('compaction_failures_total')} "
+            f"({_pct(ca.get('failure_share'))} of {ca.get('compaction_attempts')} attempts; gate <= {_pct(CARRY_GATE['failure_share_max'])}) | "
+            f"per compaction: dropped msgs {_fmt(ca.get('dropped_msgs_per_compaction'), 1)}, input chars {_fmt(ca.get('input_chars_per_compaction'), 0)}, "
+            f"e2e {_fmt(ca.get('compaction_e2e_s_mean'))} s, prompt tok {_fmt(ca.get('compaction_prompt_tokens_mean'), 0)}, "
+            f"completion tok {_fmt(ca.get('compaction_completion_tokens_mean'), 0)} | block chars mean {_fmt(ca.get('summary_chars_mean'), 0)} "
+            f"(cap {knobs.get('CARRY_SUMMARY_CHARS')}) | ENGAGED = {'YES' if gate.get('engaged') else 'NO'} "
+            f"{{{', '.join(k + ('+' if v.get('ok') else '-') for k, v in gate.items() if isinstance(v, dict))}}} | "
+            f"grafts {installed} | flags {knobs}")
+        lines.append(
+            f"  CARRY-WINDOW prompt tok/call (server usage via markers) mean {_fmt(ca.get('prompt_tokens_mean'), 0)} max {ca.get('prompt_tokens_max')} "
+            f"| over {CARRY_WINDOW_TOKENS}: {ca.get('prompt_over_window')} (gate 0) | calls carrying the block {ca.get('calls_with_summary')}/{ca.get('calls_marked')} "
+            f"({_pct(ca.get('calls_with_summary_share'))}; gate >= {_pct(CARRY_GATE['calls_with_summary_share_min'])}) | first block at call "
+            f"#{_fmt(fcb.get('median'), 0)} (median over {fcb.get('n')} runs) | reasoning carried per request: {_fmt(ca.get('reasoning_msgs_per_call'), 2)} msgs, "
+            f"{_fmt(ca.get('reasoning_chars_per_call'), 0)} chars (stock behaviour, measured) | compactions/failures per run {per_run}")
+        delta = pri.get("delta_vs_base")
+        lines.append(
+            f"  CARRY-PRIMARY levels {pri.get('levels_total')} over {pri.get('games')} runs / {pri.get('draws')} draw(s) = "
+            f"{_fmt(pri.get('levels_per_draw'), 1)}/draw vs pooled six-draw base {pri.get('base_levels_mean')} (sd {pri.get('base_levels_sd')}) "
+            f"-> delta {('%+.1f' % delta) if delta is not None else '-'} "
+            f"({('%+.2f' % (delta / pri['base_levels_sd'])) if delta is not None else '-'} sd; 25-game waves only; >= 48 step candidate, 45-47 redraw, <= 44 dead) | "
+            f"never-passed walls {pri.get('walls_passed_n')}/{pri.get('walls_total')} passed {pri.get('walls_passed')} "
+            f"(present in wave: {len(pri.get('walls_present') or [])}; co-primary target >= 3)")
+        lines.append(
+            f"  CARRY-SAFETY GAME_OVERs {saf.get('game_overs_total')} ({_fmt(saf.get('game_overs_per_run'), 2)}/run over {saf.get('game_overs_runs')} runs; "
+            f"yield900 base {saf.get('base_game_overs_per_run')}) | live-cap score {_fmt(saf.get('live_cap_score_total'), 2)} "
+            f"({_fmt(saf.get('live_cap_score_per_game'), 2)}/game over {saf.get('live_cap_runs')} runs; yield900 base {saf.get('base_live_cap_score_per_game')}/game) | "
+            f"fit-the-clock: calls/game {_fmt(agg.get('calls_per_game'))} x e2e {_fmt(ce.get('mean'))} s = "
+            f"{_fmt((agg.get('calls_per_game') or 0) * (ce.get('mean') or 0), 0)} s (+ compactions) vs 7920 s")
     w = agg.get("wall") or {}
     if w:
         per_l2 = {stem: (g.get("wall") or {}).get("calls_at_l2") for stem, g in sorted(telemetry.get("per_game", {}).items())}
@@ -2282,9 +2509,10 @@ class Wave:
         md = self.result["metrics"].get("delta") or {}
         self.result["grafts"]["status"] = graft_status(self.arm)   # the graft's own counters (retry_log, skips, ...)
         probe_per_game = (self.result["grafts"]["status"].get("graft_probe") or {}).get("per_game")
+        carry_per_game = (self.result["grafts"]["status"].get("graft_carry") or {}).get("per_game")
         telemetry = build_telemetry(self.out_dir / "transcripts", rows, shim_records,
                                     calls_budget=self.max_calls, wave_preemptions=md.get("preemptions"),
-                                    graft_per_game=probe_per_game)
+                                    graft_per_game=probe_per_game, carry_per_game=carry_per_game)
         self.result["max_calls_stops"] = dict(_MAX_CALLS.get("stops") or {})
         self.result["concurrency_override"] = self.concurrency != GEOMETRY["concurrency"]
         telemetry["arm"] = self.arm
