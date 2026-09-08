@@ -1,0 +1,2390 @@
+{
+ "definitions": {
+  "calls": "HTTP chat completions the harness made for the game = count of '[MODEL RESPONSE META]' transcript sections (one per successful request).",
+  "turns": "analyze() invocations = count of '--- analysis_step=N | action=M | ... ---' headers. This is the judge's 'analysis steps per game' (53 for keith).",
+  "distinct_analysis_steps": "max analysis_step number (a step repeats its header after a 60 s yield or a retryable failure).",
+  "reasoning_chars": "length of the '[THINKING]' section that follows each META (stripped); 0 when the response carried no reasoning. Pooled over calls (the judge's mean 3,406 / median 2,206).",
+  "no_tool_call_share": "calls whose META says tool_call_count: 0 (text-only replies that trigger the 'You have not acted yet' follow-up) / calls.",
+  "length_finish_share": "calls with finish_reason: length (output truncated by max_tokens or the context) / calls.",
+  "turn_outcomes": "per-turn '[ANALYZER STATUS] message:' \u2014 Step executed / Yielded control (turn_time_budget|stop_requested) / No action(...) captured / request_error / error.",
+  "actions_per_call": "len(game_run.history) / calls.",
+  "e2e_s (client)": "requests.post wall time incl. redirect legs, from the client shim.",
+  "e2e_s (vllm)": "vllm:e2e_request_latency_seconds_sum/count delta from /metrics.",
+  "retries_fired": "graft_retry level retries = count of '[RETRY] game=..' marker lines the graft wrote into the transcript (one per harness-issued level RESET + FRESH MIND turn).",
+  "retry_clears": "count of '[RETRY-CLEAR] game=..' marker lines = retried levels that later cleared.",
+  "evid_markers": "graft_evidence blocks = '[EVID] harness object diff ...' lines inside [TOOL RESULT: python] sections (one per tool call that executed actions).",
+  "evid_level_flags": "'LEVEL CLEARED after action k ...' lines the aid wrote (a level clear inside a batch).",
+  "hypo_markers": "graft_hypo blocks = '[HYPO] Hypothesis discipline ...' lines inside [USER PROMPT] sections.",
+  "turn_levels": "per turn, the level in the first [USER PROMPT] 'Current state: step N, level L' line.",
+  "level_reached": "max turn level = the level the run ended on (levels_completed + 1 unless won).",
+  "wall_level": "the uncleared level the run ended on (None when the game was won).",
+  "engagement": "share of turns carrying the aid: evid = turns with >= 1 [EVID] / turns that executed a step; hypo = turns whose prompt carries [HYPO] / turns; '_wall' restricts both to turns on wall_level (the judge's engagement gate: >= 80 % of wall turns).",
+  "wall": "judge 09-06 instrument reads per run: void (request errors > 0, vLLM preemptions delta > 0 for the wave, or length-finish share > 1 %), calls_at_l2 (calls made before the first level-2 turn), attempt (L2 reached with >= 30 calls left of the budget = --max-calls or the run's own total), passed (level 3 reached), uptake / uptake_wall (share of turns whose THINKING or ASSISTANT text quotes the aid: '[EVID]', 'TRACE per action', '[HYPO]', or MOVED/APPEARED cited with a coordinate).",
+  "first_call_prompt_tokens": "prompt_tokens of the run's first request (n_messages == 2); keith baseline ~4,050; the up8 arm expects \u2248 +192 (256 - 64 vision tokens).",
+  "max_calls": "--max-calls N: in-memory stop after N analyzer calls per run (results.json:max_calls_stops).",
+  "draws": "--draws N = taaf n_passes: each game played N times as independent runs (<gid>_p<draw>); per_game is keyed by run stem and carries game_id + draw.",
+  "call_types": "loss-ledger-3 call classes from the transcript (scratchpad loss-ledger-3/q3.py ctype): N = no tool call; R = refused by graft_probe ([PROBE-REFUSE] marker inside the [TOOL CALL] section); E = python error (Traceback|Error: in the result) without action( in the code; X = code contains action( ; A = analysis-only (tool call, no action( in the code, no error). The ledger reads the CODE, not the payload: an action() that failed is X here but analysis-only for the graft.",
+  "probe": "graft_probe reads per run: refusals / noact_turns = '[PROBE-REFUSE]' / '[PROBE-NOACT]' marker lines; turns_ge3_analysis = turns with >= 3 A-class calls before the first X (the ledger's 15 %; refused calls excluded because they were not executed); turns_ge3_nonacting = >= 3 of any non-X class before the first X (refusals, errors and no-tool replies included: the strict read); acting_after_refusal = the next python call after a refusal in the same turn is X (transcript, code-based) \u2014 the graft's own payload-based count is in probe.graft (per run) and aggregate.probe.graft; yields_turn_time_budget = turns whose status says turn_time_budget; wall_actions_ratio = actions_per_level[wall] / base_actions_per_level[wall] (loss-ledger-3 q7: 'wall-level actions/baseline', median 0.72 on yield900).",
+  "probe_gate": "ENGAGEMENT (judge 09-08): refusals >= 1/game AND acted_after_first_refusal share >= 50 % (graft counters: the very next call after the FIRST refusal of a span acted; a refusal that ended the turn is a non-acting follow-up) AND wall actions/baseline median >= 0.9; SECONDARY: turns_ge3_analysis (graft leak split: leak_cap_lifted = the leaking snippet had no action() and only the refusal cap let it run; leak_dead_branch = it contained an action() call but executed none; leak_unparsable) and turn_time_budget yields per draw. PRIMARY: levels vs the pooled six-draw base 39.3 (sd 2.34) and the co-primary 'walls passed among the 12 six-draw-never-passed walls' (NEVER6_WALLS). SAFETY: GAME_OVERs per run vs 0.87 (events.jsonl action rows with game_over) and live-cap score per game vs 8.42 (live_cap_score: min(1.15, (b/a)^2) level-weighted).",
+  "probe_span": "graft_probe counters are per SPAN: a turn that executed nothing carries its analysis/refusal counts into the next turn on the same level (carried_turns); the span resets after an acting turn, a level change or a new game.",
+  "carry": "graft_carry reads per run from '[HARNESS CARRY]' sections: one '[CARRY-CALL]' per model call (msgs in the request, reasoning_msgs / reasoning_chars = assistant messages carrying a `reasoning` field \u2014 the stock already carries them and the template renders them, MEASURED here \u2014, summary_chars = size of the compacted block in the system message, usage prompt/completion tokens) and one '[CARRY-COMPACT]' per compaction (dropped_msgs, input_chars fed to the compactor, summary_chars, tokens, e2e_s, ok=1|0 + err). carry.graft = the graft's own counters for the run. prompt_over_window = calls whose usage.prompt_tokens > 32768.",
+  "carry_gate": "ENGAGEMENT (pre-registered 09-08): compactions >= 1 per game AND compaction failures <= 10 % of attempts AND no call over the 32,768-token window AND >= 40 % of calls carry the block. PRIMARY / co-primary / SAFETY are the probe arm's (levels vs 39.33 sd 2.34 with >= 48 step candidate / 45-47 redraw / <= 44 dead; walls passed among NEVER6_WALLS >= 3; GAME_OVERs/run vs 0.87; live-cap vs 8.42) plus fit-the-clock (calls/game x e2e + compaction calls <= 7,920 s)."
+ },
+ "reference_keith_commit_run": {
+  "calls_per_game": 55,
+  "reasoning_chars_mean": 3406,
+  "reasoning_chars_median": 2206,
+  "turns_per_game": 53,
+  "vllm_e2e_mean_s": 142,
+  "vllm_queue_mean_s": 124,
+  "mtp_acceptance": 0.6,
+  "preemptions": 57,
+  "levels_per_game": 1.44,
+  "score": 6.76
+ },
+ "aggregate": {
+  "games": 6,
+  "calls_total": 360,
+  "calls_per_game": 60.0,
+  "turns_per_game": 37.666666666666664,
+  "distinct_steps_per_game": 37.666666666666664,
+  "calls_per_turn": 1.592920353982301,
+  "no_tool_call_share": null,
+  "length_finish_share": null,
+  "finish_reasons": {
+   "tool_calls": 360
+  },
+  "turn_outcomes": {
+   "step_executed": 220,
+   "yielded": 6
+  },
+  "step_executed_turn_share": 0.9734513274336283,
+  "yielded_turn_share": 0.02654867256637168,
+  "actions_total": 1207,
+  "actions_per_game": 201.16666666666666,
+  "actions_per_call": 3.352777777777778,
+  "retries_total": 0,
+  "retries_per_game": 0.0,
+  "retry_clears_total": 0,
+  "games_with_retry": 0,
+  "evid_markers_total": 0,
+  "evid_markers_per_game": 0.0,
+  "evid_level_flags_total": 0,
+  "hypo_markers_total": 0,
+  "hypo_markers_per_game": 0.0,
+  "engagement": {
+   "evid": {
+    "turns": 0,
+    "of": 220,
+    "share": 0.0
+   },
+   "evid_wall": {
+    "turns": 0,
+    "of": 107,
+    "share": 0.0
+   },
+   "hypo": {
+    "turns": 0,
+    "of": 226,
+    "share": 0.0
+   },
+   "hypo_wall": {
+    "turns": 0,
+    "of": 113,
+    "share": 0.0
+   }
+  },
+  "wall": {
+   "runs": 6,
+   "void": 0,
+   "attempts": 4,
+   "passes": 3,
+   "reached_l2": 5,
+   "uptake": {
+    "turns": 1,
+    "of": 226,
+    "share": 0.004424778761061947
+   },
+   "uptake_wall": {
+    "turns": 0,
+    "of": 113,
+    "share": 0.0
+   }
+  },
+  "probe": {
+   "refusals_total": 0,
+   "refusals_per_game": 0.0,
+   "games_with_refusal": 0,
+   "noact_turns_total": 0,
+   "noact_notices_total": 0,
+   "turns_ge3_analysis": {
+    "turns": 14,
+    "of": 226,
+    "share": 0.061946902654867256
+   },
+   "turns_ge3_nonacting": {
+    "turns": 15,
+    "of": 226,
+    "share": 0.06637168141592921
+   },
+   "acting_after_refusal": {
+    "acted": 0,
+    "of": 0,
+    "share": null
+   },
+   "acted_after_first_refusal": {
+    "acted": 0,
+    "of": 0,
+    "share": null
+   },
+   "graft": {
+    "runs": 0,
+    "calls_after_refusal": 0,
+    "acting_calls_after_refusal": 0,
+    "acting_after_refusal_share": null,
+    "first_refusal_followups": 0,
+    "acted_after_first_refusal": 0,
+    "acted_after_first_refusal_share": null,
+    "refusal_turn_ending": 0,
+    "carried_turns": 0,
+    "refusals": 0,
+    "turns_total": 0,
+    "turns_ge3_analysis": 0,
+    "turns_ge3_analysis_share": null,
+    "leak_cap_lifted": 0,
+    "leak_dead_branch": 0,
+    "leak_unparsable": 0,
+    "analysis_calls_total": 0,
+    "acting_calls_total": 0
+   },
+   "call_types": {
+    "A": 125,
+    "X": 232,
+    "E": 3
+   },
+   "analysis_call_share": 0.3472222222222222,
+   "yields_turn_time_budget_total": 0,
+   "draws": 2,
+   "yields_per_draw": 0.0,
+   "wall_actions_ratio": {
+    "n": 6,
+    "median": 0.8789521228545618,
+    "under_1x": 3
+   },
+   "primary": {
+    "levels_total": 8,
+    "levels_per_draw": 4.0,
+    "games": 6,
+    "draws": 2,
+    "base_levels_mean": 39.33,
+    "base_levels_sd": 2.34,
+    "delta_vs_base": -35.33,
+    "walls_passed": [
+     "dc22"
+    ],
+    "walls_passed_n": 1,
+    "walls_present": [
+     "dc22",
+     "lf52"
+    ],
+    "walls_total": 12
+   },
+   "safety": {
+    "game_overs_total": 4,
+    "game_overs_per_run": 0.6666666666666666,
+    "game_overs_runs": 6,
+    "base_game_overs_per_run": 0.87,
+    "live_cap_score_total": 25.091311990975083,
+    "live_cap_score_per_game": 4.18188533182918,
+    "live_cap_runs": 6,
+    "base_live_cap_score_per_game": 8.42
+   },
+   "gate": {
+    "refusals_per_game": {
+     "value": 0.0,
+     "min": 1.0,
+     "ok": false
+    },
+    "acted_after_first_refusal": {
+     "value": null,
+     "min": 0.5,
+     "ok": false
+    },
+    "wall_actions_ratio": {
+     "value": 0.8789521228545618,
+     "min": 0.9,
+     "ok": false
+    },
+    "turns_ge3_analysis": {
+     "value": 0.061946902654867256,
+     "max": 0.05,
+     "secondary": true,
+     "ok": false
+    },
+    "yields_per_draw": {
+     "value": 0.0,
+     "max": 20,
+     "secondary": true,
+     "ok": true
+    },
+    "engaged": false
+   }
+  },
+  "carry": {
+   "compactions_total": 69,
+   "compactions_per_game": 11.5,
+   "compaction_failures_total": 0,
+   "compaction_attempts": 69,
+   "failure_share": 0.0,
+   "games_with_compaction": 6,
+   "dropped_msgs_per_compaction": 11.855072463768115,
+   "input_chars_per_compaction": 17771.304347826088,
+   "summary_chars_mean": 4102.710144927536,
+   "compaction_e2e_s_mean": 13.650231884057971,
+   "compaction_completion_tokens_mean": 1314.7246376811595,
+   "compaction_prompt_tokens_mean": 7696.217391304348,
+   "calls_marked": 360,
+   "calls_with_summary": 280,
+   "calls_with_summary_share": 0.7777777777777778,
+   "first_call_with_block": {
+    "n": 6,
+    "mean": 14.333333333333334,
+    "median": 14.5,
+    "p90": 15,
+    "max": 16,
+    "sum": 86
+   },
+   "reasoning_msgs_per_call": 6.791666666666667,
+   "reasoning_chars_per_call": 18040.975,
+   "prompt_tokens_mean": 18154.955555555556,
+   "prompt_tokens_max": 26827,
+   "prompt_over_window": 0,
+   "graft": {
+    "runs": 6,
+    "compactions": 69,
+    "compaction_failures": 0,
+    "calls_total": 360,
+    "calls_with_summary": 280,
+    "prompt_tokens_max": 26827,
+    "prompt_over_window": 0,
+    "reasoning_msgs_per_call": 6.791666666666667,
+    "compaction_e2e_s": 941.866,
+    "dropped_msgs_total": 818,
+    "turns_total": 226
+   },
+   "per_run_compactions": {},
+   "gate": {
+    "compactions_per_game": {
+     "value": 11.5,
+     "min": 1.0,
+     "ok": true
+    },
+    "failure_share": {
+     "value": 0.0,
+     "max": 0.1,
+     "ok": true
+    },
+    "prompt_over_window": {
+     "value": 0,
+     "max": 0,
+     "ok": true
+    },
+    "calls_with_summary_share": {
+     "value": 0.7777777777777778,
+     "min": 0.4,
+     "ok": true
+    },
+    "engaged": true
+   }
+  },
+  "first_call_prompt_tokens": {
+   "n": 6,
+   "mean": 4058.6666666666665,
+   "median": 4059.0,
+   "p90": 4060,
+   "max": 4060,
+   "sum": 24352
+  },
+  "reasoning_chars_pooled": {
+   "n": 360,
+   "mean": 3022.8694444444445,
+   "median": 2048.0,
+   "p90": 7319,
+   "max": 25211,
+   "sum": 1088233
+  },
+  "reasoning_chars_pooled_nonzero": {
+   "n": 360,
+   "mean": 3022.8694444444445,
+   "median": 2048.0,
+   "p90": 7319,
+   "max": 25211,
+   "sum": 1088233
+  },
+  "client_e2e_s_pooled": {
+   "n": 429,
+   "mean": 15.464568764568766,
+   "median": 13.101,
+   "p90": 29.276,
+   "max": 93.569,
+   "sum": 6634.3
+  },
+  "client_prompt_tokens_pooled": {
+   "n": 429,
+   "mean": 16472.780885780885,
+   "median": 17872,
+   "p90": 23180,
+   "max": 26827,
+   "sum": 7066823
+  },
+  "client_completion_tokens_pooled": {
+   "n": 429,
+   "mean": 1240.7132867132866,
+   "median": 1057,
+   "p90": 2397,
+   "max": 8331,
+   "sum": 532266
+  },
+  "client_redirected_posts": 0,
+  "client_post_errors": 0,
+  "levels_total": 8,
+  "levels_per_game": 1.3333333333333333,
+  "draws": 2,
+  "analyzer_status_config_first": {
+   "max_output_tokens": "server default",
+   "context_budget_tokens": "31744",
+   "yield_seconds": "900.0"
+  }
+ },
+ "per_game": {
+  "cd82-fb555c5d_p0": {
+   "calls": 60,
+   "turns": 40,
+   "distinct_analysis_steps": 40,
+   "calls_per_turn": 1.5,
+   "reasoning_chars": {
+    "n": 60,
+    "mean": 2957.733333333333,
+    "median": 2698.0,
+    "p90": 5902,
+    "max": 10343,
+    "sum": 177464
+   },
+   "reasoning_chars_nonzero": {
+    "n": 60,
+    "mean": 2957.733333333333,
+    "median": 2698.0,
+    "p90": 5902,
+    "max": 10343,
+    "sum": 177464
+   },
+   "content_chars_mean": null,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 60
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 39,
+    "yielded": 1
+   },
+   "step_executed_turn_share": 0.975,
+   "yielded_turn_share": 0.025,
+   "actions_total": 141,
+   "actions_per_call": 2.35,
+   "actions_per_turn": 3.525,
+   "wallclock_s": 1068.7717885840102,
+   "calls_per_hour": 202.10114292609944,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3
+   ],
+   "level_reached": 3,
+   "wall_level": 3,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 39,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 7,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 40,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 8,
+     "share": 0.0
+    },
+    "wall_level": 3,
+    "wall_turns": 8
+   },
+   "probe": {
+    "refusals": 0,
+    "noact_turns": 0,
+    "noact_notices": 0,
+    "turns_with_refusal": 0,
+    "turns_ge3_analysis": {
+     "turns": 1,
+     "of": 40,
+     "share": 0.025
+    },
+    "turns_ge3_nonacting": {
+     "turns": 2,
+     "of": 40,
+     "share": 0.05
+    },
+    "acting_after_refusal": {
+     "acted": 0,
+     "of": 0,
+     "share": null
+    },
+    "acted_after_first_refusal": {
+     "acted": 0,
+     "of": 0,
+     "share": null
+    },
+    "call_types": {
+     "A": 19,
+     "X": 40,
+     "E": 1
+    },
+    "analysis_call_share": 0.31666666666666665,
+    "yields_turn_time_budget": 0,
+    "wall_actions": 25,
+    "wall_baseline": 41,
+    "wall_actions_ratio": 0.6097560975609756,
+    "game_overs": 0,
+    "live_cap_score": 3.219387275938306
+   },
+   "carry": {
+    "compactions": 12,
+    "compaction_failures": 0,
+    "compaction_attempts": 12,
+    "dropped_msgs": 143,
+    "input_chars": 196040,
+    "summary_chars": {
+     "n": 12,
+     "mean": 3812.25,
+     "median": 3715.5,
+     "p90": 4569,
+     "max": 4800,
+     "sum": 45747
+    },
+    "compaction_e2e_s": {
+     "n": 12,
+     "mean": 12.268833333333333,
+     "median": 12.084,
+     "p90": 15.837,
+     "max": 16.282,
+     "sum": 147.226
+    },
+    "compaction_prompt_tokens": {
+     "n": 12,
+     "mean": 6795.583333333333,
+     "median": 6945.5,
+     "p90": 7610,
+     "max": 9231,
+     "sum": 81547
+    },
+    "compaction_completion_tokens": {
+     "n": 12,
+     "mean": 1133.8333333333333,
+     "median": 1111.5,
+     "p90": 1369,
+     "max": 1500,
+     "sum": 13606
+    },
+    "calls_marked": 60,
+    "reasoning_msgs_total": 432,
+    "reasoning_chars_total": 1222856,
+    "reasoning_msgs_per_call": 7.2,
+    "reasoning_chars_per_call": 20380.933333333334,
+    "calls_with_summary": 48,
+    "calls_with_summary_share": 0.8,
+    "first_call_with_block": 13,
+    "prompt_tokens": {
+     "n": 60,
+     "mean": 18208.45,
+     "median": 19016.0,
+     "p90": 22798,
+     "max": 24688,
+     "sum": 1092507
+    },
+    "prompt_over_window": 0,
+    "graft": {
+     "calls_total": 60,
+     "calls_with_summary": 48,
+     "reasoning_msgs_total": 432,
+     "reasoning_chars_total": 1222856,
+     "prompt_tokens_total": 1092507,
+     "prompt_tokens_max": 24688,
+     "prompt_over_window": 0,
+     "compactions": 12,
+     "compaction_failures": 0,
+     "dropped_msgs_total": 143,
+     "dropped_chars_total": 196040,
+     "summary_chars_total": 45747,
+     "compaction_prompt_tokens": 81547,
+     "compaction_completion_tokens": 13606,
+     "compaction_e2e_s": 147.226,
+     "turns_total": 40
+    }
+   },
+   "wall": {
+    "void": false,
+    "void_reasons": [],
+    "calls_total": 60,
+    "calls_budget": 60,
+    "calls_at_l2": 31,
+    "calls_remaining_at_l2": 29,
+    "reached_l2": true,
+    "attempt": false,
+    "passed": true,
+    "uptake": {
+     "turns": 0,
+     "of": 40,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 8,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4059,
+   "client": {
+    "posts": 72,
+    "ok": 72,
+    "errors": 0,
+    "e2e_s": {
+     "n": 72,
+     "mean": 14.339833333333335,
+     "median": 13.0165,
+     "p90": 22.028,
+     "max": 47.292,
+     "sum": 1032.468
+    },
+    "prompt_tokens": {
+     "n": 72,
+     "mean": 16306.305555555555,
+     "median": 18013.0,
+     "p90": 22493,
+     "max": 24688,
+     "sum": 1174054
+    },
+    "completion_tokens": {
+     "n": 72,
+     "mean": 1087.125,
+     "median": 1014.5,
+     "p90": 1787,
+     "max": 3641,
+     "sum": 78273
+    },
+    "redirected_posts": 0,
+    "redirect_legs": 0,
+    "max_tokens_sent": [
+     1500,
+     null
+    ],
+    "timeouts_sent": {
+     "n": 72,
+     "mean": 850.0,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 61200.0
+    },
+    "model_time_share_of_wall": 0.9660322353454818
+   },
+   "game_id": "cd82-fb555c5d",
+   "draw": 0,
+   "levels_completed": 2,
+   "number_of_levels": 6,
+   "score": 3.219387275938306
+  },
+  "cd82-fb555c5d_p1": {
+   "calls": 60,
+   "turns": 43,
+   "distinct_analysis_steps": 43,
+   "calls_per_turn": 1.3953488372093024,
+   "reasoning_chars": {
+    "n": 60,
+    "mean": 3915.7,
+    "median": 2369.5,
+    "p90": 8486,
+    "max": 25211,
+    "sum": 234942
+   },
+   "reasoning_chars_nonzero": {
+    "n": 60,
+    "mean": 3915.7,
+    "median": 2369.5,
+    "p90": 8486,
+    "max": 25211,
+    "sum": 234942
+   },
+   "content_chars_mean": 298.3833333333333,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 60
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 42,
+    "yielded": 1
+   },
+   "step_executed_turn_share": 0.9767441860465116,
+   "yielded_turn_share": 0.023255813953488372,
+   "actions_total": 155,
+   "actions_per_call": 2.5833333333333335,
+   "actions_per_turn": 3.604651162790698,
+   "wallclock_s": 2340.915574292012,
+   "calls_per_hour": 92.27158910475751,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3
+   ],
+   "level_reached": 3,
+   "wall_level": 3,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 42,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 6,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 43,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 7,
+     "share": 0.0
+    },
+    "wall_level": 3,
+    "wall_turns": 7
+   },
+   "probe": {
+    "refusals": 0,
+    "noact_turns": 0,
+    "noact_notices": 0,
+    "turns_with_refusal": 0,
+    "turns_ge3_analysis": {
+     "turns": 3,
+     "of": 43,
+     "share": 0.06976744186046512
+    },
+    "turns_ge3_nonacting": {
+     "turns": 3,
+     "of": 43,
+     "share": 0.06976744186046512
+    },
+    "acting_after_refusal": {
+     "acted": 0,
+     "of": 0,
+     "share": null
+    },
+    "acted_after_first_refusal": {
+     "acted": 0,
+     "of": 0,
+     "share": null
+    },
+    "call_types": {
+     "A": 17,
+     "E": 1,
+     "X": 42
+    },
+    "analysis_call_share": 0.2833333333333333,
+    "yields_turn_time_budget": 0,
+    "wall_actions": 25,
+    "wall_baseline": 41,
+    "wall_actions_ratio": 0.6097560975609756,
+    "game_overs": 0,
+    "live_cap_score": 5.556719450893054
+   },
+   "carry": {
+    "compactions": 15,
+    "compaction_failures": 0,
+    "compaction_attempts": 15,
+    "dropped_msgs": 149,
+    "input_chars": 243989,
+    "summary_chars": {
+     "n": 15,
+     "mean": 4125.4,
+     "median": 4208,
+     "p90": 4799,
+     "max": 4800,
+     "sum": 61881
+    },
+    "compaction_e2e_s": {
+     "n": 15,
+     "mean": 14.197533333333332,
+     "median": 13.802,
+     "p90": 15.683,
+     "max": 22.737,
+     "sum": 212.963
+    },
+    "compaction_prompt_tokens": {
+     "n": 15,
+     "mean": 7185.2,
+     "median": 7134,
+     "p90": 9194,
+     "max": 10725,
+     "sum": 107778
+    },
+    "compaction_completion_tokens": {
+     "n": 15,
+     "mean": 1315.1333333333334,
+     "median": 1355,
+     "p90": 1500,
+     "max": 1500,
+     "sum": 19727
+    },
+    "calls_marked": 60,
+    "reasoning_msgs_total": 340,
+    "reasoning_chars_total": 1029044,
+    "reasoning_msgs_per_call": 5.666666666666667,
+    "reasoning_chars_per_call": 17150.733333333334,
+    "calls_with_summary": 48,
+    "calls_with_summary_share": 0.8,
+    "first_call_with_block": 13,
+    "prompt_tokens": {
+     "n": 60,
+     "mean": 17818.316666666666,
+     "median": 18418.5,
+     "p90": 23188,
+     "max": 26827,
+     "sum": 1069099
+    },
+    "prompt_over_window": 0,
+    "graft": {
+     "calls_total": 60,
+     "calls_with_summary": 48,
+     "reasoning_msgs_total": 340,
+     "reasoning_chars_total": 1029044,
+     "prompt_tokens_total": 1069099,
+     "prompt_tokens_max": 26827,
+     "prompt_over_window": 0,
+     "compactions": 15,
+     "compaction_failures": 0,
+     "dropped_msgs_total": 149,
+     "dropped_chars_total": 243989,
+     "summary_chars_total": 61881,
+     "compaction_prompt_tokens": 107778,
+     "compaction_completion_tokens": 19727,
+     "compaction_e2e_s": 212.963,
+     "turns_total": 43
+    }
+   },
+   "wall": {
+    "void": false,
+    "void_reasons": [],
+    "calls_total": 60,
+    "calls_budget": 60,
+    "calls_at_l2": 27,
+    "calls_remaining_at_l2": 33,
+    "reached_l2": true,
+    "attempt": true,
+    "passed": true,
+    "uptake": {
+     "turns": 0,
+     "of": 43,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 7,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4059,
+   "client": {
+    "posts": 75,
+    "ok": 75,
+    "errors": 0,
+    "e2e_s": {
+     "n": 75,
+     "mean": 18.499386666666666,
+     "median": 14.793,
+     "p90": 32.589,
+     "max": 93.569,
+     "sum": 1387.454
+    },
+    "prompt_tokens": {
+     "n": 75,
+     "mean": 15691.693333333333,
+     "median": 17328,
+     "p90": 23019,
+     "max": 26827,
+     "sum": 1176877
+    },
+    "completion_tokens": {
+     "n": 75,
+     "mean": 1551.56,
+     "median": 1285,
+     "p90": 2633,
+     "max": 8331,
+     "sum": 116367
+    },
+    "redirected_posts": 0,
+    "redirect_legs": 0,
+    "max_tokens_sent": [
+     1500,
+     null
+    ],
+    "timeouts_sent": {
+     "n": 75,
+     "mean": 840.0,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 63000.0
+    },
+    "model_time_share_of_wall": 0.5926971545821863
+   },
+   "game_id": "cd82-fb555c5d",
+   "draw": 1,
+   "levels_completed": 2,
+   "number_of_levels": 6,
+   "score": 5.556719450893054
+  },
+  "dc22-fdcac232_p0": {
+   "calls": 60,
+   "turns": 33,
+   "distinct_analysis_steps": 33,
+   "calls_per_turn": 1.8181818181818181,
+   "reasoning_chars": {
+    "n": 60,
+    "mean": 3187.1833333333334,
+    "median": 1424.5,
+    "p90": 8264,
+    "max": 15460,
+    "sum": 191231
+   },
+   "reasoning_chars_nonzero": {
+    "n": 60,
+    "mean": 3187.1833333333334,
+    "median": 1424.5,
+    "p90": 8264,
+    "max": 15460,
+    "sum": 191231
+   },
+   "content_chars_mean": 94.2,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 60
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 32,
+    "yielded": 1
+   },
+   "step_executed_turn_share": 0.9696969696969697,
+   "yielded_turn_share": 0.030303030303030304,
+   "actions_total": 416,
+   "actions_per_call": 6.933333333333334,
+   "actions_per_turn": 12.606060606060606,
+   "wallclock_s": 1296.3952689580037,
+   "calls_per_hour": 166.61585025191667,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "level_reached": 1,
+   "wall_level": 1,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 32,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 32,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 33,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 33,
+     "share": 0.0
+    },
+    "wall_level": 1,
+    "wall_turns": 33
+   },
+   "probe": {
+    "refusals": 0,
+    "noact_turns": 0,
+    "noact_notices": 0,
+    "turns_with_refusal": 0,
+    "turns_ge3_analysis": {
+     "turns": 3,
+     "of": 33,
+     "share": 0.09090909090909091
+    },
+    "turns_ge3_nonacting": {
+     "turns": 3,
+     "of": 33,
+     "share": 0.09090909090909091
+    },
+    "acting_after_refusal": {
+     "acted": 0,
+     "of": 0,
+     "share": null
+    },
+    "acted_after_first_refusal": {
+     "acted": 0,
+     "of": 0,
+     "share": null
+    },
+    "call_types": {
+     "A": 22,
+     "X": 38
+    },
+    "analysis_call_share": 0.36666666666666664,
+    "yields_turn_time_budget": 0,
+    "wall_actions": 416,
+    "wall_baseline": 59,
+    "wall_actions_ratio": 7.0508474576271185,
+    "game_overs": 4,
+    "live_cap_score": 0.0
+   },
+   "carry": {
+    "compactions": 10,
+    "compaction_failures": 0,
+    "compaction_attempts": 10,
+    "dropped_msgs": 128,
+    "input_chars": 195918,
+    "summary_chars": {
+     "n": 10,
+     "mean": 4633.9,
+     "median": 4799.5,
+     "p90": 4800,
+     "max": 4800,
+     "sum": 46339
+    },
+    "compaction_e2e_s": {
+     "n": 10,
+     "mean": 13.854,
+     "median": 13.745999999999999,
+     "p90": 15.477,
+     "max": 16.747,
+     "sum": 138.54
+    },
+    "compaction_prompt_tokens": {
+     "n": 10,
+     "mean": 8353.9,
+     "median": 8180.0,
+     "p90": 10243,
+     "max": 11972,
+     "sum": 83539
+    },
+    "compaction_completion_tokens": {
+     "n": 10,
+     "mean": 1440.3,
+     "median": 1500.0,
+     "p90": 1500,
+     "max": 1500,
+     "sum": 14403
+    },
+    "calls_marked": 60,
+    "reasoning_msgs_total": 430,
+    "reasoning_chars_total": 1181336,
+    "reasoning_msgs_per_call": 7.166666666666667,
+    "reasoning_chars_per_call": 19688.933333333334,
+    "calls_with_summary": 47,
+    "calls_with_summary_share": 0.7833333333333333,
+    "first_call_with_block": 14,
+    "prompt_tokens": {
+     "n": 60,
+     "mean": 18143.25,
+     "median": 18799.0,
+     "p90": 23826,
+     "max": 25744,
+     "sum": 1088595
+    },
+    "prompt_over_window": 0,
+    "graft": {
+     "calls_total": 60,
+     "calls_with_summary": 47,
+     "reasoning_msgs_total": 430,
+     "reasoning_chars_total": 1181336,
+     "prompt_tokens_total": 1088595,
+     "prompt_tokens_max": 25744,
+     "prompt_over_window": 0,
+     "compactions": 10,
+     "compaction_failures": 0,
+     "dropped_msgs_total": 128,
+     "dropped_chars_total": 195918,
+     "summary_chars_total": 46339,
+     "compaction_prompt_tokens": 83539,
+     "compaction_completion_tokens": 14403,
+     "compaction_e2e_s": 138.54000000000002,
+     "turns_total": 33
+    }
+   },
+   "wall": {
+    "void": false,
+    "void_reasons": [],
+    "calls_total": 60,
+    "calls_budget": 60,
+    "calls_at_l2": null,
+    "calls_remaining_at_l2": null,
+    "reached_l2": false,
+    "attempt": false,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 33,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 33,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4057,
+   "client": {
+    "posts": 70,
+    "ok": 70,
+    "errors": 0,
+    "e2e_s": {
+     "n": 70,
+     "mean": 16.14417142857143,
+     "median": 12.0785,
+     "p90": 32.692,
+     "max": 59.832,
+     "sum": 1130.092
+    },
+    "prompt_tokens": {
+     "n": 70,
+     "mean": 16744.77142857143,
+     "median": 17844.5,
+     "p90": 23529,
+     "max": 25744,
+     "sum": 1172134
+    },
+    "completion_tokens": {
+     "n": 70,
+     "mean": 1262.7142857142858,
+     "median": 941.5,
+     "p90": 2674,
+     "max": 5296,
+     "sum": 88390
+    },
+    "redirected_posts": 0,
+    "redirect_legs": 0,
+    "max_tokens_sent": [
+     1500,
+     null
+    ],
+    "timeouts_sent": {
+     "n": 70,
+     "mean": 857.1428571428571,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 60000.0
+    },
+    "model_time_share_of_wall": 0.8717187011244864
+   },
+   "game_id": "dc22-fdcac232",
+   "draw": 0,
+   "levels_completed": 0,
+   "number_of_levels": 6,
+   "score": 0.0
+  },
+  "dc22-fdcac232_p1": {
+   "calls": 60,
+   "turns": 31,
+   "distinct_analysis_steps": 31,
+   "calls_per_turn": 1.935483870967742,
+   "reasoning_chars": {
+    "n": 60,
+    "mean": 3034.5333333333333,
+    "median": 2170.5,
+    "p90": 7464,
+    "max": 10732,
+    "sum": 182072
+   },
+   "reasoning_chars_nonzero": {
+    "n": 60,
+    "mean": 3034.5333333333333,
+    "median": 2170.5,
+    "p90": 7464,
+    "max": 10732,
+    "sum": 182072
+   },
+   "content_chars_mean": 198.7,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 60
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 30,
+    "yielded": 1
+   },
+   "step_executed_turn_share": 0.967741935483871,
+   "yielded_turn_share": 0.03225806451612903,
+   "actions_total": 167,
+   "actions_per_call": 2.783333333333333,
+   "actions_per_turn": 5.387096774193548,
+   "wallclock_s": 2225.8422509169905,
+   "calls_per_hour": 97.04191746338425,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    3
+   ],
+   "level_reached": 3,
+   "wall_level": 3,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 30,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 0,
+     "share": null
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 31,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 1,
+     "share": 0.0
+    },
+    "wall_level": 3,
+    "wall_turns": 1
+   },
+   "probe": {
+    "refusals": 0,
+    "noact_turns": 0,
+    "noact_notices": 0,
+    "turns_with_refusal": 0,
+    "turns_ge3_analysis": {
+     "turns": 5,
+     "of": 31,
+     "share": 0.16129032258064516
+    },
+    "turns_ge3_nonacting": {
+     "turns": 5,
+     "of": 31,
+     "share": 0.16129032258064516
+    },
+    "acting_after_refusal": {
+     "acted": 0,
+     "of": 0,
+     "share": null
+    },
+    "acted_after_first_refusal": {
+     "acted": 0,
+     "of": 0,
+     "share": null
+    },
+    "call_types": {
+     "A": 29,
+     "X": 30,
+     "E": 1
+    },
+    "analysis_call_share": 0.48333333333333334,
+    "yields_turn_time_budget": 0,
+    "wall_actions": 0,
+    "wall_baseline": 67,
+    "wall_actions_ratio": 0.0,
+    "game_overs": 0,
+    "live_cap_score": 12.133387082325541
+   },
+   "carry": {
+    "compactions": 10,
+    "compaction_failures": 0,
+    "compaction_attempts": 10,
+    "dropped_msgs": 129,
+    "input_chars": 215221,
+    "summary_chars": {
+     "n": 10,
+     "mean": 4212.2,
+     "median": 4224.0,
+     "p90": 4660,
+     "max": 4800,
+     "sum": 42122
+    },
+    "compaction_e2e_s": {
+     "n": 10,
+     "mean": 13.946000000000002,
+     "median": 14.206,
+     "p90": 15.413,
+     "max": 16.607,
+     "sum": 139.46
+    },
+    "compaction_prompt_tokens": {
+     "n": 10,
+     "mean": 9173.4,
+     "median": 9016.5,
+     "p90": 11303,
+     "max": 13491,
+     "sum": 91734
+    },
+    "compaction_completion_tokens": {
+     "n": 10,
+     "mean": 1401.6,
+     "median": 1500.0,
+     "p90": 1500,
+     "max": 1500,
+     "sum": 14016
+    },
+    "calls_marked": 60,
+    "reasoning_msgs_total": 400,
+    "reasoning_chars_total": 1159502,
+    "reasoning_msgs_per_call": 6.666666666666667,
+    "reasoning_chars_per_call": 19325.033333333333,
+    "calls_with_summary": 46,
+    "calls_with_summary_share": 0.7666666666666667,
+    "first_call_with_block": 15,
+    "prompt_tokens": {
+     "n": 60,
+     "mean": 18489.916666666668,
+     "median": 19265.5,
+     "p90": 23995,
+     "max": 26432,
+     "sum": 1109395
+    },
+    "prompt_over_window": 0,
+    "graft": {
+     "calls_total": 60,
+     "calls_with_summary": 46,
+     "reasoning_msgs_total": 400,
+     "reasoning_chars_total": 1159502,
+     "prompt_tokens_total": 1109395,
+     "prompt_tokens_max": 26432,
+     "prompt_over_window": 0,
+     "compactions": 10,
+     "compaction_failures": 0,
+     "dropped_msgs_total": 129,
+     "dropped_chars_total": 215221,
+     "summary_chars_total": 42122,
+     "compaction_prompt_tokens": 91734,
+     "compaction_completion_tokens": 14016,
+     "compaction_e2e_s": 139.45999999999998,
+     "turns_total": 31
+    }
+   },
+   "wall": {
+    "void": false,
+    "void_reasons": [],
+    "calls_total": 60,
+    "calls_budget": 60,
+    "calls_at_l2": 23,
+    "calls_remaining_at_l2": 37,
+    "reached_l2": true,
+    "attempt": true,
+    "passed": true,
+    "uptake": {
+     "turns": 0,
+     "of": 31,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 1,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4057,
+   "client": {
+    "posts": 70,
+    "ok": 70,
+    "errors": 0,
+    "e2e_s": {
+     "n": 70,
+     "mean": 16.022814285714286,
+     "median": 14.2055,
+     "p90": 29.07,
+     "max": 45.657,
+     "sum": 1121.597
+    },
+    "prompt_tokens": {
+     "n": 70,
+     "mean": 17158.985714285714,
+     "median": 18336.0,
+     "p90": 23899,
+     "max": 26432,
+     "sum": 1201129
+    },
+    "completion_tokens": {
+     "n": 70,
+     "mean": 1302.4,
+     "median": 1166.0,
+     "p90": 2575,
+     "max": 3933,
+     "sum": 91168
+    },
+    "redirected_posts": 0,
+    "redirect_legs": 0,
+    "max_tokens_sent": [
+     1500,
+     null
+    ],
+    "timeouts_sent": {
+     "n": 70,
+     "mean": 857.1428571428571,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 60000.0
+    },
+    "model_time_share_of_wall": 0.5038977939869416
+   },
+   "game_id": "dc22-fdcac232",
+   "draw": 1,
+   "levels_completed": 2,
+   "number_of_levels": 6,
+   "score": 12.133387082325541
+  },
+  "lf52-271a04aa_p0": {
+   "calls": 60,
+   "turns": 42,
+   "distinct_analysis_steps": 42,
+   "calls_per_turn": 1.4285714285714286,
+   "reasoning_chars": {
+    "n": 60,
+    "mean": 1808.35,
+    "median": 1061.5,
+    "p90": 4183,
+    "max": 8479,
+    "sum": 108501
+   },
+   "reasoning_chars_nonzero": {
+    "n": 60,
+    "mean": 1808.35,
+    "median": 1061.5,
+    "p90": 4183,
+    "max": 8479,
+    "sum": 108501
+   },
+   "content_chars_mean": 115.05,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 60
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 41,
+    "yielded": 1
+   },
+   "step_executed_turn_share": 0.9761904761904762,
+   "yielded_turn_share": 0.023809523809523808,
+   "actions_total": 218,
+   "actions_per_call": 3.6333333333333333,
+   "actions_per_turn": 5.190476190476191,
+   "wallclock_s": 919.8603601249924,
+   "calls_per_hour": 234.81824999030232,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+   ],
+   "level_reached": 2,
+   "wall_level": 2,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 41,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 36,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 42,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 37,
+     "share": 0.0
+    },
+    "wall_level": 2,
+    "wall_turns": 37
+   },
+   "probe": {
+    "refusals": 0,
+    "noact_turns": 0,
+    "noact_notices": 0,
+    "turns_with_refusal": 0,
+    "turns_ge3_analysis": {
+     "turns": 0,
+     "of": 42,
+     "share": 0.0
+    },
+    "turns_ge3_nonacting": {
+     "turns": 0,
+     "of": 42,
+     "share": 0.0
+    },
+    "acting_after_refusal": {
+     "acted": 0,
+     "of": 0,
+     "share": null
+    },
+    "acted_after_first_refusal": {
+     "acted": 0,
+     "of": 0,
+     "share": null
+    },
+    "call_types": {
+     "A": 15,
+     "X": 45
+    },
+    "analysis_call_share": 0.25,
+    "yields_turn_time_budget": 0,
+    "wall_actions": 207,
+    "wall_baseline": 81,
+    "wall_actions_ratio": 2.5555555555555554,
+    "game_overs": 0,
+    "live_cap_score": 2.090909090909091
+   },
+   "carry": {
+    "compactions": 11,
+    "compaction_failures": 0,
+    "compaction_attempts": 11,
+    "dropped_msgs": 134,
+    "input_chars": 174374,
+    "summary_chars": {
+     "n": 11,
+     "mean": 4007.3636363636365,
+     "median": 3939,
+     "p90": 4661,
+     "max": 4675,
+     "sum": 44081
+    },
+    "compaction_e2e_s": {
+     "n": 11,
+     "mean": 13.868181818181819,
+     "median": 13.416,
+     "p90": 16.256,
+     "max": 17.04,
+     "sum": 152.55
+    },
+    "compaction_prompt_tokens": {
+     "n": 11,
+     "mean": 7201.363636363636,
+     "median": 7458,
+     "p90": 8377,
+     "max": 8620,
+     "sum": 79215
+    },
+    "compaction_completion_tokens": {
+     "n": 11,
+     "mean": 1337.3636363636363,
+     "median": 1427,
+     "p90": 1500,
+     "max": 1500,
+     "sum": 14711
+    },
+    "calls_marked": 60,
+    "reasoning_msgs_total": 421,
+    "reasoning_chars_total": 717276,
+    "reasoning_msgs_per_call": 7.016666666666667,
+    "reasoning_chars_per_call": 11954.6,
+    "calls_with_summary": 45,
+    "calls_with_summary_share": 0.75,
+    "first_call_with_block": 16,
+    "prompt_tokens": {
+     "n": 60,
+     "mean": 17798.366666666665,
+     "median": 18504.0,
+     "p90": 22600,
+     "max": 25042,
+     "sum": 1067902
+    },
+    "prompt_over_window": 0,
+    "graft": {
+     "calls_total": 60,
+     "calls_with_summary": 45,
+     "reasoning_msgs_total": 421,
+     "reasoning_chars_total": 717276,
+     "prompt_tokens_total": 1067902,
+     "prompt_tokens_max": 25042,
+     "prompt_over_window": 0,
+     "compactions": 11,
+     "compaction_failures": 0,
+     "dropped_msgs_total": 134,
+     "dropped_chars_total": 174374,
+     "summary_chars_total": 44081,
+     "compaction_prompt_tokens": 79215,
+     "compaction_completion_tokens": 14711,
+     "compaction_e2e_s": 152.55,
+     "turns_total": 42
+    }
+   },
+   "wall": {
+    "void": false,
+    "void_reasons": [],
+    "calls_total": 60,
+    "calls_budget": 60,
+    "calls_at_l2": 11,
+    "calls_remaining_at_l2": 49,
+    "reached_l2": true,
+    "attempt": true,
+    "passed": false,
+    "uptake": {
+     "turns": 0,
+     "of": 42,
+     "share": 0.0
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 37,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4060,
+   "client": {
+    "posts": 71,
+    "ok": 71,
+    "errors": 0,
+    "e2e_s": {
+     "n": 71,
+     "mean": 12.131690140845071,
+     "median": 10.72,
+     "p90": 19.388,
+     "max": 38.518,
+     "sum": 861.35
+    },
+    "prompt_tokens": {
+     "n": 71,
+     "mean": 16156.577464788732,
+     "median": 17722,
+     "p90": 22388,
+     "max": 25042,
+     "sum": 1147117
+    },
+    "completion_tokens": {
+     "n": 71,
+     "mean": 937.0140845070423,
+     "median": 769,
+     "p90": 1672,
+     "max": 3393,
+     "sum": 66528
+    },
+    "redirected_posts": 0,
+    "redirect_legs": 0,
+    "max_tokens_sent": [
+     1500,
+     null
+    ],
+    "timeouts_sent": {
+     "n": 71,
+     "mean": 853.5211267605633,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 60600.0
+    },
+    "model_time_share_of_wall": 0.9363921279127172
+   },
+   "game_id": "lf52-271a04aa",
+   "draw": 0,
+   "levels_completed": 1,
+   "number_of_levels": 10,
+   "score": 1.8181818181818181
+  },
+  "lf52-271a04aa_p1": {
+   "calls": 60,
+   "turns": 37,
+   "distinct_analysis_steps": 37,
+   "calls_per_turn": 1.6216216216216217,
+   "reasoning_chars": {
+    "n": 60,
+    "mean": 3233.7166666666667,
+    "median": 2299.5,
+    "p90": 7440,
+    "max": 12023,
+    "sum": 194023
+   },
+   "reasoning_chars_nonzero": {
+    "n": 60,
+    "mean": 3233.7166666666667,
+    "median": 2299.5,
+    "p90": 7440,
+    "max": 12023,
+    "sum": 194023
+   },
+   "content_chars_mean": 48.983333333333334,
+   "no_tool_call_calls": 0,
+   "no_tool_call_share": null,
+   "finish_reasons": {
+    "tool_calls": 60
+   },
+   "length_finish_share": null,
+   "turn_outcomes": {
+    "step_executed": 36,
+    "yielded": 1
+   },
+   "step_executed_turn_share": 0.972972972972973,
+   "yielded_turn_share": 0.02702702702702703,
+   "actions_total": 110,
+   "actions_per_call": 1.8333333333333333,
+   "actions_per_turn": 2.972972972972973,
+   "wallclock_s": 2415.719469708012,
+   "calls_per_hour": 89.41435572653968,
+   "analyzer_status_config": {
+    "max_output_tokens": "server default",
+    "context_budget_tokens": "31744",
+    "yield_seconds": "900.0"
+   },
+   "retries_fired": 0,
+   "retry_clears": 0,
+   "evid_markers": 0,
+   "evid_level_flags": 0,
+   "hypo_markers": 0,
+   "turn_levels": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+   ],
+   "level_reached": 2,
+   "wall_level": 2,
+   "engagement": {
+    "evid": {
+     "turns": 0,
+     "of": 36,
+     "share": 0.0
+    },
+    "evid_wall": {
+     "turns": 0,
+     "of": 26,
+     "share": 0.0
+    },
+    "hypo": {
+     "turns": 0,
+     "of": 37,
+     "share": 0.0
+    },
+    "hypo_wall": {
+     "turns": 0,
+     "of": 27,
+     "share": 0.0
+    },
+    "wall_level": 2,
+    "wall_turns": 27
+   },
+   "probe": {
+    "refusals": 0,
+    "noact_turns": 0,
+    "noact_notices": 0,
+    "turns_with_refusal": 0,
+    "turns_ge3_analysis": {
+     "turns": 2,
+     "of": 37,
+     "share": 0.05405405405405406
+    },
+    "turns_ge3_nonacting": {
+     "turns": 2,
+     "of": 37,
+     "share": 0.05405405405405406
+    },
+    "acting_after_refusal": {
+     "acted": 0,
+     "of": 0,
+     "share": null
+    },
+    "acted_after_first_refusal": {
+     "acted": 0,
+     "of": 0,
+     "share": null
+    },
+    "call_types": {
+     "A": 23,
+     "X": 37
+    },
+    "analysis_call_share": 0.38333333333333336,
+    "yields_turn_time_budget": 0,
+    "wall_actions": 93,
+    "wall_baseline": 81,
+    "wall_actions_ratio": 1.1481481481481481,
+    "game_overs": 0,
+    "live_cap_score": 2.090909090909091
+   },
+   "carry": {
+    "compactions": 11,
+    "compaction_failures": 0,
+    "compaction_attempts": 11,
+    "dropped_msgs": 135,
+    "input_chars": 200678,
+    "summary_chars": {
+     "n": 11,
+     "mean": 3901.5454545454545,
+     "median": 4125,
+     "p90": 4594,
+     "max": 4800,
+     "sum": 42917
+    },
+    "compaction_e2e_s": {
+     "n": 11,
+     "mean": 13.738818181818182,
+     "median": 14.039,
+     "p90": 16.667,
+     "max": 16.827,
+     "sum": 151.127
+    },
+    "compaction_prompt_tokens": {
+     "n": 11,
+     "mean": 7929.636363636364,
+     "median": 8461,
+     "p90": 9522,
+     "max": 9721,
+     "sum": 87226
+    },
+    "compaction_completion_tokens": {
+     "n": 11,
+     "mean": 1295.7272727272727,
+     "median": 1383,
+     "p90": 1500,
+     "max": 1500,
+     "sum": 14253
+    },
+    "calls_marked": 60,
+    "reasoning_msgs_total": 422,
+    "reasoning_chars_total": 1184737,
+    "reasoning_msgs_per_call": 7.033333333333333,
+    "reasoning_chars_per_call": 19745.616666666665,
+    "calls_with_summary": 46,
+    "calls_with_summary_share": 0.7666666666666667,
+    "first_call_with_block": 15,
+    "prompt_tokens": {
+     "n": 60,
+     "mean": 18471.433333333334,
+     "median": 19172.5,
+     "p90": 23607,
+     "max": 25053,
+     "sum": 1108286
+    },
+    "prompt_over_window": 0,
+    "graft": {
+     "calls_total": 60,
+     "calls_with_summary": 46,
+     "reasoning_msgs_total": 422,
+     "reasoning_chars_total": 1184737,
+     "prompt_tokens_total": 1108286,
+     "prompt_tokens_max": 25053,
+     "prompt_over_window": 0,
+     "compactions": 11,
+     "compaction_failures": 0,
+     "dropped_msgs_total": 135,
+     "dropped_chars_total": 200678,
+     "summary_chars_total": 42917,
+     "compaction_prompt_tokens": 87226,
+     "compaction_completion_tokens": 14253,
+     "compaction_e2e_s": 151.127,
+     "turns_total": 37
+    }
+   },
+   "wall": {
+    "void": false,
+    "void_reasons": [],
+    "calls_total": 60,
+    "calls_budget": 60,
+    "calls_at_l2": 18,
+    "calls_remaining_at_l2": 42,
+    "reached_l2": true,
+    "attempt": true,
+    "passed": false,
+    "uptake": {
+     "turns": 1,
+     "of": 37,
+     "share": 0.02702702702702703
+    },
+    "uptake_wall": {
+     "turns": 0,
+     "of": 27,
+     "share": 0.0
+    }
+   },
+   "first_call_prompt_tokens": 4060,
+   "client": {
+    "posts": 71,
+    "ok": 71,
+    "errors": 0,
+    "e2e_s": {
+     "n": 71,
+     "mean": 15.51181690140845,
+     "median": 14.039,
+     "p90": 29.638,
+     "max": 48.032,
+     "sum": 1101.339
+    },
+    "prompt_tokens": {
+     "n": 71,
+     "mean": 16838.197183098593,
+     "median": 18328,
+     "p90": 23523,
+     "max": 25053,
+     "sum": 1195512
+    },
+    "completion_tokens": {
+     "n": 71,
+     "mean": 1289.2957746478874,
+     "median": 1090,
+     "p90": 2558,
+     "max": 4124,
+     "sum": 91540
+    },
+    "redirected_posts": 0,
+    "redirect_legs": 0,
+    "max_tokens_sent": [
+     1500,
+     null
+    ],
+    "timeouts_sent": {
+     "n": 71,
+     "mean": 853.5211267605633,
+     "median": 900.0,
+     "p90": 900.0,
+     "max": 900.0,
+     "sum": 60600.0
+    },
+    "model_time_share_of_wall": 0.45590517185884943
+   },
+   "game_id": "lf52-271a04aa",
+   "draw": 1,
+   "levels_completed": 1,
+   "number_of_levels": 10,
+   "score": 1.8181818181818181
+  }
+ },
+ "per_game_draw": {
+  "cd82-fb555c5d": {
+   "0": {
+    "levels_completed": 2,
+    "level_reached": 3,
+    "wall_level": 3,
+    "turns": 40,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 31,
+    "attempt": false,
+    "void": false,
+    "passed": true,
+    "uptake_wall_share": 0.0
+   },
+   "1": {
+    "levels_completed": 2,
+    "level_reached": 3,
+    "wall_level": 3,
+    "turns": 43,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 27,
+    "attempt": true,
+    "void": false,
+    "passed": true,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "dc22-fdcac232": {
+   "0": {
+    "levels_completed": 0,
+    "level_reached": 1,
+    "wall_level": 1,
+    "turns": 33,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": null,
+    "attempt": false,
+    "void": false,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   },
+   "1": {
+    "levels_completed": 2,
+    "level_reached": 3,
+    "wall_level": 3,
+    "turns": 31,
+    "evid_wall_share": null,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 23,
+    "attempt": true,
+    "void": false,
+    "passed": true,
+    "uptake_wall_share": 0.0
+   }
+  },
+  "lf52-271a04aa": {
+   "0": {
+    "levels_completed": 1,
+    "level_reached": 2,
+    "wall_level": 2,
+    "turns": 42,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 11,
+    "attempt": true,
+    "void": false,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   },
+   "1": {
+    "levels_completed": 1,
+    "level_reached": 2,
+    "wall_level": 2,
+    "turns": 37,
+    "evid_wall_share": 0.0,
+    "hypo_wall_share": 0.0,
+    "calls_at_l2": 18,
+    "attempt": true,
+    "void": false,
+    "passed": false,
+    "uptake_wall_share": 0.0
+   }
+  }
+ },
+ "arm": "keith_carry",
+ "dry_run": false,
+ "grafts": {
+  "installed": {
+   "graft_carry": "carry: OK"
+  },
+  "status": {
+   "graft_carry": {
+    "installed": true,
+    "enabled": true,
+    "target_fraction": 0.75,
+    "summary_chars_cap": 4800,
+    "input_chars_cap": 48000,
+    "compact_max_tokens": 1500,
+    "compact_thinking": false,
+    "min_drop_msgs": 2,
+    "window_tokens": 32768,
+    "calls_total": 360,
+    "calls_with_summary": 280,
+    "reasoning_msgs_total": 2445,
+    "reasoning_chars_total": 6494751,
+    "prompt_tokens_total": 6535784,
+    "prompt_tokens_max": 26827,
+    "prompt_over_window": 0,
+    "compactions": 69,
+    "compaction_failures": 0,
+    "dropped_msgs_total": 818,
+    "dropped_chars_total": 1226220,
+    "summary_chars_total": 283087,
+    "compaction_prompt_tokens": 531039,
+    "compaction_completion_tokens": 90716,
+    "compaction_e2e_s": 941.8659999999999,
+    "turns_total": 226,
+    "reasoning_msgs_per_call": 6.791666666666667,
+    "reasoning_chars_per_call": 18040.975,
+    "prompt_tokens_per_call": 18154.955555555556,
+    "calls_with_summary_share": 0.7777777777777778,
+    "summary_chars_mean": 4102.710144927536,
+    "compaction_e2e_s_mean": 13.65023188405797,
+    "errors": 0,
+    "skips": {},
+    "per_game": {
+     "dc22-fdcac232_p0": {
+      "calls_total": 60,
+      "calls_with_summary": 47,
+      "reasoning_msgs_total": 430,
+      "reasoning_chars_total": 1181336,
+      "prompt_tokens_total": 1088595,
+      "prompt_tokens_max": 25744,
+      "prompt_over_window": 0,
+      "compactions": 10,
+      "compaction_failures": 0,
+      "dropped_msgs_total": 128,
+      "dropped_chars_total": 195918,
+      "summary_chars_total": 46339,
+      "compaction_prompt_tokens": 83539,
+      "compaction_completion_tokens": 14403,
+      "compaction_e2e_s": 138.54000000000002,
+      "turns_total": 33
+     },
+     "cd82-fb555c5d_p0": {
+      "calls_total": 60,
+      "calls_with_summary": 48,
+      "reasoning_msgs_total": 432,
+      "reasoning_chars_total": 1222856,
+      "prompt_tokens_total": 1092507,
+      "prompt_tokens_max": 24688,
+      "prompt_over_window": 0,
+      "compactions": 12,
+      "compaction_failures": 0,
+      "dropped_msgs_total": 143,
+      "dropped_chars_total": 196040,
+      "summary_chars_total": 45747,
+      "compaction_prompt_tokens": 81547,
+      "compaction_completion_tokens": 13606,
+      "compaction_e2e_s": 147.226,
+      "turns_total": 40
+     },
+     "lf52-271a04aa_p0": {
+      "calls_total": 60,
+      "calls_with_summary": 45,
+      "reasoning_msgs_total": 421,
+      "reasoning_chars_total": 717276,
+      "prompt_tokens_total": 1067902,
+      "prompt_tokens_max": 25042,
+      "prompt_over_window": 0,
+      "compactions": 11,
+      "compaction_failures": 0,
+      "dropped_msgs_total": 134,
+      "dropped_chars_total": 174374,
+      "summary_chars_total": 44081,
+      "compaction_prompt_tokens": 79215,
+      "compaction_completion_tokens": 14711,
+      "compaction_e2e_s": 152.55,
+      "turns_total": 42
+     },
+     "cd82-fb555c5d_p1": {
+      "calls_total": 60,
+      "calls_with_summary": 48,
+      "reasoning_msgs_total": 340,
+      "reasoning_chars_total": 1029044,
+      "prompt_tokens_total": 1069099,
+      "prompt_tokens_max": 26827,
+      "prompt_over_window": 0,
+      "compactions": 15,
+      "compaction_failures": 0,
+      "dropped_msgs_total": 149,
+      "dropped_chars_total": 243989,
+      "summary_chars_total": 61881,
+      "compaction_prompt_tokens": 107778,
+      "compaction_completion_tokens": 19727,
+      "compaction_e2e_s": 212.963,
+      "turns_total": 43
+     },
+     "dc22-fdcac232_p1": {
+      "calls_total": 60,
+      "calls_with_summary": 46,
+      "reasoning_msgs_total": 400,
+      "reasoning_chars_total": 1159502,
+      "prompt_tokens_total": 1109395,
+      "prompt_tokens_max": 26432,
+      "prompt_over_window": 0,
+      "compactions": 10,
+      "compaction_failures": 0,
+      "dropped_msgs_total": 129,
+      "dropped_chars_total": 215221,
+      "summary_chars_total": 42122,
+      "compaction_prompt_tokens": 91734,
+      "compaction_completion_tokens": 14016,
+      "compaction_e2e_s": 139.45999999999998,
+      "turns_total": 31
+     },
+     "lf52-271a04aa_p1": {
+      "calls_total": 60,
+      "calls_with_summary": 46,
+      "reasoning_msgs_total": 422,
+      "reasoning_chars_total": 1184737,
+      "prompt_tokens_total": 1108286,
+      "prompt_tokens_max": 25053,
+      "prompt_over_window": 0,
+      "compactions": 11,
+      "compaction_failures": 0,
+      "dropped_msgs_total": 135,
+      "dropped_chars_total": 200678,
+      "summary_chars_total": 42917,
+      "compaction_prompt_tokens": 87226,
+      "compaction_completion_tokens": 14253,
+      "compaction_e2e_s": 151.127,
+      "turns_total": 37
+     }
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,28 @@
+REGIME WAVE  arm=keith_carry  status=done  dry_run=False  games=6  wall=0.67 h
+  endpoint https://a-m-mobasher--arc3-flashnext-serve.modal.run/v1  model Qwen/Qwen3.8-Flash-Next-NVFP4
+  IDENTITY profile 'kv5-bf16-mtp3-c8-cg32' (expected 'kv5-bf16-mtp3-c8-cg32', ok=True) | gpu ok=True ['0, NVIDIA RTX PRO 6000 Blackwell Server Edition, 97887 MiB, 580.95.05, 12.0']
+  geometry conc 3 | 7920 s/game | analyzer_timeout 900 | max_actions None | max_calls 60 | wave cap 9000 s | public25 geometry: False
+  stock agent sha 74ab69105240 (== june_stock pin) | framework f68b6850b242 | pkls pinned
+  ARM KNOB  CONTEXT_WINDOW=32768  MAX_OUTPUT=0  UPSCALE=4 ([256, 256] px, ~64 vision tok/img derived)  (yield 900 s, temp 0.6/0.95/20, thinking true); harness-reported {'max_output_tokens': 'server default', 'context_budget_tokens': '31744', 'yield_seconds': '900.0'}
+  SCORE 4.09 total | levels 8 (1.33/game) | actions 1207 (201/game) | zero-level games 1 | states {'gave_up': 6}
+  CADENCE calls/game 60.0 | turns/game 37.7 | distinct steps/game 37.7 | actions/call 3.35 | calls/turn 1.59
+  REASONING chars/call mean 3023 median 2048 p90 7319 (n=360) | no-tool-call share - | length-finish share - | finish {'tool_calls': 360}
+  TURNS step-executed 97.3% | yielded 2.7% | outcomes {'step_executed': 220, 'yielded': 6}
+  CLIENT e2e/call mean 15.5 s median 13.1 s p90 29.3 s | prompt tok/call 16473 | completion tok/call 1241 | redirected posts 0 | post errors 0
+  VLLM   requests 429 | e2e mean 14.4 s | queue 0.0 s | inference 14.3 s | TPOT 10.2 ms | gen tok/req 1241 | gen tok/s 220 | MTP accept 61.2% | preemptions 0 | prefix hit - | finished {'abort': 0.0, 'error': 0.0, 'length': 31.0, 'repetition': 0.0, 'stop': 398.0}
+  REF keith V14 commit: 55 calls/game, reasoning 3406/2206, 53 turns/game, e2e 142 s, queue 124 s, MTP 60%, 1.44 lv/game, 6.76 pts
+  CARRY  compactions 69 (11.50/game; gate >= 1) in 6 runs | failures 0 (0.0% of 69 attempts; gate <= 10.0%) | per compaction: dropped msgs 11.9, input chars 17771, e2e 13.7 s, prompt tok 7696, completion tok 1315 | block chars mean 4103 (cap 4800) | ENGAGED = YES {compactions_per_game+, failure_share+, prompt_over_window+, calls_with_summary_share+} | grafts {'graft_carry': 'carry: OK'} | flags {'CARRY_ENABLE': '1', 'CARRY_TARGET_FRACTION': '0.75', 'CARRY_SUMMARY_CHARS': '4800', 'CARRY_INPUT_CHARS': '48000', 'CARRY_COMPACT_MAX_TOKENS': '1500', 'CARRY_COMPACT_THINKING': '0', 'CARRY_MIN_DROP_MSGS': '2'}
+  CARRY-WINDOW prompt tok/call (server usage via markers) mean 18155 max 26827 | over 32768: 0 (gate 0) | calls carrying the block 280/360 (77.8%; gate >= 40.0%) | first block at call #14 (median over 6 runs) | reasoning carried per request: 6.79 msgs, 18041 chars (stock behaviour, measured) | compactions/failures per run {'cd82-fb555c5d_p0': '12/0', 'cd82-fb555c5d_p1': '15/0', 'dc22-fdcac232_p0': '10/0', 'dc22-fdcac232_p1': '10/0', 'lf52-271a04aa_p0': '11/0', 'lf52-271a04aa_p1': '11/0'}
+  CARRY-PRIMARY levels 8 over 6 runs / 2 draw(s) = 4.0/draw vs pooled six-draw base 39.33 (sd 2.34) -> delta -35.3 (-15.10 sd; 25-game waves only; >= 48 step candidate, 45-47 redraw, <= 44 dead) | never-passed walls 1/12 passed ['dc22'] (present in wave: 2; co-primary target >= 3)
+  CARRY-SAFETY GAME_OVERs 4 (0.67/run over 6 runs; yield900 base 0.87) | live-cap score 25.09 (4.18/game over 6 runs; yield900 base 8.42/game) | fit-the-clock: calls/game 60.0 x e2e 15.5 s = 928 s (+ compactions) vs 7920 s
+  WALL   attempts 4/6 (L2 reached 5; attempt = L2 with >= 30 calls left) | passes 3 (level 3 reached) | void 0 {} | calls@L2 {'cd82-fb555c5d_p0': 31, 'cd82-fb555c5d_p1': 27, 'dc22-fdcac232_p0': None, 'dc22-fdcac232_p1': 23, 'lf52-271a04aa_p0': 11, 'lf52-271a04aa_p1': 18} | UPTAKE wall 0.0% (0/113) all 0.4%
+  FIRST-CALL prompt_tokens (n_messages==2) mean 4059 n=6 [4059..4060] | keith baseline ~4050 | delta +9 | UPSCALE=4: up8 expects ≈ +192 (+0 => processor downscaled = no-op; >> => geometry differs)
+  DRAWS 2 | levels per (game, draw): {'cd82-fb555c5d': [2, 2], 'dc22-fdcac232': [0, 2], 'lf52-271a04aa': [1, 1]}
+  KNOB OVERRIDES (not the pinned arm env): {'CARRY_TARGET_FRACTION': '0.75'}
+  run               lv/n    act  calls turns reas_mean  len%  notool%  e2e_s   score  retry probe wall/b  evid  hypo  wall%  upt%  c@L2 att void  state
+  cd82-fb555c5d_p0    2/6    141    60    40      2958      -       -   14.3    3.22    0/0   0/0   0.61     0     0   0.0%  0.0%    31   -    -  gave_up
+  cd82-fb555c5d_p1    2/6    155    60    43      3916      -       -   18.5    5.56    0/0   0/0   0.61     0     0   0.0%  0.0%    27   Y    -  gave_up
+  dc22-fdcac232_p0    0/6    416    60    33      3187      -       -   16.1    0.00    0/0   0/0   7.05     0     0   0.0%  0.0%  None   -    -  gave_up
+  dc22-fdcac232_p1    2/6    167    60    31      3035      -       -   16.0   12.13    0/0   0/0   0.00     0     0   0.0%  0.0%    23   Y    -  gave_up
+  lf52-271a04aa_p0   1/10    218    60    42      1808      -       -   12.1    1.82    0/0   0/0   2.56     0     0   0.0%  0.0%    11   Y    -  gave_up
+  lf52-271a04aa_p1   1/10    110    60    37      3234      -       -   15.5    1.82    0/0   0/0   1.15     0     0   0.0%  0.0%    18   Y    -  gave_up

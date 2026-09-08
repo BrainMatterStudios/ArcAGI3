@@ -765,3 +765,39 @@ READS, locked before data:
   length-finish > 1 %) — 2 of 6 runs were VOID in the 0.5 arm, so read valid runs alongside the total.
 * FIT-THE-CLOCK (live-eligibility, reported even though this geometry is queue-free): compactions/run × 150 s +
   play calls × 150 s must stay under 7,920 s in the live geometry.
+
+### RESULT 2026-09-08 — `keith_carry` @ `CARRY_TARGET_FRACTION=0.75`: knob bound, levels 8 = base → WAVE (pre-registered read)
+
+Wave `offkaggle/results/20260908T2012-keith_carry75-kill` (identity ok: kv5 on RTX PRO 6000; 0.67 h, ~$2.5; second arm
+of this server session — see the caveat below). Same geometry and games as the 0.5 arm and the stock base.
+
+**KNOB BOUND (the precondition): YES.** Mean prompt tokens/call **18,155 = 57.2 % of budget** (0.5 arm 15,147 = 47.7 %;
+stock waves 20,286-20,405 = 64 %), so the under-fill is roughly two thirds closed. Compactions **11.50/run** (0.5 arm
+7.33; predicted 12-15). Per compaction now 11.9 dropped messages / 17.8k input chars (0.5 arm: 19.7 / 30.7k) — smaller,
+more frequent, as designed. ENGAGEMENT unchanged and clean: 69 compactions, **0 failures**, **0 requests over 32,768**
+(max 26,827), 280/360 calls (77.8 %) carry the block, block 4,103 chars mean, 13.7 s each.
+
+**PRIMARY: 8 levels / 6 runs — equal to the stock base's 8, up from the 0.5 arm's 6.**
+Per (game, draw): cd82 **[2, 2]** (base [1,1], 0.5 arm [2,0]), dc22 **[0, 2]** (base [2,2], 0.5 arm [1,1]),
+lf52 **[1, 1]** (base [1,1], 0.5 arm [1,1]). Rule was ">= 8 -> 25-game wave" ⇒ **the wave is earned.**
+Secondary reads all move the same way: **0 VOID runs** (0.5 arm had 2), wave score 4.09 (0.5 arm 1.50), live-cap
+4.18/game (0.5 arm 1.59), **WALL passes 3** of 4 attempts (0.5 arm 1; stock base 2), and **dc22's L2 — one of the 12
+six-draw never-passed walls — was passed**. Efficiency is good where it clears (cd82 p1 43 actions vs a 55 baseline;
+dc22 p1 45 vs 59). SAFETY: GAME_OVERs 0.67/run (base 0.87).
+
+**HONEST WEIGHTING OF THIS RESULT.** (a) 8 vs 8 is a TIE with the base on levels, not a win; the bar was set at "not
+worse than base" because the 0.5 arm was worse. The score/efficiency/wall-pass gains are real but are secondary reads
+on 6 runs. (b) dc22 reads base [2,2] / 0.5 [1,1] / 0.75 [0,2] — high variance, so the earlier "monotonic decline on
+dc22" reading is NOT supported; retracted. (c) This arm ran SECOND in its server session while the 0.5 arm ran FIRST;
+the campaign's measured order effect is ~+0.25 levels for running first, i.e. if anything against this arm, so the
+comparison is not flattered by order. (d) The 25-game wave's bar is >= 48 vs base 39.33 = +8.7 levels; a tie in the
+kill test is weak evidence for clearing that, so the realistic prior on the wave is a null. It is run because the
+pre-registration says so and because the secondary reads justify one $9 measurement, not because a step is expected.
+(e) LIVE ECONOMICS, untested by this queue-free geometry: at the live cadence a compaction is a queued ~150 s call, so
+11.5 compactions per 60 play calls means the agent trades roughly **8 of its ~52 play calls** for the block. Whether
+the block is worth 8 play calls is exactly what the wave measures; the CARRY-SAFETY fit-the-clock line reports it.
+
+**Launching the 25-game wave** under the pre-registration already written above (ENGAGED gate; PRIMARY >= 48 step
+candidate / 45-47 counterbalanced redraw / <= 44 or engaged-and-flat dead; co-primary walls >= 3 of 12; safety; and
+fit-the-clock), at `CARRY_TARGET_FRACTION=0.75`, **first in a fresh Modal boot** (the container from this kill test is
+allowed to scale to zero first, per the standing order-control law).
