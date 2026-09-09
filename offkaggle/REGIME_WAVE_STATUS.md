@@ -964,3 +964,55 @@ something throughput alone cannot, which is exactly the claim under test: multi-
 the within-turn analysis→act loop. The 4/4-vs-0/14 wall result is the only evidence that it is
 structurally different rather than just faster. **This makes the co-primary wall count the more
 informative read of the two.**
+
+## RESULT — CADENCE arm (`keith`, conc 6 / 1767 s; 19:37→22:03 UTC, 146 min, ≈$9) — **DEAD by rule**
+
+Artifacts `offkaggle/results/20260909-193735-regime-keith`. Read by
+`offkaggle/read_cadence_arm.py`, which was written and committed BEFORE this data existed.
+
+**ENGAGEMENT — PASSED on all three gates, cleanly, and better than projected:**
+
+| gate | want | got |
+|---|---|---|
+| median e2e per call | < 60 s | **26.64 s** |
+| calls per turn | ≥ 1.5 | **1.60** (base 1.02; conc-3 reference 1.66) |
+| calls per game | ≥ 40 | **56.76** (base 55.80) |
+
+The arm was also *healthier* than base: 1,434 requests vs 1,396, and **preemptions 4.1 % vs the
+base's 10.2 %**. (Every run carries the runner's `VOID` flag, but that is the 3-wall instrument's
+blanket rule — any wave-level preemption voids every run — and the base waves trip it harder. It is
+not a confound against this arm.) **My mid-flight worry that conc 6 would underfeed the GPU was WRONG:
+throughput held and calls/game slightly exceeded base.**
+
+**PRIMARY: 34 levels vs pooled base 39.33 (sd 2.34) = −5.33 = −2.28 sd → DEAD.** Not flat — *worse*,
+and outside 2 sd. Zero-level games 5 vs the base's 2.
+**CO-PRIMARY: 1 of the 12 never-passed walls (dc22 L2), target ≥ 3.**
+
+**CORRECTION I OWE (my error, in the pre-registration and in what I told Ahmed).** I wrote that the
+conc-3 instrument "passed cd82/dc22/lf52 walls 4/4". The source line says only *"the unmodified base
+passes **dc22's** wall 4/4 within 60 calls; in the queued live regime it passed 0/4"*. It was one wall,
+dc22, across two clock conditions — not three walls. I generalised a single-wall result into three.
+Note what that means for this read: **dc22 L2 is exactly the wall that DID pass here.** The specific
+finding replicated. It simply did not generalise to the other 11 walls or to total levels.
+
+**MECHANISM.** Actions were unchanged (156/game vs 154; 2.74 actions/call vs 2.76). What changed is
+turns: **35.5 turns/game vs the base's 54.7, a 35 % cut**, because the same call budget was spent
+1.60-at-a-time instead of 1.02. The agent bought within-turn deliberation and paid for it in turns,
+and at most one acting tool call happens per turn.
+
+**AN IDENTIFIABILITY LIMIT I SHOULD HAVE STATED UP FRONT.** clock = e2e × calls. You cannot hold both
+the per-game clock and calls/game while varying cadence — fix calls and the clock shrinks (this arm,
+7,920 → 1,767 s); fix the clock and call volume rises (confounded with budget). **So this arm is not a
+single-knob test**: it changed cadence AND cut the wall clock 4.5×, and the harness stamps
+`time_remaining_seconds` into every tool result as a pacing hint. A rushed-pacing explanation for the
+−5.33 is live and unexcluded.
+
+**VERDICT.** Cadence as a *live-legal* change is DEAD: the only live-legal way to buy it also cuts the
+per-game clock, and the package reads −2.28 sd. Whether cadence *itself* is neutral or positive is
+still open, and only separable by the non-deployable diagnostic arm (conc 6 at the unchanged 7,920 s
+clock, ~9.2 h, ≈$40, which raises calls/game ~4.5× and so confounds with volume anyway — its value is
+that it bounds the clock explanation, not that it isolates cadence).
+
+Together with the KV10 elasticity (+47 % calls → +19 % levels), the throughput/cadence family is now
+closed as a source of a step: every reachable point on the curve is worth tens of percent at best, and
+the live-legal points are negative.
