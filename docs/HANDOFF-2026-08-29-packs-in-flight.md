@@ -639,3 +639,12 @@ hypothesis block) were dead; (b) the model axis, blocked by the 96 GB box (Flash
 56088705) pending at 10:15Z; draw 3 armed 09-09 02:00Z; 3-draw rule unchanged.
 
 **§33 addendum (11:15Z):** yield900 draw 2 = **2.45** (sub 56088705). Draws 4.31 / 2.45, mean 3.38; the step outcome (3-draw mean ≥ 4.0) would need ≥ 5.24 on draw 3 — unreachable — so the 4.31 reads as the tail draw the ledger predicted. Draw 3 stays armed for 09-09 02:00Z (runner restarted with the venv interpreter, pid 51806; message updated to state the draws and that it pools into the base family: 3.25 / 2.58 / 4.31 / 2.45, n=4 mean 3.15, sd 0.85). ≤ 4.04 on draw 3 = dead, revert to v4 (byte-copy) for base draws. Base family after draw 3 will be n=5. No live candidate exists; the next slot after 09-09 has no hypothesis — do not spend it on a routine redraw without a reason written first.
+
+### §33 addendum (2026-09-09) — yield900 3-draw rule COMPLETE: DEAD; base reverts to v4
+
+Draw 3 (sub 56111215, 02:10Z) scored **4.01**. The three draws are **4.31 / 2.45 / 4.01, mean 3.59**.
+Pre-registered rule: mean >= 4.0 = step (adopt as base); <= 3.6 = dead; the draw-3 line said <= 4.04 = dead.
+**Both tests read DEAD.** The knob pools into the base family: 3.25 / 2.58 (v4 byte-copy) + 4.31 / 2.45 / 4.01
+(yield900) = n=5, **mean 3.32**. This agrees with the off-Kaggle loss ledger, which read the knob as a NULL on
+levels across 75 vs 75 runs (118 = 118). yield900 is harmless (fewer GAME_OVERs, cleaner notes, −20-34 % actions)
+but it is not a step, and **v4 is the base for any future base draw**.
