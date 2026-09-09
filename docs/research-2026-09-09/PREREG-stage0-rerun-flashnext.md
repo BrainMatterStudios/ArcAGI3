@@ -42,3 +42,28 @@ as such, NOT as a clean replication. If it emits files quickly (as its telemetry
 * Also logged: best matched/total per game, finish=length share, tokens per call, wall per game, cost.
 * tn36 is the control: it was green in BOTH September arms, so a non-green tn36 here means the harness or endpoint
   is broken, not the brain — investigate before reading anything else.
+
+## AMENDMENT — sk48 mitigation arm (written 2026-09-09 after draw 1, BEFORE the arm is run)
+
+Draw 1 confirmed the confound this pre-registration anticipated, and only on sk48. Output budgets after the prompt:
+sk48 10,632 tok, tn36 12,503, cn04 25,338. tn36 went GREEN (12/12, 3 calls, 187 s) so the instrument and endpoint are
+healthy; cn04 burned its full 25.3k twice with no file, which is a FAIR test (25k ≈ the 27B's 40k and ~10x
+Flash-Next's normal reasoning length) and replicates the September kill on a brain without the non-termination
+pathology. sk48 at 10.6k is NOT a fair test and must not be scored as a kill.
+
+Because a green sk48 would make the tally 2 of 3 and REOPEN the lane, that cell decides the outcome and is given a
+fair test rather than being written off.
+
+**Arm:** identical in every respect (same data, same contract, same backtest, same sampling, same stop rules) except
+`--prompt-cap 8000`, which makes the hex encoding carry fewer full grids and more per-row diffs, moving budget from
+prompt to output. Target: prompt ~8k, output ~24k — i.e. sk48 gets the same room cn04 already had and failed with.
+2 draws, sk48 only. Everything logged as `runs/sk48*` under `mitigate1/`, `mitigate2/`.
+
+**READS, locked before the arm runs:**
+* If sk48 emits a candidate file at all (green or not), the "never reaches the emit step" failure is budget-bound on
+  this game and the September kill does NOT cleanly transfer for sk48 — report it as an encoding/window artefact.
+* If sk48 goes GREEN in >= 1 of 2 draws → tally 2/3 → **the lane REOPENS**: build A2 / protocol-lite with evidence.
+* If sk48 still emits NO file across both draws at ~24k output → the kill is confirmed on two independent hard games
+  (sk48 and cn04) at fair budgets → **tally 1/3, lane stays dead, A2 dead by construction**, Track A goes to A3/A4
+  (port NOOA / Polyphony) + Track D.
+* The tn36 green is NOT counted twice: it is the control, already green in both September arms and here.
