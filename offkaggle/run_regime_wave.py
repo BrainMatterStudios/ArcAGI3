@@ -235,12 +235,16 @@ WS_ENV_KEYS = ("WS_ENABLE", "WS_MAX_FILES", "WS_MAX_FILE_CHARS", "WS_BACKTEST_TI
 # 2-3 calls when handed the data and asked. keith_wsd turns on the harness-directed build: after
 # WS_DIRECT_AFTER_ACTIONS actions on one uncleared level the harness runs the Stage-1 procedure itself.
 WSD_ENV_KEYS = WS_ENV_KEYS + ("WS_DIRECT_ENABLE", "WS_DIRECT_AFTER_ACTIONS", "WS_DIRECT_MAX_CALLS",
-                              "WS_DIRECT_MAX_PER_GAME", "WS_DIRECT_MAX_TRANSITIONS")
+                              "WS_DIRECT_MAX_PER_GAME", "WS_DIRECT_MAX_TRANSITIONS", "WS_DIRECT_MAX_CELLS")
 KEITH_WS_ENV = {**KEITH_YIELD900_ENV, "WS_ENABLE": "1", "WS_MAX_FILES": "12", "WS_MAX_FILE_CHARS": "20000",
                 "WS_BACKTEST_TIMEOUT": "30", "WS_LOG_MAX": "400", "WS_PREAMBLE": "1",
                 "WS_PREAMBLE_MAX_CHARS": "12000", "WS_MISMATCH_CELLS": "12"}
 KEITH_WSD_ENV = {**KEITH_WS_ENV, "WS_DIRECT_ENABLE": "1", "WS_DIRECT_AFTER_ACTIONS": "40",
-                 "WS_DIRECT_MAX_CALLS": "3", "WS_DIRECT_MAX_PER_GAME": "2", "WS_DIRECT_MAX_TRANSITIONS": "24"}
+                 "WS_DIRECT_MAX_CALLS": "3", "WS_DIRECT_MAX_PER_GAME": "2",
+                 # 09-09 pass 2: 24 transitions / 300-cell lists gave live prompts of 11-15k and output of
+                 # 18-22k, and the model overran that budget on 15/15 builds. Stage-1's greens had a 7,123-token
+                 # prompt and ~25k output; these land live prompts near 3-5k.
+                 "WS_DIRECT_MAX_TRANSITIONS": "12", "WS_DIRECT_MAX_CELLS": "60"}
 ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV, "keith_yield900": KEITH_YIELD900_ENV,
            "keith_retry": KEITH_RETRY_ENV, "keith_evid": KEITH_EVID_ENV, "keith_hypo": KEITH_HYPO_ENV,
            "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV, "keith_carry": KEITH_CARRY_ENV, "keith_ws": KEITH_WS_ENV, "keith_wsd": KEITH_WSD_ENV}

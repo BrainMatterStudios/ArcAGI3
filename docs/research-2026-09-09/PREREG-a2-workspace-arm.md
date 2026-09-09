@@ -195,3 +195,24 @@ gates are the only reason that is visible rather than a tidy false story about t
 Recommendation: (1) exactly once, with a hard stop — if the directed build still cannot produce one verified model
 inside Stage-1's own window, the live setting genuinely differs from the offline one and A2 goes to the fallback
 without further tuning.
+
+## PRE-REGISTERED — `keith_wsd` pass 2, with a HARD STOP (2026-09-09, before data)
+
+One parameter change to an arm that already fires reliably: `WS_DIRECT_MAX_TRANSITIONS` 24 -> **12** and a new
+`WS_DIRECT_MAX_CELLS` **60** (was an unflagged 300). Nothing else differs. Target: live prompt ~3-5k and output
+~25-27k, i.e. inside the window where Stage-1 produced greens (7,123-token prompt, ~25k output, green in 2-3 calls).
+Measured on the real dc22L2 transitions: 24/300 renders ~3,846 tokens, 12/60 renders ~2,483.
+
+**THIS IS THE LAST TUNING PASS. The stop is binding and stated before data:**
+* **GATE 2 — >= 1 VERIFIED model across the wave.** If the directed build produces even one, the CONVERSION read
+  finally becomes answerable and A2 continues on its pre-registered wave path.
+* **0 verified models => A2 GOES TO THE FALLBACK with no further tuning**, whatever the levels say. Three passes
+  will then have shown that a procedure which works offline in 2-3 calls cannot be made to work inside the live
+  loop, and the remaining time goes to A3/A4 (port NOOA / Polyphony, whose loops are built around model-building)
+  plus Track D (Oct-1 absorption). I will not propose a fourth encoding change.
+* Also read, whatever happens: prompt/output tokens per directed call (did the change land in the target window at
+  all — if prompts are still > 8k the parameter did not do what the arithmetic says and that is a separate fact);
+  directed seconds spent; levels vs base 8 as a safety check; GAME_OVERs vs 0.87.
+
+Same geometry as every A2 read: `--games cd82,dc22,lf52 --draws 2 --concurrency 3 --max-calls 60 --per-game-s 7920`,
+fresh boot, ≈$3. Running total on A2 after this: ≈$12.

@@ -739,7 +739,8 @@ def install() -> str:
 DEFAULT_DIRECT_AFTER_ACTIONS = 40
 DEFAULT_DIRECT_MAX_CALLS = 3
 DEFAULT_DIRECT_MAX_PER_GAME = 2
-DEFAULT_DIRECT_MAX_TRANSITIONS = 24
+DEFAULT_DIRECT_MAX_TRANSITIONS = 12
+DEFAULT_DIRECT_MAX_CELLS = 60
 DIRECT_MARK = "[WS-DIRECT]"
 DIRECT_MODEL_FILE = "world_model.py"
 
@@ -776,6 +777,13 @@ def direct_max_transitions() -> int:
     return _env_int("WS_DIRECT_MAX_TRANSITIONS", DEFAULT_DIRECT_MAX_TRANSITIONS, 4)
 
 
+def direct_max_cells() -> int:
+    """Changed cells listed per transition. The first live directed run left 18-22k of output and the model
+    overran it every time; Stage-1's greens had ~25k. Live changed-cell lists are far denser than the curated
+    offline slice, so they are what must be capped to get back inside that window."""
+    return _env_int("WS_DIRECT_MAX_CELLS", DEFAULT_DIRECT_MAX_CELLS, 4)
+
+
 _HEX = "0123456789abcdef"
 
 
@@ -789,16 +797,17 @@ def _rows(grid: Any) -> str:
     return "\n".join(out)
 
 
-def _changed(before: Any, after: Any, cap: int = 300) -> str:
+def _changed(before: Any, after: Any, cap: int | None = None) -> str:
     if before is None or after is None or len(before) != len(after):
         return "(unknown)"
+    cap = direct_max_cells() if cap is None else cap
     out = []
     for r in range(len(after)):
         for c in range(len(after[r])):
             if before[r][c] != after[r][c]:
                 out.append("r%dc%d:%s->%s" % (r, c, before[r][c], after[r][c]))
                 if len(out) >= cap:
-                    return " ".join(out) + " ...(truncated)"
+                    return " ".join(out) + " ...(+more changed cells; this transition changed a large region)"
     return " ".join(out) if out else "(no cell changed)"
 
 

@@ -158,7 +158,8 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert rw.ARMS[-2:] == ("keith_ws", "keith_wsd")
     d7 = {k for k in set(rw.KEITH_WS_ENV) | set(rw.KEITH_WSD_ENV) if rw.KEITH_WS_ENV.get(k) != rw.KEITH_WSD_ENV.get(k)}
     assert d7 == {"WS_DIRECT_ENABLE", "WS_DIRECT_AFTER_ACTIONS", "WS_DIRECT_MAX_CALLS", "WS_DIRECT_MAX_PER_GAME",
-                  "WS_DIRECT_MAX_TRANSITIONS"}, d7
+                  "WS_DIRECT_MAX_TRANSITIONS", "WS_DIRECT_MAX_CELLS"}, d7
+    assert rw.KEITH_WSD_ENV["WS_DIRECT_MAX_TRANSITIONS"] == "12" and rw.KEITH_WSD_ENV["WS_DIRECT_MAX_CELLS"] == "60"
     assert rw.KEITH_WSD_ENV["WS_DIRECT_ENABLE"] == "1" and "WS_DIRECT_ENABLE" not in rw.KEITH_WS_ENV
     sys.path.insert(0, str(rw.GRAFT_DIR))
     import graft_carry  # noqa: PLC0415
