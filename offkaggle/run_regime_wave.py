@@ -1052,6 +1052,9 @@ _SECTION = (r"\[(?P<label>SYSTEM PROMPT|USER PROMPT|MODEL RESPONSE META|THINKING
 # graft_carry markers (one [HARNESS CARRY] section each; written BEFORE the call's [MODEL RESPONSE META])
 _WS_BACKTEST_RE = re.compile(r"^\[WS-BACKTEST\] game=\S+ level=(?P<level>\d+) matched=(?P<m>\d+)/(?P<t>\d+) "
                              r"green=(?P<green>[01]) code_chars=(?P<cc>\d+) ms=(?P<ms>\d+)$", re.M)
+_WS_DIRECT_RE = re.compile(r"^\[WS-DIRECT\] game=\S+ level=(?P<level>\d+) attempt=(?P<attempt>\d+) "
+                           r"(?:matched=(?P<m>\d+)/(?P<t>\d+) green=(?P<green>[01]) code_chars=(?P<cc>\d+)"
+                           r"|(?P<nocode>no_code)|call_failed=(?P<failed>\S+))", re.M)
 _WS_SAVE_RE = re.compile(r"^\[WS-SAVE\] game=\S+ name=(?P<name>\S+) chars=(?P<chars>\d+) files=(?P<files>\d+)$", re.M)
 _CARRY_CALL_RE = re.compile(r"^\[CARRY-CALL\] game=\S+ turn=(?P<turn>\d+) req=(?P<req>\d+) msgs=(?P<msgs>\d+) "
                             r"reasoning_msgs=(?P<rmsgs>\d+) reasoning_chars=(?P<rchars>\d+) summary_chars=(?P<schars>\d+) "
@@ -1086,6 +1089,7 @@ def parse_transcript(text: str) -> dict:
     carry_compactions: list[dict] = []
     ws_backtests: list[dict] = []
     ws_saves: list[dict] = []
+    ws_directs: list[dict] = []
     status_cfg: dict = {}
     for i, (start, end, m) in enumerate(events):
         body_end = events[i + 1][0] if i + 1 < len(events) else len(text)
@@ -1104,6 +1108,13 @@ def parse_transcript(text: str) -> dict:
                                      "matched": int(wm.group("m")), "total": int(wm.group("t")),
                                      "green": wm.group("green") == "1", "code_chars": int(wm.group("cc")),
                                      "ms": int(wm.group("ms"))})
+            for wm in _WS_DIRECT_RE.finditer(body):
+                ws_directs.append({"turn_index": len(turns) - 1, "level": int(wm.group("level")),
+                                   "attempt": int(wm.group("attempt")),
+                                   "matched": int(wm.group("m")) if wm.group("m") else None,
+                                   "total": int(wm.group("t")) if wm.group("t") else None,
+                                   "green": wm.group("green") == "1",
+                                   "no_code": bool(wm.group("nocode")), "failed": wm.group("failed")})
             for wm in _WS_SAVE_RE.finditer(body):
                 ws_saves.append({"turn_index": len(turns) - 1, "name": wm.group("name"),
                                  "chars": int(wm.group("chars")), "files": int(wm.group("files"))})
@@ -1245,7 +1256,7 @@ def parse_transcript(text: str) -> dict:
     return {"turns": turns, "calls": calls, "analyzer_status_config": status_cfg, "retry_markers": retry_markers,
             "aid_markers": aid_markers, "probe_markers": probe_markers, "request_errors": request_errors,
             "carry_markers": {"calls": carry_calls, "compactions": carry_compactions},
-            "ws_markers": {"backtests": ws_backtests, "saves": ws_saves}}
+            "ws_markers": {"backtests": ws_backtests, "saves": ws_saves, "directs": ws_directs}}
 
 
 def _tool_call_code(body: str) -> str:
@@ -1425,6 +1436,9 @@ def ws_reads(ws_markers: dict, *, levels_completed: int | None = None, graft_cou
     actually cleared L (levels_completed >= L). A green model that never becomes a cleared level is the
     same engaged-and-flat pattern A1 died of, just one level up the stack."""
     bts = list((ws_markers or {}).get("backtests") or [])
+    dirs = list((ws_markers or {}).get("directs") or [])
+    dir_levels = sorted({d["level"] for d in dirs})
+    dir_green_levels = sorted({d["level"] for d in dirs if d.get("green")})
     saves = list((ws_markers or {}).get("saves") or [])
     greens = [b for b in bts if b.get("green")]
     best_by_level: dict[int, dict] = {}
@@ -1443,6 +1457,13 @@ def ws_reads(ws_markers: dict, *, levels_completed: int | None = None, graft_cou
         "best_by_level": {str(k): v for k, v in sorted(best_by_level.items())},
         "green_levels": green_levels, "cleared_after_green": cleared_after_green,
         "conversion": (len(cleared_after_green) / len(green_levels)) if green_levels else None,
+        "direct_calls": len(dirs), "direct_levels": dir_levels, "direct_attempts": len(dir_levels),
+        "direct_green_levels": dir_green_levels, "direct_green": len(dir_green_levels),
+        "direct_no_code": sum(1 for d in dirs if d.get("no_code")),
+        "direct_failed": sum(1 for d in dirs if d.get("failed")),
+        "direct_best": max([(d["matched"] / d["total"]) for d in dirs if d.get("total")], default=None),
+        "direct_cleared_after_green": [lv for lv in dir_green_levels
+                                       if levels_completed is not None and levels_completed >= lv],
         "backtest_ms_total": sum(b.get("ms", 0) for b in bts),
         "code_chars_mean": _div(sum(b.get("code_chars", 0) for b in bts), len(bts)),
         "graft": {k: (graft_counters or {}).get(k) for k in _WS_GRAFT_KEYS} if graft_counters else None,
@@ -1628,6 +1649,8 @@ def _pooled_ws(games: list[dict]) -> dict:
     gl = [lv for r in rs for lv in (r.get("green_levels") or [])]
     cl = [lv for r in rs for lv in (r.get("cleared_after_green") or [])]
     shares = [r["best_match_share"] for r in rs if r.get("best_match_share") is not None]
+    dgl = [lv for r in rs for lv in (r.get("direct_green_levels") or [])]
+    dcl = [lv for r in rs for lv in (r.get("direct_cleared_after_green") or [])]
     out = {
         "backtests_total": bt, "backtests_per_game": (bt / n) if n else None,
         "backtests_green_total": gr, "green_share": _share(gr, bt),
@@ -1639,6 +1662,15 @@ def _pooled_ws(games: list[dict]) -> dict:
         "best_match_share_mean": (sum(shares) / len(shares)) if shares else None,
         "backtest_seconds_total": sum(r.get("backtest_ms_total", 0) for r in rs) / 1000.0,
         "code_chars_mean": _div(sum((r.get("code_chars_mean") or 0) * r.get("backtests", 0) for r in rs), bt),
+        "direct_attempts_total": sum(r.get("direct_attempts", 0) for r in rs),
+        "direct_calls_total": sum(r.get("direct_calls", 0) for r in rs),
+        "direct_runs": sum(1 for r in rs if r.get("direct_attempts")),
+        "direct_green_total": len(dgl), "direct_cleared_after_green_total": len(dcl),
+        "direct_conversion": _share(len(dcl), len(dgl)),
+        "direct_no_code_total": sum(r.get("direct_no_code", 0) for r in rs),
+        "direct_failed_total": sum(r.get("direct_failed", 0) for r in rs),
+        "direct_best_mean": (sum(x for x in (r.get("direct_best") for r in rs) if x is not None)
+                             / max(1, sum(1 for r in rs if r.get("direct_best") is not None))) if rs else None,
     }
     gate = {
         "backtests_per_game": {"value": out["backtests_per_game"], "min": WS_GATE["backtests_per_game_min"],
@@ -2404,8 +2436,6 @@ def render_summary(result: dict, telemetry: dict) -> str:
     wsx = agg.get("ws") or {}
     if "graft_workspace" in installed or wsx.get("backtests_total"):
         knobs = {k: env.get(k) for k in WSD_ENV_KEYS if env.get(k) is not None}
-        gsum = {k: sum(((g.get("ws") or {}).get("graft") or {}).get(k) or 0
-                       for g in telemetry.get("per_game", {}).values()) for k in ("direct_attempts", "direct_calls", "direct_green")}
         gate = wsx.get("gate") or {}
         pri = (agg.get("probe") or {}).get("primary") or {}
         saf = (agg.get("probe") or {}).get("safety") or {}
@@ -2423,9 +2453,12 @@ def render_summary(result: dict, telemetry: dict) -> str:
             f"{{{', '.join(k + ('+' if v.get('ok') else '-') for k, v in gate.items() if isinstance(v, dict))}}} | "
             f"grafts {installed} | flags {knobs}")
         lines.append(
-            f"  WS-DIRECT attempts {gsum['direct_attempts']} | model-build calls {gsum['direct_calls']} | "
-            f"VERIFIED models handed to the play loop {gsum['direct_green']} | "
-            f"(harness-initiated, model-executed; off unless WS_DIRECT_ENABLE=1)")
+            f"  WS-DIRECT fired on {wsx.get('direct_attempts_total')} (run, level) pairs in {wsx.get('direct_runs')}/"
+            f"{tot.get('games')} runs | model-build calls {wsx.get('direct_calls_total')} "
+            f"(no-code {wsx.get('direct_no_code_total')}, call-failed {wsx.get('direct_failed_total')}) | "
+            f"VERIFIED models handed to the play loop {wsx.get('direct_green_total')} | best match {_pct(wsx.get('direct_best_mean'))} | "
+            f"**CONVERSION {wsx.get('direct_cleared_after_green_total')}/{wsx.get('direct_green_total')} "
+            f"({_pct(wsx.get('direct_conversion'))})** = verified-model levels the run then CLEARED")
         lines.append(
             f"  WS-CONVERT green world models on {wsx.get('green_levels_total')} (run, level) pairs -> level then CLEARED on "
             f"{wsx.get('cleared_after_green_total')} ({_pct(wsx.get('conversion'))}) | backtests/greens per run {per_run}")

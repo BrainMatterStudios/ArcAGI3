@@ -776,8 +776,17 @@ def direct_max_transitions() -> int:
     return _env_int("WS_DIRECT_MAX_TRANSITIONS", DEFAULT_DIRECT_MAX_TRANSITIONS, 4)
 
 
+_HEX = "0123456789abcdef"
+
+
 def _rows(grid: Any) -> str:
-    return "\n".join(" ".join(str(v) for v in row) for row in (grid or []))
+    """One HEX CHAR per cell, as in the Stage-0/1 encoding every verified green model was built from.
+    Space-separated ints (the first live attempt) tokenise ~5-10x worse: it put cd82's prompt at 27,999
+    tokens and left 4,769 for output, so the model could not emit a file at all."""
+    out = []
+    for row in (grid or []):
+        out.append("".join(_HEX[v] if isinstance(v, int) and 0 <= v < 16 else "?" for v in row))
+    return "\n".join(out)
 
 
 def _changed(before: Any, after: Any, cap: int = 300) -> str:
@@ -797,8 +806,11 @@ def render_transitions(entry: Any, trans: list) -> str:
     """Entry grid in full, then each transition as its action and its CHANGED CELLS only.
     The Stage-0 lesson: full grids per step blow the window; changed-cell lists are what the
     model can actually reason over (its green cn04/dc22 models were built from this shape)."""
-    parts = ["ENTRY GRID (%d rows x %d cols), values are ints:" % (len(entry or []), len((entry or [[]])[0])),
-             _rows(entry), "", "TRANSITIONS (teacher-forced; grid before transition k is the grid after k-1):"]
+    parts = ["ENTRY GRID (%d rows x %d cols), one HEX DIGIT per cell (0-f = colour 0-15), rows top to bottom:"
+             % (len(entry or []), len((entry or [[]])[0])),
+             _rows(entry), "",
+             "TRANSITIONS (teacher-forced; the grid before transition k is the grid after k-1). Changed cells are "
+             "listed as rROWcCOL:old->new with DECIMAL colour values:"]
     prev = entry
     for t in trans:
         act = t.get("action")

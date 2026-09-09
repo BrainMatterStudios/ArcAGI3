@@ -414,6 +414,14 @@ class DirectTests(unittest.TestCase):
                   "level_up": False, "dead": False, "win": False}]
         text = ws.render_transitions(entry, trans)
         self.assertIn("ENTRY GRID (2 rows x 2 cols)", text)
+        self.assertIn("HEX DIGIT", text)
+        self.assertIn("\n00\n00\n", text)                        # hex rows, one char per cell
+        # the encoding must stay cheap: space-separated ints put a live prompt at 27,999 tokens and left
+        # 4,769 for output, so no model could be emitted. A full 64x64 grid + 24 transitions must stay small.
+        big = [[(r * 7 + c) % 16 for c in range(64)] for r in range(64)]
+        many = [{"index": i, "action": 1, "x": None, "y": None, "grid": big, "level_up": False,
+                 "dead": False, "win": False} for i in range(24)]
+        self.assertLess(len(ws.render_transitions(big, many)), 12000)
         self.assertIn("[0] action=6 at x=1 y=0 changed: r0c1:0->5", text)
         self.assertNotIn("5\n0 0", text.split("TRANSITIONS")[1])   # the after-grid is not dumped in full
         t2 = [{"index": 0, "action": 1, "x": None, "y": None, "grid": entry, "level_up": True, "dead": False, "win": False}]
