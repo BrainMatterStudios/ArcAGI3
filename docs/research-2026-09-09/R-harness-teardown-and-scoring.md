@@ -111,11 +111,32 @@ Polyphony cost gate and closes the last escape route for the executable-model la
 
 ## 7. What is still open, ranked
 
-1. **DOES BUDGET CONVERT TO LEVELS? Never measured.** Every wave runs 28 games at 7,920 s and 271/275
-   ended on the clock, so every game was still going when we stopped it. Experiment: same 25 games at
-   **concurrency 9** instead of 28 — same server, same clock, ~3x the calls per game. ~6 h rig, ~$25,
-   no submission slot. Pre-register: >= 2.5 lv/game -> budget converts, allocation is the campaign;
-   ~1.5 -> comprehension is the wall and only #5 matters. **Nothing else should be built first.**
+1. **CADENCE — get a second call inside the turn.** (Revised after the field sweep surfaced our own
+   3-wall result; this supersedes the "budget response" framing in the first draft of this doc.)
+   A turn can only hold a SECOND model call if the call returns before the turn budget expires. The
+   ladder, all from our own pre-registered runs:
+
+   | concurrency | e2e/call | turn budget | calls/turn | read |
+   |---|---|---|---|---|
+   | 28 (live) | 145 s | 60 s | 1.02 | walls **0/14** |
+   | 14 | 68 s | 60 s | 1.15 | 32 levels vs base 36 — dead by rule |
+   | 3 | 16-20 s | 60 s | 1.66 | walls **4/4** (cd82/dc22/lf52) |
+   | 28 + yield900 | 145 s | 900 s | 2.05 | 40-41 levels vs 36, replicated on 2 boots |
+
+   Call counts matched. Conc 14 missed the 60 s threshold by 8 s and read WORSE than base — exactly
+   what this account predicts, and why that wave looked like a failure rather than a near miss.
+
+   **CORRECTION — lower concurrency does NOT buy calls at eval.** Server throughput ~0.17 req/s x
+   32,400 s = ~5,500 calls for the whole submission = ~50/game REGARDLESS of concurrency. What it
+   buys is CADENCE: the same calls delivered fast enough to cluster inside a turn.
+
+   Two experiments, different questions, neither costs a slot:
+   * **DEPLOYABLE (run first):** conc 9 with per-game-s cut to hold wave length constant. Same calls
+     per game, e2e ~45 s, under the 60 s turn budget. Live-legal; this is the candidate.
+   * **DIAGNOSTIC:** conc 9 at the unchanged 7,920 s clock (triples calls/game by tripling wave
+     length). Not deployable, but separates "budget converts" from "cadence converts".
+
+   Pre-register both against the pooled base 39.33 lv, sd 2.34.
 2. **Adaptive allocation.** There is none in the harness (one scalar, one clock check). Triage signal
    validated: clearing L1 in <30 actions -> 2.1 lv mean and 31-38% reach 3+; >30 actions -> 1.2 lv and
    ~0% reach 3+ (2% and 0% in the slower bins). Because the constraint is global throughput, killing a
@@ -137,3 +158,30 @@ Polyphony cost gate and closes the last escape route for the executable-model la
    defect. Sub-branches: a stronger open checkpoint at this throughput, and test-time training, where
    the serving gate is passed but **no fine-tune has ever been served AND scored** — the one major axis
    opened and never closed.
+
+
+## 8. Field sweep (2026-09-09) — what the competition is doing
+
+- **No published method fits one GPU at ~83k completion tokens/game.** The only open-weights results in
+  the public record sit ~20% on public-25; the top four teams have published nothing.
+- **The field is equally stuck.** Rank 17 reports trying the approach everyone assumes explains the
+  jump and not beating their own harness. Another team's public-set scores doubled while submissions
+  fell 30-50% — our public-does-not-predict-LB law in someone else's data.
+- **Host rulings (named threads):** dead clicks DO count as actions (contra the docs); there is NO 5x
+  action cap on Kaggle; parallel plays of one game are not permitted (second independent source
+  against banking/max-over-plays — DEMOTE). A third party independently re-derived the scoring rule
+  from `scorecard.py` and matched it, including the double penalty an unreached level carries.
+- **Largest attributed reproducible gain published:** rejection-sampling LoRA on winning trajectories,
+  1.25 -> 1.94. Real, and an order of magnitude short of the leaderboard.
+
+### Two leads CHECKED rather than relayed
+- **`MULTIMODAL_UPSCALE` 4 -> 8** was offered as a cheap one-liner. **Already run**: arm `keith_up8`
+  exists, was pre-registered on the 3-wall instrument, and read *"live but no advantage -> dead"* at an
+  attested +201 prompt tokens/call. Closed.
+- **World-model extraction defect — VERIFIED IN CODE** (`tool_agent.py:1894-1900`):
+  `_update_summarized_knowledge_from_assistant(content)` is called only `if content:`; when the model
+  puts everything in `reasoning` and content is empty, the branch is `elif reasoning: content = None`
+  and **nothing is captured**. A third party measured 66.8% of responses as hidden-reasoning-only.
+  BUT the thing not captured is the prose knowledge block, which is exactly the class A1 killed across
+  five engaged-and-flat replications. Verified defect, LOW prior on the fix. Do not confuse with the
+  reasoning-carriage question, which was settled 09-08: the stock already carries reasoning in-context.
