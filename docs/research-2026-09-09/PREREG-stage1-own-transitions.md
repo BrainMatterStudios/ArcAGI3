@@ -38,3 +38,40 @@ actions, which may make them either easier (repetitive) or harder (uninformative
 control is there partly to read this; (c) a green result does NOT show the agent can do this ONLINE inside its
 ~52-call clock, which remains the open question after Stage-1 and is a cost question for A2's design, not a
 capability one.
+
+## RESULT 2026-09-09 — 4 of 4 GREEN ⇒ **BUILD A2** (pre-registered read)
+
+Flash-Next on the live keith V14 profile, ~35 min GPU, ≈$2. Artifacts and all four green models:
+`docs/research-2026-09-09/stage1-own-transitions/`.
+
+| segment | draw 1 | draw 2 | calls-to-green |
+|---|---|---|---|
+| **dc22L2 (the wall, agent stuck 85 actions, never cleared)** | **GREEN 20/20** | **GREEN 20/20** | 3, then 2 |
+| dc22L1 (control, level the agent did clear) | **GREEN 20/20** | **GREEN 20/20** | 2, then 9 |
+
+**PRIMARY MET, and more strongly than the rule required:** the wall segment was green in **2 of 2** draws (the rule
+asked for >= 1 of 2). All four candidates re-verified independently by re-running `backtest.py` on the saved files.
+
+**Not memorisation.** Every green model is 3.3-5.4 KB / ~155 lines with **zero** embedded literal grids, **zero**
+step- or index-based output selection, and no reference to `ENTRY_GRID`. The dc22L2 model is explicitly mechanistic:
+a 2x2 player sprite (colour 14) moving in steps of 2, a WALKABLE colour set, two toggle switches at (52,22) and
+(52,40), a row-63 progress bar, and a maintained base-terrain layer so vacated cells restore correctly. Applying the
+L2 model to the L1 segment scores 0/20, which is the expected behaviour of a correct PER-LEVEL model (it hardcodes
+level-specific switch coordinates), not evidence of overfitting to the recorded outputs.
+
+**Self-generated data was not harder than curated frontier data — it was easier.** dc22L2 went green in 2-3 calls;
+Stage-0's cn04, from a frontier agent's curated transitions, needed 11. The redundancy in our agent's own
+exploration (10 clicks among 20 actions, many no-ops) appears to help rather than hurt.
+
+**The 32k self-starvation finding replicated** on dc22L1 draw 2: prompt grew 7.7k → 9.5k → 11.5k → 11.9k as
+(candidate, feedback) rounds accumulated, output fell 24.6k → 20.3k, and call 4 hit the length cap with no code
+before the run recovered at call 9. A2 must summarise prior candidates rather than append them.
+
+**VERDICT: A2 is justified.** The chain is now: the deployed brain induces a correct, verified, executable model of a
+real wall level from the agent's own stuck exploration, in 2-3 calls and ~5 minutes, reproducibly.
+
+**WHAT REMAINS OPEN (and is now A2's central design risk, not a capability question):** everything here is OFFLINE.
+The agent must do this INSIDE its ~52-call, 7,920 s game clock, where each model-building call is a queued ~150 s
+call competing with play calls — the same tax that made A1 marginally over the clock. 2-3 calls to build a wall
+model is ~5-9 % of the game budget, which is affordable; the open question is whether acting on the model (search /
+planning in it) then converts into cleared levels. That is what A2 must be built to measure.
