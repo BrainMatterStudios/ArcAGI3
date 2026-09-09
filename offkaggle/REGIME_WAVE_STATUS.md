@@ -846,3 +846,47 @@ lane was killed on Qwen3.6/3.8-27B whose failure was thinking non-termination �
 have. It is decisive for the whole executable-model lane (A2 included): ≥2/3 green ⇒ build A2/protocol-lite with
 evidence; 0/3 ⇒ A2 is dead by construction and Track A becomes A3/A4 (port NOOA / Polyphony as alternative loops)
 plus Track D (Oct-1 absorption).
+
+---
+
+## 2026-09-09 — A3/A4 GATED OUT, TRACK A CLOSED, TRACK D IS NOW THE ONLY OPEN TRACK
+
+**NOOA — DEAD on the clock contract.** Its loop assumes 1,200 s per turn, 5,000 env steps, 20 actions/turn and
+*unlimited* turns. Our live geometry is 7,920 s per game and ~52 model calls. Not configurable around.
+
+**Polyphony (`Mininglamp-AI/polyphony-arc-3`) — DEAD on COMPUTE, not on the clock.**
+Full gate: `docs/research-2026-09-09/GATE-polyphony-clock.md`.
+Licence **MIT** (read from LICENSE; the GitHub API's `NOASSERTION` is a detection quirk, same as NOOA — do not trust
+that field). Loop shape is *literally our Stage-1*: a Python policy accepted only when it reproduces the real
+transitions exactly, then searched for a plan. Built for deployable open-weight models (default Qwen3.6-27B).
+Clock **passes**: `agent.py` — "TIME is the primary stop authority under a bounded wall-clock budget"; the old step
+budget and stuck rule were removed; `--per-game-deadline-s` defaults to 1800 s, inside our 7,920 s.
+
+It fails on decode tokens, and the failing metric is hardware-independent:
+
+| | calls | completion tokens | tokens/call |
+|---|---|---|---|
+| Stage-1 green model (4 runs, mean) | 4 | **65,468** | **16,367** |
+| stock, per WHOLE game | 64.2 | **83,094** | **1,293** |
+
+A Stage-1 call is **12.7× fatter** than a stock call, and **one verified level model eats 79 % of an entire game's
+decode budget** (best case 49 %, worst 142 %). Call *count* is fine (2-9 vs our ~52) — tokens per call is what kills
+it, and long generation is intrinsic to writing a transition model. The incremental path does not rescue it: the
+9-call run still burned 13,136 tokens per round. Their own competition config (`--parallel-nums 5
+--per-game-deadline-s 14400` on `--tensor-parallel-size 8`) is ~6.4 GPU-hours per game against our 0.08.
+Cannot be bought back: concurrency 28→5 gives 5.6× per-game compute but covers 5/28 of the games while the score
+averages over all 110; the session cap leaves at most ~1.35× more wall clock.
+
+**This is a different death from A1/A2.** Polyphony is not refuted — it is *priced out of our hardware*. Reopen only
+if per-game compute changes by ~an order of magnitude. **New standing cost gate for any port: completion tokens per
+game.** It is concurrency- and hardware-independent and it decides these questions in an hour, for free.
+
+**TRACK D OPENED (the plan's §9 rule: A1 and A2 both flat ⇒ fall back to A3/A4 and D; A3/A4 now gone too).**
+Built and committed 09-09, no spend: **`offkaggle/absorb_kernel.py`** — `stage` pulls a released kernel and lays down
+a byte-identical push bundle plus `ATTEST.json`; `diff` compares the four serving-regime keys so a silent regime
+change cannot slip through; `verify` re-checks a bundle against its attestation so after a graft you can say exactly
+which hash moved. It never pushes. Verified rather than asserted: it reproduces `submission/_keith_copy/ATTEST.json`
+(our live 3.25 base) and the hand-built `push_bothmounts/kernel-metadata.json` exactly, 13/13 tests, and a live
+end-to-end run against the real Kaggle API on 09-09 returned the same two hashes recorded on 09-02 — which also
+confirms **keith V14 is unchanged since**. Checklist: `docs/TRACK-D-absorption-checklist.md` (H+0..H+24, with the
+cost gate placed *before* port enthusiasm and pre-registration required before reading any wave).
