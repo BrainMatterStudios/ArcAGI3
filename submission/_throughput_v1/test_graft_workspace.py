@@ -26,7 +26,8 @@ sys.path.insert(0, str(_BUNDLE))
 import graft_workspace as ws  # noqa: E402
 
 _FLAGS = ("WS_ENABLE", "WS_MAX_FILES", "WS_MAX_FILE_CHARS", "WS_BACKTEST_TIMEOUT", "WS_LOG_MAX",
-          "WS_PREAMBLE", "WS_PREAMBLE_MAX_CHARS", "WS_MISMATCH_CELLS")
+          "WS_PREAMBLE", "WS_PREAMBLE_MAX_CHARS", "WS_MISMATCH_CELLS", "WS_DIRECT_ENABLE",
+          "WS_DIRECT_AFTER_ACTIONS", "WS_DIRECT_MAX_CALLS", "WS_DIRECT_MAX_PER_GAME", "WS_DIRECT_MAX_TRANSITIONS")
 _GRID = tuple(tuple(0 for _ in range(8)) for _ in range(8))
 X_CODE = "r = action(['UP'])\nprint('acted', r.get('executed'))\n"
 
@@ -304,6 +305,120 @@ class WsTests(unittest.TestCase):
         self.assertEqual(ws.action_to_int({"action_name": "ACTION6", "action_display": "MOUSE(row=21, col=19)"}), (6, 19, 21))
         self.assertEqual(ws.action_to_int({"action_name": "ACTION3"}), (3, None, None))
         self.assertEqual(ws.action_to_int({"action_name": "RESET"}), (0, None, None))
+
+class DirectTests(unittest.TestCase):
+    """WS_DIRECT_*: the harness runs the Stage-1 procedure itself when a run is stuck at a wall."""
+
+    @classmethod
+    def setUpClass(cls):
+        from inference.agent import tool_agent as agent_mod  # noqa: PLC0415
+        from inference.agent import runtime_state as runtime_mod  # noqa: PLC0415
+        cls.agent_mod, cls.runtime_mod = agent_mod, runtime_mod
+        ws.install()
+
+    def setUp(self):
+        _clear(); _reset()
+        os.environ["WS_DIRECT_ENABLE"] = "1"
+        os.environ["WS_DIRECT_AFTER_ACTIONS"] = "3"
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.state_path = self.root / "artifacts" / "dc22-test_p0_state.json"
+        self.transcript = self.root / "transcripts" / "dc22-test_p0.txt"
+        self.state_path.parent.mkdir(parents=True); self.transcript.parent.mkdir(parents=True)
+        self.transcript.touch()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _stuck_agent(self, n=4):
+        agent = self.agent_mod.ToolAgent(model="m", base_url="http://127.0.0.1:9/v1", provider="vllm")
+        sess = _FakeSession(self.runtime_mod, self.state_path)
+        agent._ensure_session(self.state_path); agent._step_env_callback = sess.step_env
+        st = ws._wstate(agent, self.state_path)
+        st.transcript_path = self.transcript; st.game = "dc22-test_p0"; st.agent_mod = self.agent_mod
+        st.entry_by_level[1] = [list(r) for r in sess._grid()]
+        for i in range(n):                              # marker at (0,i) -> (0,i+1), the mechanic to model
+            before = [list(r) for r in sess._grid()]
+            sess.pos += 1
+            st.log.append({"index": i, "action": 1, "x": None, "y": None,
+                           "grid": [list(r) for r in sess._grid()], "level_up": False, "dead": False,
+                           "win": False, "level_before": 1, "changed_cells": 2})
+        return agent, st
+
+    def _reply(self, text):
+        return self.agent_mod._ChatCompletionResult(message={"role": "assistant", "content": text},
+                                                    finish_reason="stop", usage={})
+
+    GOOD = ("```python\ndef step(grid, action, x, y):\n    g = [list(r) for r in grid]\n"
+            "    for c in range(8):\n        if g[0][c] == 5:\n            g[0][c] = 0\n"
+            "            g[0][min(7, c + 1)] = 5\n            break\n    return g, {}\n```")
+    BAD = "```python\ndef step(grid, action, x, y):\n    return grid, {}\n```"
+
+    def test_direct_builds_verifies_saves_and_notifies(self):
+        agent, st = self._stuck_agent()
+        with mock.patch.object(self.agent_mod.ToolAgent, "_chat_completion", return_value=self._reply(self.GOOD)):
+            out = ws.run_directed_build(agent, self.agent_mod, st, 1)
+        self.assertTrue(out["green"] and out["saved"])
+        self.assertEqual(out["calls"], 1)                       # green on the first attempt: no wasted calls
+        self.assertIn(ws.DIRECT_MODEL_FILE, st.files)
+        self.assertIn("def step", st.files[ws.DIRECT_MODEL_FILE])
+        self.assertIn("VERIFIED", st.direct_notice)
+        self.assertIn(ws.DIRECT_MODEL_FILE, st.direct_notice)
+        text = self.transcript.read_text()
+        self.assertIn("[WS-DIRECT] game=dc22-test_p0 level=1 attempt=1 matched=4/4 green=1", text)
+        s = ws.status()
+        self.assertEqual((s["direct_green"], s["direct_attempts"], s["backtests_green"]), (1, 1, 1))
+        # the notice rides exactly the next user prompt, once
+        up1 = agent._build_user_prompt(3, valid_actions=["UP"])
+        self.assertIn("VERIFIED", up1)
+        self.assertNotIn("VERIFIED", agent._build_user_prompt(4, valid_actions=["UP"]))
+
+    def test_direct_iterates_on_a_wrong_model_then_gives_up_cleanly(self):
+        agent, st = self._stuck_agent()
+        with mock.patch.object(self.agent_mod.ToolAgent, "_chat_completion", return_value=self._reply(self.BAD)):
+            out = ws.run_directed_build(agent, self.agent_mod, st, 1)
+        self.assertFalse(out["green"])
+        self.assertEqual(out["calls"], ws.direct_max_calls())    # used its budget, no more
+        self.assertNotIn(ws.DIRECT_MODEL_FILE, st.files)
+        self.assertEqual(st.direct_notice, "")                  # nothing claimed to the play loop
+        self.assertIn(1, st.direct_done)                        # never retried on this level
+        self.assertEqual(ws.status()["errors"], 0)
+
+    def test_direct_survives_a_model_that_returns_no_code_or_raises(self):
+        agent, st = self._stuck_agent()
+        with mock.patch.object(self.agent_mod.ToolAgent, "_chat_completion", return_value=self._reply("no fence here")):
+            out = ws.run_directed_build(agent, self.agent_mod, st, 1)
+        self.assertFalse(out["green"]) and self.assertEqual(out["calls"], ws.direct_max_calls())
+        self.assertIn("no_code", self.transcript.read_text())
+        _reset()
+        agent2, st2 = self._stuck_agent()
+        with mock.patch.object(self.agent_mod.ToolAgent, "_chat_completion", side_effect=RuntimeError("boom")):
+            out2 = ws.run_directed_build(agent2, self.agent_mod, st2, 1)
+        self.assertFalse(out2["green"])
+        self.assertIn("call_failed=RuntimeError", self.transcript.read_text())
+        self.assertEqual(ws.status()["errors"], 0)              # a failed model call is not a graft error
+
+    def test_direct_is_off_by_default_and_budget_capped(self):
+        _clear()
+        self.assertFalse(ws.direct_enabled())                   # opt-in: stock arms are untouched
+        os.environ.update({"WS_DIRECT_ENABLE": "1", "WS_DIRECT_MAX_PER_GAME": "0"})
+        agent, st = self._stuck_agent()
+        with mock.patch.object(self.agent_mod.ToolAgent, "_chat_completion", return_value=self._reply(self.GOOD)):
+            agent.analyze(self.state_path, 0, valid_actions=["UP"], step_env=agent._step_env_callback,
+                          transcript_path=self.transcript, analysis_step=1)
+        self.assertEqual(ws.status()["direct_attempts"], 0)     # cap 0 => never fires
+
+    def test_render_transitions_is_changed_cells_not_full_grids(self):
+        entry = [[0, 0], [0, 0]]
+        trans = [{"index": 0, "action": 6, "x": 1, "y": 0, "grid": [[0, 5], [0, 0]],
+                  "level_up": False, "dead": False, "win": False}]
+        text = ws.render_transitions(entry, trans)
+        self.assertIn("ENTRY GRID (2 rows x 2 cols)", text)
+        self.assertIn("[0] action=6 at x=1 y=0 changed: r0c1:0->5", text)
+        self.assertNotIn("5\n0 0", text.split("TRANSITIONS")[1])   # the after-grid is not dumped in full
+        t2 = [{"index": 0, "action": 1, "x": None, "y": None, "grid": entry, "level_up": True, "dead": False, "win": False}]
+        self.assertIn("flags=level_up", ws.render_transitions(entry, t2))
+        self.assertIn("(no cell changed)", ws.render_transitions(entry, t2))
 
 
 if __name__ == "__main__":

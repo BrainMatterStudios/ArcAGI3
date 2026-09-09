@@ -90,7 +90,8 @@ from pathlib import Path
 from typing import Any
 
 _PER_GAME_KEYS = ("python_calls", "transitions_logged", "backtests", "backtests_green", "saves", "loads",
-                  "lists", "deletes", "preambles", "preamble_chars_total", "backtest_ms_total")
+                  "lists", "deletes", "preambles", "preamble_chars_total", "backtest_ms_total",
+                  "direct_calls", "direct_attempts", "direct_green")
 _STATE: dict[str, Any] = {"installed": False, "errors": 0, "skips": {}, "per_game": {}}
 for _k in _PER_GAME_KEYS:
     _STATE[_k] = 0
@@ -236,6 +237,8 @@ class WsState:
         self.entry_by_level: dict[int, Any] = {}
         self.best_by_level: dict[int, str] = {}
         self.level: int = 1
+        self.direct_done: set = set()        # levels a directed build has already been attempted on
+        self.direct_notice: str = ""         # one-shot line telling the play loop a verified model exists
 
     def transitions_for(self, level: int) -> list[dict[str, Any]]:
         return [t for t in self.log if t.get("level_before") == level]
@@ -563,9 +566,15 @@ def install() -> str:
         if not enabled():
             return text
         try:
+            notice = ""
+            st = getattr(self, "_ws", None)
+            if st is not None and st.direct_notice:
+                notice = st.direct_notice + "\n"
+                st.direct_notice = ""
             if USER_ONLY_TOOL in text:
-                return text.replace(USER_ONLY_TOOL, USER_TOOLS_LINE, 1)
+                return notice + text.replace(USER_ONLY_TOOL, USER_TOOLS_LINE, 1)
             _skip("user_only_tool_line_absent")
+            return notice + text
         except Exception:  # noqa: BLE001
             _error()
         return text
@@ -581,6 +590,16 @@ def install() -> str:
                 if tp is not None:
                     st.transcript_path = Path(tp)
                 st.game = _game_key(self, state_path, step_env=step_env, transcript_path=st.transcript_path)
+            except Exception:  # noqa: BLE001
+                _error()
+        if enabled() and direct_enabled():
+            try:
+                st = _wstate(self, state_path)
+                lvl = st.level
+                if (lvl not in st.direct_done
+                        and len(st.direct_done) < direct_max_per_game()
+                        and len(st.transitions_for(lvl)) >= direct_after_actions()):
+                    run_directed_build(self, agent_mod, st, lvl)
             except Exception:  # noqa: BLE001
                 _error()
         return _STOCK["analyze"](self, state_path, action_num, valid_actions=valid_actions,
@@ -696,3 +715,176 @@ def install() -> str:
     cls._compact_action_result = _compact_action_result
     _STATE["installed"] = True
     return "workspace: OK"
+
+
+# ---------------------------------------------------------------------------
+# DIRECTED MODEL BUILDING (WS_DIRECT_*, 2026-09-09)
+#
+# Two kill tests established that the model never ELECTS to build a world model
+# mid-game: 0 verifier calls in 358 python calls, both with the tools merely
+# offered and with the prompt corrected to name them. Stage-1 established that the
+# same brain builds a green 20/20 model of this very game's wall in 2-3 calls when
+# it is handed the transitions and asked. So the missing piece is election, not
+# capability or discoverability, and the harness supplies it: when a run has spent
+# WS_DIRECT_AFTER_ACTIONS actions on one level without clearing it, the harness
+# runs the Stage-1 procedure itself (build -> verify -> iterate once), saves a green
+# model to the workspace, and tells the play loop it exists.
+#
+# This is harness-INITIATED but model-EXECUTED. It differs from the five
+# engaged-and-flat behaviour-shaping levers (patch 21, yield900, probe, carry x2),
+# which forced the model to do things it was already doing; this asks for something
+# it demonstrably does well and never chooses. That is the hypothesis under test.
+# ---------------------------------------------------------------------------
+
+DEFAULT_DIRECT_AFTER_ACTIONS = 40
+DEFAULT_DIRECT_MAX_CALLS = 3
+DEFAULT_DIRECT_MAX_PER_GAME = 2
+DEFAULT_DIRECT_MAX_TRANSITIONS = 24
+DIRECT_MARK = "[WS-DIRECT]"
+DIRECT_MODEL_FILE = "world_model.py"
+
+DIRECT_SYSTEM = (
+    "You are building an executable WORLD MODEL for one level of an ARC-AGI-3 game, from transitions that YOU "
+    "recorded while playing this level. Reply with exactly one ```python fence containing the COMPLETE file and "
+    "nothing after it. Define either a stateful pair `init_state(entry_grid)` and "
+    "`predict(state, grid, action, x, y) -> (next_grid, flags, state)`, or a stateless "
+    "`step(grid, action, x, y) -> (next_grid, flags)`. `ENTRY_GRID` is available as a module global. Grids are "
+    "lists of lists of ints. `action` is an int: 1-5 = ACTION1..5, 6 = a click at x=col, y=row, 0 = RESET. "
+    "`flags` is a dict; set level_up/dead/win when the transition ends the level. The harness replays every "
+    "transition and tells you the first one you get wrong. Keep your thinking short: the file must fit in the "
+    "output budget. Model the MECHANICS (what moves, what blocks, what a click does), not the specific sequence."
+)
+
+
+def direct_enabled() -> bool:
+    return _env("WS_DIRECT_ENABLE", "0").lower() not in _OFF
+
+
+def direct_after_actions() -> int:
+    return _env_int("WS_DIRECT_AFTER_ACTIONS", DEFAULT_DIRECT_AFTER_ACTIONS, 1)
+
+
+def direct_max_calls() -> int:
+    return _env_int("WS_DIRECT_MAX_CALLS", DEFAULT_DIRECT_MAX_CALLS, 1)
+
+
+def direct_max_per_game() -> int:
+    return _env_int("WS_DIRECT_MAX_PER_GAME", DEFAULT_DIRECT_MAX_PER_GAME, 0)
+
+
+def direct_max_transitions() -> int:
+    return _env_int("WS_DIRECT_MAX_TRANSITIONS", DEFAULT_DIRECT_MAX_TRANSITIONS, 4)
+
+
+def _rows(grid: Any) -> str:
+    return "\n".join(" ".join(str(v) for v in row) for row in (grid or []))
+
+
+def _changed(before: Any, after: Any, cap: int = 300) -> str:
+    if before is None or after is None or len(before) != len(after):
+        return "(unknown)"
+    out = []
+    for r in range(len(after)):
+        for c in range(len(after[r])):
+            if before[r][c] != after[r][c]:
+                out.append("r%dc%d:%s->%s" % (r, c, before[r][c], after[r][c]))
+                if len(out) >= cap:
+                    return " ".join(out) + " ...(truncated)"
+    return " ".join(out) if out else "(no cell changed)"
+
+
+def render_transitions(entry: Any, trans: list) -> str:
+    """Entry grid in full, then each transition as its action and its CHANGED CELLS only.
+    The Stage-0 lesson: full grids per step blow the window; changed-cell lists are what the
+    model can actually reason over (its green cn04/dc22 models were built from this shape)."""
+    parts = ["ENTRY GRID (%d rows x %d cols), values are ints:" % (len(entry or []), len((entry or [[]])[0])),
+             _rows(entry), "", "TRANSITIONS (teacher-forced; grid before transition k is the grid after k-1):"]
+    prev = entry
+    for t in trans:
+        act = t.get("action")
+        where = "" if t.get("x") is None else " at x=%s y=%s" % (t.get("x"), t.get("y"))
+        flags = [k for k in ("level_up", "dead", "win") if t.get(k)]
+        parts.append("[%d] action=%s%s%s changed: %s"
+                     % (t.get("index"), act, where, (" flags=" + ",".join(flags)) if flags else "",
+                        _changed(prev, t.get("grid"))))
+        prev = t.get("grid")
+    return "\n".join(parts)
+
+
+def _extract_code(text: str) -> str:
+    if not text:
+        return ""
+    m = re.findall(r"```(?:python)?\s*\n(.*?)```", text, re.S)
+    return m[-1].strip() if m else ""
+
+
+def run_directed_build(agent: Any, agent_mod: Any, st: "WsState", level: int) -> dict:
+    """The Stage-1 procedure, live: render this level's transitions, ask for a model, verify, iterate.
+    Returns {calls, green, best, saved}. Never raises; every model call is counted against the clock."""
+    trans = st.transitions_for(level)[: direct_max_transitions()]
+    entry = st.entry_by_level.get(level) or (trans[0].get("grid") if trans else None)
+    out = {"calls": 0, "green": False, "best": "0/%d" % len(trans), "saved": False, "level": level}
+    if not trans or entry is None:
+        _skip("direct_no_transitions")
+        return out
+    data = render_transitions(entry, trans)
+    feedback = ""
+    for attempt in range(direct_max_calls()):
+        user = ("Level %d. You have spent %d actions here without clearing it. Build the world model.\n\n%s%s"
+                % (level, len(st.transitions_for(level)), data,
+                   ("\n\nYour previous model was wrong. " + feedback) if feedback else ""))
+        try:
+            res = agent._chat_completion([{"role": "system", "content": DIRECT_SYSTEM},
+                                          {"role": "user", "content": user}], tools=None)
+        except Exception as exc:  # noqa: BLE001
+            _write_marker(st.agent_mod, st.transcript_path,
+                          "%s game=%s level=%d attempt=%d call_failed=%s" % (DIRECT_MARK, st.game, level, attempt + 1,
+                                                                            type(exc).__name__))
+            _bump(st.game, "direct_calls")
+            out["calls"] += 1
+            break
+        out["calls"] += 1
+        _bump(st.game, "direct_calls")
+        code = _extract_code(_text_of_message(agent_mod, res))
+        if not code:
+            feedback = "You produced no ```python fence. Reply with the complete file in one fence, thinking briefly."
+            _write_marker(st.agent_mod, st.transcript_path,
+                          "%s game=%s level=%d attempt=%d no_code" % (DIRECT_MARK, st.game, level, attempt + 1))
+            continue
+        bt = run_backtest(code, entry, trans, timeout=backtest_timeout(), cells=mismatch_cells())
+        _bump(st.game, "backtests")
+        if bt.get("green"):
+            _bump(st.game, "backtests_green")
+        cur = "%s/%s" % (bt.get("matched", 0), bt.get("total", 0))
+        out["best"] = cur if int(bt.get("matched", 0)) >= int(out["best"].split("/")[0]) else out["best"]
+        _write_marker(st.agent_mod, st.transcript_path,
+                      "%s game=%s level=%d attempt=%d matched=%s green=%d code_chars=%d"
+                      % (DIRECT_MARK, st.game, level, attempt + 1, cur, 1 if bt.get("green") else 0, len(code)))
+        if bt.get("green"):
+            st.files[DIRECT_MODEL_FILE] = code[: max_file_chars()]
+            _bump(st.game, "saves")
+            _bump(st.game, "direct_green")
+            out["green"] = True
+            out["saved"] = True
+            st.direct_notice = (
+                "The harness built a world model of this level from your own recorded transitions and VERIFIED it: "
+                "it reproduces all %d of them exactly. It is saved as WORKSPACE['%s']. Load it in python with "
+                "exec(WORKSPACE['%s'], globals()), then search over action sequences with it to find one that "
+                "clears the level, and execute that sequence with action(). Trust it over guessing."
+                % (len(trans), DIRECT_MODEL_FILE, DIRECT_MODEL_FILE))
+            break
+        mm = bt.get("first_mismatch") or {}
+        feedback = ("The first transition it got wrong is [%s] (action=%s, kind=%s%s). Fix the mechanics that "
+                    "explains it." % (mm.get("index"), mm.get("action"), mm.get("kind"),
+                                      (", " + str(mm.get("flags"))) if mm.get("flags") else ""))
+    st.direct_done.add(level)
+    _bump(st.game, "direct_attempts")
+    return out
+
+
+def _text_of_message(agent_mod: Any, res: Any) -> str:
+    try:
+        msg = getattr(res, "message", None) or {}
+        return str(agent_mod._normalize_message_content(msg.get("content", "")) or "")
+    except Exception:  # noqa: BLE001
+        return ""

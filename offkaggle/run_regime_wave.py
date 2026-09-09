@@ -230,18 +230,26 @@ KEITH_CARRY_ENV = {**KEITH_YIELD900_ENV, "CARRY_ENABLE": "1", "CARRY_TARGET_FRAC
 # keith_yield900 by exactly the WS_* keys. Pre-registration: offkaggle/REGIME_WAVE_STATUS.md.
 WS_ENV_KEYS = ("WS_ENABLE", "WS_MAX_FILES", "WS_MAX_FILE_CHARS", "WS_BACKTEST_TIMEOUT", "WS_LOG_MAX",
                "WS_PREAMBLE", "WS_PREAMBLE_MAX_CHARS", "WS_MISMATCH_CELLS")
+# 09-09: two kill tests showed the model never ELECTS to build a world model (0 verifier calls in 358 python
+# calls, with the tools offered and with the prompt corrected), while Stage-1 showed it builds a green one in
+# 2-3 calls when handed the data and asked. keith_wsd turns on the harness-directed build: after
+# WS_DIRECT_AFTER_ACTIONS actions on one uncleared level the harness runs the Stage-1 procedure itself.
+WSD_ENV_KEYS = WS_ENV_KEYS + ("WS_DIRECT_ENABLE", "WS_DIRECT_AFTER_ACTIONS", "WS_DIRECT_MAX_CALLS",
+                              "WS_DIRECT_MAX_PER_GAME", "WS_DIRECT_MAX_TRANSITIONS")
 KEITH_WS_ENV = {**KEITH_YIELD900_ENV, "WS_ENABLE": "1", "WS_MAX_FILES": "12", "WS_MAX_FILE_CHARS": "20000",
                 "WS_BACKTEST_TIMEOUT": "30", "WS_LOG_MAX": "400", "WS_PREAMBLE": "1",
                 "WS_PREAMBLE_MAX_CHARS": "12000", "WS_MISMATCH_CELLS": "12"}
+KEITH_WSD_ENV = {**KEITH_WS_ENV, "WS_DIRECT_ENABLE": "1", "WS_DIRECT_AFTER_ACTIONS": "40",
+                 "WS_DIRECT_MAX_CALLS": "3", "WS_DIRECT_MAX_PER_GAME": "2", "WS_DIRECT_MAX_TRANSITIONS": "24"}
 ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV, "keith_yield900": KEITH_YIELD900_ENV,
            "keith_retry": KEITH_RETRY_ENV, "keith_evid": KEITH_EVID_ENV, "keith_hypo": KEITH_HYPO_ENV,
-           "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV, "keith_carry": KEITH_CARRY_ENV, "keith_ws": KEITH_WS_ENV}
+           "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV, "keith_carry": KEITH_CARRY_ENV, "keith_ws": KEITH_WS_ENV, "keith_wsd": KEITH_WSD_ENV}
 ARMS = tuple(ARM_ENV)
 # grafts (submission/_throughput_v1/<name>.py, install() -> "<name>: OK") an arm installs in memory
 ARM_GRAFTS = {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",), "keith_hypo": ("graft_hypo",),
-              "keith_probe": ("graft_probe",), "keith_carry": ("graft_carry",), "keith_ws": ("graft_workspace",)}
+              "keith_probe": ("graft_probe",), "keith_carry": ("graft_carry",), "keith_ws": ("graft_workspace",), "keith_wsd": ("graft_workspace",)}
 GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_", "PROBE_", "CARRY_", "WS_")     # every graft flag; scrubbed from the shell for every arm
-GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEYS + CARRY_ENV_KEYS + WS_ENV_KEYS
+GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEYS + CARRY_ENV_KEYS + WSD_ENV_KEYS
 # loss-ledger-3 reference reads for the PROBE gate (docs/research-2026-09-08/R-loss-ledger-3.md, yield900 regime)
 LEDGER3_REFERENCE = {"turns_ge3_analysis_share": 0.15, "wall_actions_ratio_median": 0.72, "yields_per_draw": "27-30",
                      "analysis_call_share": 0.49,
@@ -2395,7 +2403,9 @@ def render_summary(result: dict, telemetry: dict) -> str:
             f"({_fmt(saf.get('live_cap_score_per_game'), 2)}/game over {saf.get('live_cap_runs')} runs; yield900 base {saf.get('base_live_cap_score_per_game')}/game)")
     wsx = agg.get("ws") or {}
     if "graft_workspace" in installed or wsx.get("backtests_total"):
-        knobs = {k: env.get(k) for k in WS_ENV_KEYS if env.get(k) is not None}
+        knobs = {k: env.get(k) for k in WSD_ENV_KEYS if env.get(k) is not None}
+        gsum = {k: sum(((g.get("ws") or {}).get("graft") or {}).get(k) or 0
+                       for g in telemetry.get("per_game", {}).values()) for k in ("direct_attempts", "direct_calls", "direct_green")}
         gate = wsx.get("gate") or {}
         pri = (agg.get("probe") or {}).get("primary") or {}
         saf = (agg.get("probe") or {}).get("safety") or {}
@@ -2412,6 +2422,10 @@ def render_summary(result: dict, telemetry: dict) -> str:
             f"ENGAGED = {'YES' if gate.get('engaged') else 'NO'} "
             f"{{{', '.join(k + ('+' if v.get('ok') else '-') for k, v in gate.items() if isinstance(v, dict))}}} | "
             f"grafts {installed} | flags {knobs}")
+        lines.append(
+            f"  WS-DIRECT attempts {gsum['direct_attempts']} | model-build calls {gsum['direct_calls']} | "
+            f"VERIFIED models handed to the play loop {gsum['direct_green']} | "
+            f"(harness-initiated, model-executed; off unless WS_DIRECT_ENABLE=1)")
         lines.append(
             f"  WS-CONVERT green world models on {wsx.get('green_levels_total')} (run, level) pairs -> level then CLEARED on "
             f"{wsx.get('cleared_after_green_total')} ({_pct(wsx.get('conversion'))}) | backtests/greens per run {per_run}")
