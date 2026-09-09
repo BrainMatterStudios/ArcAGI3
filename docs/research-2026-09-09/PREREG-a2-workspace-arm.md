@@ -122,3 +122,37 @@ never called.
 3. **Stop here on A2** and put the remaining time into Track D (Oct-1 absorption), which the plan calls certain value.
 Recommendation: (1) first, because it is the cheapest test of the one hypothesis Stage-1 left open, and its result
 also tells us whether (2) is worth the port.
+
+## PRE-REGISTERED — arm `keith_wsd` (harness-DIRECTED model building), 2026-09-09 before data
+
+Results 1 and 2 located the gap: not capability (Stage-1: green 20/20 model of dc22's wall in 2-3 calls), not
+discoverability (two conditions, 0 verifier calls in 358 python calls). The model does not ELECT to build a world
+model mid-game. `keith_wsd` = `keith_ws` + `WS_DIRECT_ENABLE=1 WS_DIRECT_AFTER_ACTIONS=40 WS_DIRECT_MAX_CALLS=3
+WS_DIRECT_MAX_PER_GAME=2 WS_DIRECT_MAX_TRANSITIONS=24`: after 40 actions on one uncleared level the harness runs
+the Stage-1 procedure itself and, only on a VERIFIED green model, tells the play loop it exists and how to use it.
+
+**Stated risk, on the record:** this is harness-initiated, and the campaign has FIVE engaged-and-flat replications
+(patch 21, yield900, probe discipline, carry x2) saying harness-forced behaviour does not move levels. The argument
+for why this differs — those forced things the model already did, this directs the one thing it does well and never
+chooses — is plausible, not proven. This kill test is what tests it. Prior: genuinely uncertain, and the most likely
+failure is that a verified model gets handed over and the model still plays the way it always did (conversion 0).
+
+**KILL TEST:** same geometry as every A2 read — `--games cd22,dc22,lf52 --draws 2 --concurrency 3 --max-calls 60
+--per-game-s 7920`, fresh boot, ~$3. Comparators on this geometry: stock base 8 levels / 6 runs; keith_ws control 7;
+keith_ws prompt-fixed 8.
+
+**READS, locked:**
+* **GATE 1 — DID IT FIRE:** directed attempts >= 1 in >= 3 of the 6 runs. If the 40-action trigger rarely fires,
+  the threshold is wrong and the arm is unread (report actions-per-level distribution and re-tune, do not conclude).
+* **GATE 2 — DID IT BUILD:** >= 1 VERIFIED (green) model across the wave. Offline this took 2-3 calls; if the live
+  directed loop produces none in ~6-12 model-build calls, the difference is the live data (self-generated,
+  possibly redundant or mid-level) and that is the thing to fix.
+* **PRIMARY — CONVERSION, the read that decides A2:** among (run, level) pairs where a VERIFIED model was handed to
+  the play loop, how many of those levels the run then CLEARED. >= 1 conversion with levels not worse => carry to a
+  25-game wave. **0 conversions with >= 2 verified models handed over => A2 is DEAD as a step**: the agent can be
+  given a correct, verified, executable model of the wall it is stuck on and still not clear it, which locates the
+  remaining gap in planning/search rather than world-modelling, and Track A moves to A3/A4 + Track D.
+* SAFETY: levels >= 6 (no large regression); GAME_OVERs/run vs 0.87; directed model-build calls counted against the
+  clock (fit-the-clock reported: they are queued model calls, ~150 s each live, so 3 per level is ~6 % of a game).
+* Secondary: best matched/total per directed attempt even when not green; whether the play loop then LOADS the saved
+  model (workspace loads > 0) — a verified model it never opens is a different failure from one it opens and misuses.
