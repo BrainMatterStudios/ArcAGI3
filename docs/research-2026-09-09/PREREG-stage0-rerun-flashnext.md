@@ -67,3 +67,47 @@ prompt to output. Target: prompt ~8k, output ~24k — i.e. sk48 gets the same ro
   (sk48 and cn04) at fair budgets → **tally 1/3, lane stays dead, A2 dead by construction**, Track A goes to A3/A4
   (port NOOA / Polyphony) + Track D.
 * The tn36 green is NOT counted twice: it is the control, already green in both September arms and here.
+
+## RESULT 2026-09-09 — 2 of 3 GREEN ⇒ **THE LANE REOPENS** (pre-registered read)
+
+Flash-Next NVFP4 on the live keith V14 serving profile (kv5, MTP-3, RTX PRO 6000, identity gated), Arm A hex, 2 draws,
+plus the pre-registered sk48 mitigation arm. Total ~55 min GPU, ≈$3. Artifacts + both green files:
+`docs/research-2026-09-09/stage0-flashnext/`.
+
+| game | draw 1 | draw 2 | mitigation (prompt-cap 8000) | best-of-2 | output budget |
+|---|---|---|---|---|---|
+| sk48 | 0/41, no file | 0/41, no file | 0/41, **2 files emitted of 7 calls** | not green | 10.6k → 18.7k |
+| tn36 | **GREEN 12/12** (3 calls, 187 s) | 0/12, no file | — | **GREEN** | 12.5k |
+| cn04 | 0/18, no file | **GREEN 18/18** (11 calls) | — | **GREEN** | 25.3k |
+
+**PRIMARY: 2 of 3 ⇒ the September kill rule is MET ⇒ the executable-world-model lane REOPENS.** Both greens were
+re-verified independently by re-running `backtest.py` on the saved candidates (cn04 `cand_11.py` 18/18 stateful;
+tn36 `cand_03.py` 12/12 stateless), not read off the log.
+
+**The result that matters is cn04, and it is categorical, not marginal.** On Qwen3.8-27B, cn04 produced ZERO candidate
+files across 4 game-runs in 2 encoding arms — the model never reached the emit step, spending 40k-token budgets inside
+`<think>` (67 count/recount passages). Flash-Next emitted **9 candidate files** and converged to a perfect model:
+**0 → 1 → 2 → 1 → 3 → 6 → 9 → 17 → 18/18**, the winning candidate written in 53 s / 8,150 tokens. That is genuine
+iterative induction from backtest feedback, and it is exactly what `R-reopen-audit-0908.md` predicted when it argued
+the original kill was about the 27B's thinking non-termination rather than about the task.
+
+**SECONDARY (emission), the diagnostic the pre-registration named:** the failure mode has changed on BOTH previously
+dark games. 27B: 0 files on sk48 and cn04. Flash-Next: cn04 9 files, sk48 2 files once given a fair budget. "Emits a
+wrong model" replaces "never reaches the emit step".
+
+**HONEST CAVEATS, all recorded before the data:**
+1. **No single draw reached 2/3.** Draw 1 was 1/3, draw 2 was 1/3; the 2/3 is best-of-2 across draws, which is more
+   generous than September's n=1 and must be stated whenever the result is quoted.
+2. **tn36, the control, is only 1/2 here** (green in both September arms at a 40k budget). Its 12.5k budget is tight.
+3. **sk48 is still not green even at a fair budget** (18.7k, 7 calls, 2 files, best 0/41, first mismatch at
+   transition 0). Its 42-transition crane/rope/riding-block physics with a RESET is genuinely beyond one-shot
+   induction on this brain. The confound is resolved, not the game.
+4. **NEW structural finding that bears directly on A2:** on sk48 the iterate-with-feedback loop **self-starves under
+   the 32,768 context** — each round appends (candidate, feedback), so the prompt grew 13.5k → 16.4k → 18.9k and the
+   output budget fell 18.7k → 15.8k → 13.3k across calls. Any A2 design that iterates against a verifier inside this
+   window must budget for that, e.g. by summarising prior candidates instead of appending them.
+
+**IMPLICATION.** A2 (persistent workspace + transition log + `backtest()` + executable model) is no longer a build on
+an untested premise: the deployed brain demonstrably induces a correct executable world model from transitions and
+verifier feedback, on a game the previous brain could not even attempt. The lane is reopened; the constraint to design
+around is the 32k window, not the model's willingness to emit code.
