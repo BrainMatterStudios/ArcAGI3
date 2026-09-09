@@ -253,8 +253,20 @@ def _wstate(agent: Any, state_path: Any = None) -> WsState:
     return st
 
 
-def _game_key(agent: Any, state_path: Any) -> str:
-    sess = getattr(getattr(agent, "_step_env_callback", None), "__self__", None)
+def _game_key(agent: Any, state_path: Any, step_env: Any = None, transcript_path: Any = None) -> str:
+    """The RUN STEM ("<gid>_p<draw>") when we can get it: run_regime_wave keys per-run telemetry by stem,
+    so returning a bare game id would silently orphan every counter. Falls back to the game id, then the
+    runtime dir. `step_env` is passed explicitly from the analyze() wrapper because the stock sets
+    self._step_env_callback only AFTER our wrapper has run."""
+    tp = transcript_path if transcript_path is not None else getattr(getattr(agent, "_ws", None), "transcript_path", None)
+    if tp is not None:
+        try:
+            stem = Path(tp).stem
+            if stem:
+                return stem
+        except Exception:  # noqa: BLE001
+            pass
+    sess = getattr(step_env, "__self__", None) or getattr(getattr(agent, "_step_env_callback", None), "__self__", None)
     try:
         gid = str(sess.game.game_run.game_id or "")
         if gid:
@@ -505,18 +517,35 @@ def install() -> str:
     cls = getattr(agent_mod, "ToolAgent", None)
     if cls is None:
         return "workspace: SKIP (missing ToolAgent)"
-    for n in ("_tools", "_dispatch_tool", "_run_python_tool", "_compact_action_result", "_render_tool_payload",
-              "_ensure_session"):
+    for n in ("analyze", "_tools", "_dispatch_tool", "_run_python_tool", "_compact_action_result",
+              "_render_tool_payload", "_ensure_session"):
         if getattr(cls, n, None) is None:
             return "workspace: SKIP (ToolAgent.%s missing)" % n
     if getattr(agent_mod, "_ToolDispatchResult", None) is None or getattr(agent_mod, "_append_transcript_section", None) is None:
         return "workspace: SKIP (module helpers missing)"
 
+    _STOCK["analyze"] = cls.analyze
     _STOCK["tools"] = cls._tools
     _STOCK["dispatch"] = cls._dispatch_tool
     _STOCK["run_python_tool"] = cls._run_python_tool
     _STOCK["compact"] = cls._compact_action_result
     dispatch_cls = agent_mod._ToolDispatchResult
+
+    def analyze(self, state_path, action_num, valid_actions=None, step_env=None, **kwargs):
+        # the solver passes the real transcript path here; guessing it from state_path is wrong
+        # (the runtime stem is "<run>_tool_runtime_state", not "<run>_state").
+        if enabled():
+            try:
+                st = _wstate(self, state_path)
+                st.agent_mod = agent_mod
+                tp = kwargs.get("transcript_path")
+                if tp is not None:
+                    st.transcript_path = Path(tp)
+                st.game = _game_key(self, state_path, step_env=step_env, transcript_path=st.transcript_path)
+            except Exception:  # noqa: BLE001
+                _error()
+        return _STOCK["analyze"](self, state_path, action_num, valid_actions=valid_actions,
+                                 step_env=step_env, **kwargs)
 
     def _tools(self, state_path):
         tools = _STOCK["tools"](self, state_path)
@@ -580,9 +609,8 @@ def install() -> str:
             st = _wstate(self, state_path)
             st.agent_mod = agent_mod
             st.game = _game_key(self, state_path)
-            sp = Path(state_path)
-            cand = sp.parent.parent / "transcripts" / ("%s.txt" % sp.stem.replace("_state", ""))
-            st.transcript_path = cand if cand.exists() else sp.parent / ("%s_analyzer.txt" % sp.stem)
+            if st.transcript_path is None:
+                st.transcript_path = Path(state_path).parent / ("%s_analyzer.txt" % Path(state_path).stem)
             _bump(st.game, "python_calls")
             if preamble_on() and (st.files or st.log):
                 pre = build_preamble(st.files, st.log, preamble_max_chars())
@@ -602,9 +630,8 @@ def install() -> str:
             st = _wstate(self, state_path)
             st.agent_mod = agent_mod
             st.game = _game_key(self, state_path)
-            sp = Path(state_path)
-            cand = sp.parent.parent / "transcripts" / ("%s.txt" % sp.stem.replace("_state", ""))
-            st.transcript_path = cand if cand.exists() else sp.parent / ("%s_analyzer.txt" % sp.stem)
+            if st.transcript_path is None:
+                st.transcript_path = Path(state_path).parent / ("%s_analyzer.txt" % Path(state_path).stem)
             args = arguments if isinstance(arguments, dict) else {}
             payload = workspace_op(st, args) if name == "workspace" else backtest_op(st, args)
             return dispatch_cls(self._render_tool_payload(payload, truncate_fields=("content", "error", "detail")),
@@ -613,10 +640,12 @@ def install() -> str:
             _error()
             return dispatch_cls(json.dumps({"tool": name, "error": type(exc).__name__}, indent=2), step_executed=False)
 
+    analyze._ws_stock = _STOCK["analyze"]
     _tools._ws_stock = _STOCK["tools"]
     _dispatch_tool._ws_stock = _STOCK["dispatch"]
     _run_python_tool._ws_stock = _STOCK["run_python_tool"]
     _compact_action_result._ws_stock = _STOCK["compact"]
+    cls.analyze = analyze
     cls._tools = _tools
     cls._dispatch_tool = _dispatch_tool
     cls._run_python_tool = _run_python_tool

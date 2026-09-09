@@ -122,7 +122,7 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert (rw.KEITH_ANALYZER_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"], rw.KEITH_ANALYZER_ENV["LOCAL_ANALYZER_MAX_OUTPUT"]) == ("32768", "0")
     assert (rw.FLIGHT_ANALYZER_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"], rw.FLIGHT_ANALYZER_ENV["LOCAL_ANALYZER_MAX_OUTPUT"]) == ("24576", "4096")
     assert rw.ARMS == ("keith", "flight", "keith_yield180", "keith_yield900", "keith_retry", "keith_evid", "keith_hypo", "keith_up8",
-                       "keith_probe", "keith_carry")
+                       "keith_probe", "keith_carry", "keith_ws")
     # the original single-knob arm differs from the keith base on exactly the yield key
     d2 = {k for k in set(rw.KEITH_ANALYZER_ENV) | set(rw.KEITH_YIELD180_ENV)
           if rw.KEITH_ANALYZER_ENV.get(k) != rw.KEITH_YIELD180_ENV.get(k)}
@@ -135,7 +135,8 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert {k: rw.KEITH_RETRY_ENV[k] for k in rw.RETRY_ENV_KEYS} == {
         "RETRY_ENABLE": "1", "RETRY_K": "3", "RETRY_ABS": "200", "RETRY_COOLDOWN": "150", "RETRY_MAX": "2"}
     assert rw.ARM_GRAFTS == {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",),
-                             "keith_hypo": ("graft_hypo",), "keith_probe": ("graft_probe",), "keith_carry": ("graft_carry",)}
+                             "keith_hypo": ("graft_hypo",), "keith_probe": ("graft_probe",),
+                             "keith_carry": ("graft_carry",), "keith_ws": ("graft_workspace",)}
     # 09-08 Track A1: the carry arm differs from keith_yield900 (its base) by exactly the graft's CARRY_* flags
     d5 = {k for k in set(rw.KEITH_YIELD900_ENV) | set(rw.KEITH_CARRY_ENV)
           if rw.KEITH_YIELD900_ENV.get(k) != rw.KEITH_CARRY_ENV.get(k)}
@@ -146,6 +147,14 @@ def test_arms_differ_on_exactly_the_window_keys():
         "CARRY_COMPACT_MAX_TOKENS": "1500", "CARRY_COMPACT_THINKING": "0", "CARRY_MIN_DROP_MSGS": "2"}
     assert rw.KEITH_CARRY_ENV["LOCAL_ANALYZER_YIELD_SECONDS"] == "900" and rw.KEITH_CARRY_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"] == "32768"
     assert "CARRY_" in rw.GRAFT_ENV_PREFIXES and set(rw.CARRY_ENV_KEYS) <= set(rw.GRAFT_FLAG_KEYS)
+    # 09-09 Track A2: the ws arm differs from keith_yield900 by exactly the graft's WS_* flags
+    d6 = {k for k in set(rw.KEITH_YIELD900_ENV) | set(rw.KEITH_WS_ENV)
+          if rw.KEITH_YIELD900_ENV.get(k) != rw.KEITH_WS_ENV.get(k)}
+    assert d6 == set(rw.WS_ENV_KEYS), d6
+    assert rw.KEITH_WS_ENV["WS_ENABLE"] == "1" and rw.KEITH_WS_ENV["LOCAL_ANALYZER_YIELD_SECONDS"] == "900"
+    assert rw.ARM_GRAFTS["keith_ws"] == ("graft_workspace",)
+    assert "WS_" in rw.GRAFT_ENV_PREFIXES and set(rw.WS_ENV_KEYS) <= set(rw.GRAFT_FLAG_KEYS)
+    assert rw.ARMS[-1] == "keith_ws"
     sys.path.insert(0, str(rw.GRAFT_DIR))
     import graft_carry  # noqa: PLC0415
     assert graft_carry.COMPACT_SYSTEM_HEAD == rw.CARRY_COMPACT_HEAD                      # the mock recognises compaction requests
@@ -176,7 +185,7 @@ def test_arms_differ_on_exactly_the_window_keys():
     for arm in ("keith", "flight", "keith_yield180", "keith_yield900", "keith_up8"):
         assert not any(k.startswith(rw.GRAFT_ENV_PREFIXES) for k in rw.ARM_ENV[arm]), arm   # stock arms carry no graft flag
     for arm, prefix in (("keith_retry", "RETRY_"), ("keith_evid", "EVID_"), ("keith_hypo", "HYPO_"), ("keith_probe", "PROBE_"),
-                        ("keith_carry", "CARRY_")):
+                        ("keith_carry", "CARRY_"), ("keith_ws", "WS_")):
         assert all(k.startswith(prefix) for k in rw.ARM_ENV[arm] if k.startswith(rw.GRAFT_ENV_PREFIXES)), arm
 
 
@@ -1733,6 +1742,125 @@ def test_dry_run_keith_carry_arm_end_to_end():
         assert "[HARNESS CARRY]" not in text
         summary = (out / "summary.txt").read_text()
         assert "CARRY  compactions" not in summary.split("\n  run ")[0]
+
+
+WS_TRANSCRIPT = """
+--- analysis_step=1 | action=0 | 10:00:00 | tool-agent ---
+[USER PROMPT]
+Current state: step 1, level 1.
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 3
+[THINKING]
+abc
+[TOOL CALL: backtest]
+{"code": "..."}
+[HARNESS WS]
+[WS-BACKTEST] game=dc22-x_p0 level=2 matched=14/20 green=0 code_chars=3100 ms=420
+[TOOL RESULT: backtest]
+{"matched": 14}
+[MODEL RESPONSE META]
+finish_reason: tool_calls
+tool_call_count: 1
+content_chars: 0
+reasoning_chars: 0
+[TOOL CALL: backtest]
+{"code": "..."}
+[HARNESS WS]
+[WS-BACKTEST] game=dc22-x_p0 level=2 matched=20/20 green=1 code_chars=4200 ms=515
+[HARNESS WS]
+[WS-SAVE] game=dc22-x_p0 name=model.py chars=4200 files=1
+[TOOL RESULT: backtest]
+{"green": true}
+[ANALYZER STATUS]
+step_executed: True
+message: Step executed.
+"""
+
+
+def test_extractor_reads_ws_markers_and_conversion():
+    parsed = rw.parse_transcript(WS_TRANSCRIPT)
+    m = parsed["ws_markers"]
+    assert [b["matched"] for b in m["backtests"]] == [14, 20]
+    assert [b["green"] for b in m["backtests"]] == [False, True]
+    assert m["backtests"][1] == {"turn_index": 0, "level": 2, "matched": 20, "total": 20, "green": True,
+                                 "code_chars": 4200, "ms": 515}
+    assert m["saves"] == [{"turn_index": 0, "name": "model.py", "chars": 4200, "files": 1}]
+    assert [c["reasoning_chars"] for c in parsed["calls"]] == [3, 0]      # META->THINKING adjacency survives
+    # the conversion read: green on level 2, and the run did reach level 2 => converted
+    r = rw.ws_reads(m, levels_completed=2)
+    assert (r["backtests"], r["backtests_green"], r["saves"]) == (2, 1, 1)
+    assert r["green_levels"] == [2] and r["cleared_after_green"] == [2] and r["conversion"] == 1.0
+    assert r["best_by_level"]["2"] == {"matched": 20, "total": 20, "green": True}
+    assert r["best_match_share"] == 1.0 and r["backtest_ms_total"] == 935
+    # a run that verified a model and still never cleared that level => conversion 0
+    r0 = rw.ws_reads(m, levels_completed=1)
+    assert r0["green_levels"] == [2] and r0["cleared_after_green"] == [] and r0["conversion"] == 0.0
+    # pooled + gate
+    tel = rw.telemetry_for_game(WS_TRANSCRIPT, levels_completed=2, number_of_levels=6)
+    tel["game_id"], tel["draw"] = "dc22", 0
+    tel2 = dict(tel); tel2["draw"] = 1
+    agg = rw.aggregate_telemetry({"dc22_p0": tel, "dc22_p1": tel2})["ws"]
+    assert (agg["backtests_total"], agg["backtests_green_total"], agg["backtests_per_game"]) == (4, 2, 2.0)
+    assert agg["runs_with_backtest_share"] == 1.0 and agg["green_share"] == 0.5
+    assert agg["green_levels_total"] == 2 and agg["cleared_after_green_total"] == 2 and agg["conversion"] == 1.0
+    assert agg["gate"]["engaged"] is True
+    # a stock transcript: nothing engaged, no crash
+    agg0 = rw.aggregate_telemetry({"a_p0": {**rw.telemetry_for_game(PROBE_TRANSCRIPT), "game_id": "t", "draw": 0}})["ws"]
+    assert agg0["backtests_total"] == 0 and agg0["gate"]["engaged"] is False and agg0["conversion"] is None
+    # prose mentioning a marker is not a marker
+    assert rw.parse_transcript("see [WS-BACKTEST] game=x level=1 matched=1/1 green=1 code_chars=1 ms=1\n")["ws_markers"]["backtests"] == []
+
+
+def test_dry_run_keith_ws_arm_end_to_end():
+    """The mock answers with real `backtest` and `workspace` tool calls whenever the arm offers them, so the
+    whole path is exercised: tools advertised -> dispatched host-side -> markers in the transcript -> telemetry."""
+    with tempfile.TemporaryDirectory() as tmp:
+        r = subprocess.run([PYTHON, str(HERE / "run_regime_wave.py"), "--dry-run", "--arm", "keith_ws",
+                            "--games", "tu93,ft09,cd82", "--concurrency", "3", "--max-calls", "16",
+                            "--per-game-s", "60", "--wave-cap-s", "150", "--progress-every", "60", "--out", tmp],
+                           capture_output=True, text=True, cwd=str(REPO), timeout=400)
+        assert r.returncode == 0, (r.returncode, r.stderr[-3000:], r.stdout[-3000:])
+        out = list(Path(tmp).glob("*-regime-keith_ws-dry"))[0]
+        res = json.loads((out / "results.json").read_text())
+        tel = json.loads((out / "telemetry.json").read_text())
+        assert res["grafts"]["installed"] == {"graft_workspace": "workspace: OK"}
+        assert res["analyzer_env"]["WS_ENABLE"] == "1" and res["analyzer_env"]["LOCAL_ANALYZER_YIELD_SECONDS"] == "900"
+        st = res["grafts"]["status"]["graft_workspace"]
+        wsx = tel["aggregate"]["ws"]
+        assert st["errors"] == 0 and st["backtests"] > 0 and st["saves"] > 0
+        assert st["transitions_logged"] > 0                       # the log captured real executed actions
+        assert wsx["backtests_total"] == st["backtests"] == res["mock_state"]["ws_backtests"]
+        assert wsx["saves_total"] == st["saves"] == res["mock_state"]["ws_saves"]
+        assert wsx["runs_with_backtest"] == 3 and wsx["gate"]["engaged"] is True
+        # per-run counters are keyed by RUN STEM on both sides, else they orphan
+        assert set(st["per_game"]) == set(tel["per_game"]) == {"tu93-0768757b_p0", "ft09-0d8bbf25_p0", "cd82-fb555c5d_p0"}
+        for stem, g in tel["per_game"].items():
+            text = (out / "transcripts" / f"{stem}.txt").read_text()
+            assert text.count("[HARNESS WS]\n[WS-BACKTEST] game=" + stem) == g["ws"]["backtests"]
+            assert g["ws"]["graft"] is not None
+        summary = (out / "summary.txt").read_text()
+        for line in ("WS     backtests", "ENGAGED = YES {backtests_per_game+, runs_with_backtest_share+}",
+                     "WS-CONVERT green world models on", "WS-PRIMARY levels", "WS-SAFETY GAME_OVERs",
+                     "+ verifier"):
+            assert line in summary, line
+        assert "'WS_ENABLE': '1'" in summary and summary.count("\n") < 50
+        for path in out.rglob("*"):
+            if path.is_file() and path.suffix in (".json", ".txt", ".prom", ".jsonl", ".log"):
+                assert "dry-run-token" not in path.read_text(encoding="utf-8", errors="replace"), path
+    # a stock arm never advertises the tools, so the mock never calls them and no WS lines appear
+    with tempfile.TemporaryDirectory() as tmp:
+        r = subprocess.run([PYTHON, str(HERE / "run_regime_wave.py"), "--dry-run", "--arm", "keith_yield900",
+                            "--games", "tu93", "--concurrency", "1", "--max-calls", "6", "--per-game-s", "20",
+                            "--wave-cap-s", "60", "--progress-every", "60", "--out", tmp],
+                           capture_output=True, text=True, cwd=str(REPO), timeout=400)
+        assert r.returncode == 0, r.stderr[-2000:]
+        out = list(Path(tmp).glob("*-regime-keith_yield900-dry"))[0]
+        res = json.loads((out / "results.json").read_text())
+        assert res["mock_state"]["ws_backtests"] == 0 and res["grafts"]["installed"] == {}
+        assert "WS     backtests" not in (out / "summary.txt").read_text().split("\n  run ")[0]
 
 
 # --- runner -----------------------------------------------------------------

@@ -225,15 +225,23 @@ CARRY_ENV_KEYS = ("CARRY_ENABLE", "CARRY_TARGET_FRACTION", "CARRY_SUMMARY_CHARS"
 KEITH_CARRY_ENV = {**KEITH_YIELD900_ENV, "CARRY_ENABLE": "1", "CARRY_TARGET_FRACTION": "0.5", "CARRY_SUMMARY_CHARS": "4800",
                    "CARRY_INPUT_CHARS": "48000", "CARRY_COMPACT_MAX_TOKENS": "1500", "CARRY_COMPACT_THINKING": "0",
                    "CARRY_MIN_DROP_MSGS": "2"}
+# 09-09 Track A2 (justified by Stage-0/Stage-1, docs/research-2026-09-09/): graft_workspace gives the model a
+# persistent per-game workspace, its own transition log, and a `backtest` verifier as real TOOLS. Differs from
+# keith_yield900 by exactly the WS_* keys. Pre-registration: offkaggle/REGIME_WAVE_STATUS.md.
+WS_ENV_KEYS = ("WS_ENABLE", "WS_MAX_FILES", "WS_MAX_FILE_CHARS", "WS_BACKTEST_TIMEOUT", "WS_LOG_MAX",
+               "WS_PREAMBLE", "WS_PREAMBLE_MAX_CHARS", "WS_MISMATCH_CELLS")
+KEITH_WS_ENV = {**KEITH_YIELD900_ENV, "WS_ENABLE": "1", "WS_MAX_FILES": "12", "WS_MAX_FILE_CHARS": "20000",
+                "WS_BACKTEST_TIMEOUT": "30", "WS_LOG_MAX": "400", "WS_PREAMBLE": "1",
+                "WS_PREAMBLE_MAX_CHARS": "12000", "WS_MISMATCH_CELLS": "12"}
 ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV, "keith_yield900": KEITH_YIELD900_ENV,
            "keith_retry": KEITH_RETRY_ENV, "keith_evid": KEITH_EVID_ENV, "keith_hypo": KEITH_HYPO_ENV,
-           "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV, "keith_carry": KEITH_CARRY_ENV}
+           "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV, "keith_carry": KEITH_CARRY_ENV, "keith_ws": KEITH_WS_ENV}
 ARMS = tuple(ARM_ENV)
 # grafts (submission/_throughput_v1/<name>.py, install() -> "<name>: OK") an arm installs in memory
 ARM_GRAFTS = {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",), "keith_hypo": ("graft_hypo",),
-              "keith_probe": ("graft_probe",), "keith_carry": ("graft_carry",)}
-GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_", "PROBE_", "CARRY_")     # every graft flag; scrubbed from the shell for every arm
-GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEYS + CARRY_ENV_KEYS
+              "keith_probe": ("graft_probe",), "keith_carry": ("graft_carry",), "keith_ws": ("graft_workspace",)}
+GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_", "PROBE_", "CARRY_", "WS_")     # every graft flag; scrubbed from the shell for every arm
+GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEYS + CARRY_ENV_KEYS + WS_ENV_KEYS
 # loss-ledger-3 reference reads for the PROBE gate (docs/research-2026-09-08/R-loss-ledger-3.md, yield900 regime)
 LEDGER3_REFERENCE = {"turns_ge3_analysis_share": 0.15, "wall_actions_ratio_median": 0.72, "yields_per_draw": "27-30",
                      "analysis_call_share": 0.49,
@@ -255,6 +263,10 @@ PROBE_GATE = {"refusals_per_game_min": 1.0, "acted_after_first_refusal_min": 0.5
 # attempts AND no request over the 32,768-token window AND >= 40 % of model calls carry the compacted block
 CARRY_GATE = {"compactions_per_game_min": 1.0, "failure_share_max": 0.10, "prompt_over_window_max": 0,
               "calls_with_summary_share_min": 0.40}
+# pre-registered ENGAGEMENT gate for keith_ws (09-09): the model must actually USE the verifier —
+# >= 1 backtest per game AND >= 50 % of runs making at least one, else the lever is unread (A1's lesson:
+# a channel the model ignores tells you nothing about the idea).
+WS_GATE = {"backtests_per_game_min": 1.0, "runs_with_backtest_share_min": 0.5}
 CARRY_WINDOW_TOKENS = 32768                          # vLLM --max-model-len (KEITH_REGIME.md); usage.prompt_tokens must stay under
 CARRY_COMPACT_HEAD = "You are the same agent that played the turns below"   # == graft_carry.COMPACT_SYSTEM_HEAD (asserted in tests)
 MOCK_COMPACT_SUMMARY = "MOCK-COMPACT-SUMMARY"
@@ -377,6 +389,17 @@ TELEMETRY_DEFINITIONS = {
              "block in the system message, usage prompt/completion tokens) and one '[CARRY-COMPACT]' per compaction "
              "(dropped_msgs, input_chars fed to the compactor, summary_chars, tokens, e2e_s, ok=1|0 + err). carry.graft = "
              "the graft's own counters for the run. prompt_over_window = calls whose usage.prompt_tokens > 32768.",
+    "ws": "graft_workspace reads per run from '[HARNESS WS]' sections: '[WS-BACKTEST] ... level=L matched=m/t "
+          "green=0|1 code_chars=n ms=t' (one per verifier call) and '[WS-SAVE] ... name=f chars=n files=k'. "
+          "best_by_level = the best matched/total seen per level; green_levels = levels where a model reproduced "
+          "EVERY recorded transition; cleared_after_green = those levels the run then actually completed "
+          "(levels_completed >= L). conversion = cleared_after_green / green_levels — the read that decides whether a "
+          "verified model is worth anything: a green model that never becomes a cleared level is A1's engaged-and-flat "
+          "pattern one level up the stack.",
+    "ws_gate": "ENGAGEMENT (pre-registered 09-09): backtests >= 1 per game AND >= 50 % of runs make at least one. "
+               "A1's lesson is that a channel the model ignores tells you nothing about the idea, so an unengaged "
+               "arm is UNREAD, not negative. PRIMARY/co-primary/SAFETY are the standing ones (levels vs 39.33 sd 2.34, "
+               "walls among NEVER6_WALLS, GAME_OVERs vs 0.87, live-cap vs 8.42) plus fit-the-clock including verifier time.",
     "carry_gate": "ENGAGEMENT (pre-registered 09-08): compactions >= 1 per game AND compaction failures <= 10 % of attempts "
                   "AND no call over the 32,768-token window AND >= 40 % of calls carry the block. PRIMARY / co-primary / "
                   "SAFETY are the probe arm's (levels vs 39.33 sd 2.34 with >= 48 step candidate / 45-47 redraw / <= 44 dead; "
@@ -1017,8 +1040,11 @@ def metrics_delta(before: dict | None, after: dict | None, wall_s: float | None)
 
 _TURN_HEADER = r"--- analysis_step=(?P<step>\d+) \| action=(?P<action>\d+) \| (?P<time>\d\d:\d\d:\d\d) \| tool-agent ---"
 _SECTION = (r"\[(?P<label>SYSTEM PROMPT|USER PROMPT|MODEL RESPONSE META|THINKING|ASSISTANT|"
-            r"ANALYZER STATUS|HARNESS CARRY|TOOL CALL: [^\]\n]+|TOOL RESULT: [^\]\n]+)\]")
+            r"ANALYZER STATUS|HARNESS CARRY|HARNESS WS|TOOL CALL: [^\]\n]+|TOOL RESULT: [^\]\n]+)\]")
 # graft_carry markers (one [HARNESS CARRY] section each; written BEFORE the call's [MODEL RESPONSE META])
+_WS_BACKTEST_RE = re.compile(r"^\[WS-BACKTEST\] game=\S+ level=(?P<level>\d+) matched=(?P<m>\d+)/(?P<t>\d+) "
+                             r"green=(?P<green>[01]) code_chars=(?P<cc>\d+) ms=(?P<ms>\d+)$", re.M)
+_WS_SAVE_RE = re.compile(r"^\[WS-SAVE\] game=\S+ name=(?P<name>\S+) chars=(?P<chars>\d+) files=(?P<files>\d+)$", re.M)
 _CARRY_CALL_RE = re.compile(r"^\[CARRY-CALL\] game=\S+ turn=(?P<turn>\d+) req=(?P<req>\d+) msgs=(?P<msgs>\d+) "
                             r"reasoning_msgs=(?P<rmsgs>\d+) reasoning_chars=(?P<rchars>\d+) summary_chars=(?P<schars>\d+) "
                             r"prompt_tokens=(?P<pt>\S+) completion_tokens=(?P<ct>\S+)$", re.M)
@@ -1050,6 +1076,8 @@ def parse_transcript(text: str) -> dict:
     calls: list[dict] = []
     carry_calls: list[dict] = []
     carry_compactions: list[dict] = []
+    ws_backtests: list[dict] = []
+    ws_saves: list[dict] = []
     status_cfg: dict = {}
     for i, (start, end, m) in enumerate(events):
         body_end = events[i + 1][0] if i + 1 < len(events) else len(text)
@@ -1062,6 +1090,16 @@ def parse_transcript(text: str) -> dict:
                           "probe_refusals": 0, "probe_noact": 0, "probe_noact_notice": 0, "carry_compactions": 0})
             continue
         label = m.group("label")
+        if label == "HARNESS WS":
+            for wm in _WS_BACKTEST_RE.finditer(body):
+                ws_backtests.append({"turn_index": len(turns) - 1, "level": int(wm.group("level")),
+                                     "matched": int(wm.group("m")), "total": int(wm.group("t")),
+                                     "green": wm.group("green") == "1", "code_chars": int(wm.group("cc")),
+                                     "ms": int(wm.group("ms"))})
+            for wm in _WS_SAVE_RE.finditer(body):
+                ws_saves.append({"turn_index": len(turns) - 1, "name": wm.group("name"),
+                                 "chars": int(wm.group("chars")), "files": int(wm.group("files"))})
+            continue
         if label == "HARNESS CARRY":
             for cm in _CARRY_CALL_RE.finditer(body):
                 carry_calls.append({"turn_index": len(turns) - 1, "msgs": int(cm.group("msgs")),
@@ -1198,7 +1236,8 @@ def parse_transcript(text: str) -> dict:
                      "noact_notices": sum(t["probe_noact_notice"] for t in turns)}
     return {"turns": turns, "calls": calls, "analyzer_status_config": status_cfg, "retry_markers": retry_markers,
             "aid_markers": aid_markers, "probe_markers": probe_markers, "request_errors": request_errors,
-            "carry_markers": {"calls": carry_calls, "compactions": carry_compactions}}
+            "carry_markers": {"calls": carry_calls, "compactions": carry_compactions},
+            "ws_markers": {"backtests": ws_backtests, "saves": ws_saves}}
 
 
 def _tool_call_code(body: str) -> str:
@@ -1367,6 +1406,41 @@ _CARRY_GRAFT_KEYS = ("calls_total", "calls_with_summary", "reasoning_msgs_total"
                      "compaction_e2e_s", "turns_total")
 
 
+_WS_GRAFT_KEYS = ("python_calls", "transitions_logged", "backtests", "backtests_green", "saves", "loads",
+                  "lists", "deletes", "preambles", "preamble_chars_total", "backtest_ms_total")
+
+
+def ws_reads(ws_markers: dict, *, levels_completed: int | None = None, graft_counters: dict | None = None) -> dict:
+    """graft_workspace reads for one run from the '[HARNESS WS]' markers.
+
+    The read that matters is CONVERSION: a run that verified a green world model on level L and then
+    actually cleared L (levels_completed >= L). A green model that never becomes a cleared level is the
+    same engaged-and-flat pattern A1 died of, just one level up the stack."""
+    bts = list((ws_markers or {}).get("backtests") or [])
+    saves = list((ws_markers or {}).get("saves") or [])
+    greens = [b for b in bts if b.get("green")]
+    best_by_level: dict[int, dict] = {}
+    for b in bts:
+        lv = b.get("level")
+        cur = best_by_level.get(lv)
+        if cur is None or b.get("matched", 0) > cur.get("matched", 0):
+            best_by_level[lv] = {"matched": b.get("matched"), "total": b.get("total"), "green": bool(b.get("green"))}
+    green_levels = sorted({b["level"] for b in greens})
+    cleared_after_green = ([lv for lv in green_levels if levels_completed is not None and levels_completed >= lv]
+                           if green_levels else [])
+    return {
+        "backtests": len(bts), "backtests_green": len(greens), "saves": len(saves),
+        "runs_any_backtest": 1 if bts else 0,
+        "best_match_share": max([(b["matched"] / b["total"]) for b in bts if b.get("total")], default=None),
+        "best_by_level": {str(k): v for k, v in sorted(best_by_level.items())},
+        "green_levels": green_levels, "cleared_after_green": cleared_after_green,
+        "conversion": (len(cleared_after_green) / len(green_levels)) if green_levels else None,
+        "backtest_ms_total": sum(b.get("ms", 0) for b in bts),
+        "code_chars_mean": _div(sum(b.get("code_chars", 0) for b in bts), len(bts)),
+        "graft": {k: (graft_counters or {}).get(k) for k in _WS_GRAFT_KEYS} if graft_counters else None,
+    }
+
+
 def carry_reads(carry_markers: dict, graft_counters: dict | None = None) -> dict:
     """graft_carry mechanism reads for one run (TELEMETRY_DEFINITIONS['carry']) from the transcript markers."""
     calls = list((carry_markers or {}).get("calls") or [])
@@ -1406,7 +1480,7 @@ def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None
                        calls_budget: int | None = None, wave_preemptions: float | None = None,
                        actions_per_level: list | None = None, baselines: list | None = None,
                        graft_counters: dict | None = None, game_overs: int | None = None,
-                       carry_counters: dict | None = None) -> dict:
+                       carry_counters: dict | None = None, ws_counters: dict | None = None) -> dict:
     parsed = parse_transcript(transcript_text)
     calls, turns = parsed["calls"], parsed["turns"]
     turn_levels = [t["level"] for t in turns]
@@ -1458,6 +1532,7 @@ def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None
                              baselines=baselines, levels_completed=levels_completed, number_of_levels=number_of_levels,
                              graft_counters=graft_counters, game_overs=game_overs),
         "carry": carry_reads(parsed["carry_markers"], carry_counters),
+        "ws": ws_reads(parsed["ws_markers"], levels_completed=levels_completed, graft_counters=ws_counters),
     }
     client_errors = sum(1 for r in (shim_records or []) if r.get("error") or (r.get("status") or 0) >= 400)
     tel["wall"] = wall_reads(turns, wall_level=wall_level, levels_completed=levels_completed, calls_budget=calls_budget,
@@ -1529,9 +1604,44 @@ def aggregate_telemetry(per_game: dict[str, dict]) -> dict:
         "wall": _pooled_wall(games),
         "probe": _pooled_probe(games),
         "carry": _pooled_carry(games),
+        "ws": _pooled_ws(games),
         "first_call_prompt_tokens": _stats([g["first_call_prompt_tokens"] for g in games
                                             if g.get("first_call_prompt_tokens") is not None]),
     }
+
+
+def _pooled_ws(games: list[dict]) -> dict:
+    """Pooled graft_workspace reads + the pre-registered ENGAGEMENT gate (WS_GATE)."""
+    rs = [g.get("ws") or {} for g in games]
+    n = len(rs)
+    bt = sum(r.get("backtests", 0) for r in rs)
+    gr = sum(r.get("backtests_green", 0) for r in rs)
+    any_bt = sum(r.get("runs_any_backtest", 0) for r in rs)
+    gl = [lv for r in rs for lv in (r.get("green_levels") or [])]
+    cl = [lv for r in rs for lv in (r.get("cleared_after_green") or [])]
+    shares = [r["best_match_share"] for r in rs if r.get("best_match_share") is not None]
+    out = {
+        "backtests_total": bt, "backtests_per_game": (bt / n) if n else None,
+        "backtests_green_total": gr, "green_share": _share(gr, bt),
+        "runs_with_backtest": any_bt, "runs_with_backtest_share": _share(any_bt, n),
+        "saves_total": sum(r.get("saves", 0) for r in rs),
+        "runs_with_green": sum(1 for r in rs if r.get("green_levels")),
+        "green_levels_total": len(gl), "cleared_after_green_total": len(cl),
+        "conversion": _share(len(cl), len(gl)),
+        "best_match_share_mean": (sum(shares) / len(shares)) if shares else None,
+        "backtest_seconds_total": sum(r.get("backtest_ms_total", 0) for r in rs) / 1000.0,
+        "code_chars_mean": _div(sum((r.get("code_chars_mean") or 0) * r.get("backtests", 0) for r in rs), bt),
+    }
+    gate = {
+        "backtests_per_game": {"value": out["backtests_per_game"], "min": WS_GATE["backtests_per_game_min"],
+                               "ok": out["backtests_per_game"] is not None and out["backtests_per_game"] >= WS_GATE["backtests_per_game_min"]},
+        "runs_with_backtest_share": {"value": out["runs_with_backtest_share"], "min": WS_GATE["runs_with_backtest_share_min"],
+                                     "ok": out["runs_with_backtest_share"] is not None
+                                     and out["runs_with_backtest_share"] >= WS_GATE["runs_with_backtest_share_min"]},
+    }
+    gate["engaged"] = bool(all(v["ok"] for v in gate.values() if isinstance(v, dict)))
+    out["gate"] = gate
+    return out
 
 
 def _pooled_carry(games: list[dict]) -> dict:
@@ -1717,7 +1827,8 @@ _STEM_RE = re.compile(r"^(?P<gid>.+)_p(?P<draw>\d+)\.txt$")
 
 def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: list[dict], *,
                     calls_budget: int | None = None, wave_preemptions: float | None = None,
-                    graft_per_game: dict | None = None, carry_per_game: dict | None = None) -> dict:
+                    graft_per_game: dict | None = None, carry_per_game: dict | None = None,
+                    ws_per_game: dict | None = None) -> dict:
     """Per-run + pooled telemetry from <out>/transcripts/<gid>_p<draw>.txt, the
     benchmark rows (actions, wallclock, levels) and the client shim records.
     per_game is keyed by run stem (<gid>_p<draw>; one entry per game per draw).
@@ -1750,7 +1861,8 @@ def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: 
                                  actions_per_level=row.get("actions_per_level"), baselines=row.get("baselines"),
                                  graft_counters=(graft_per_game or {}).get(stem),
                                  game_overs=game_overs_from_events(events_path) if events_path.is_file() else None,
-                                 carry_counters=(carry_per_game or {}).get(stem))
+                                 carry_counters=(carry_per_game or {}).get(stem),
+                                 ws_counters=(ws_per_game or {}).get(stem))
         tel["game_id"] = gid
         tel["draw"] = draw
         tel["levels_completed"] = row.get("levels_completed")
@@ -1850,7 +1962,7 @@ class MockVLLM:
         self.state = {"calls": 0, "redirected": 0, "poll_with_auth": 0, "poll_without_auth": 0,
                       "prompt_tokens": 0, "generation_tokens": 0, "e2e_sum": 0.0,
                       "unauthorized": 0, "stop": 0, "tool_calls": 0, "analysis_calls": 0, "sentinel_calls": 0,
-                      "compactions": 0}
+                      "compactions": 0, "ws_backtests": 0, "ws_saves": 0}
         self.pending: dict[str, bytes] = {}
         mock = self
 
@@ -1978,6 +2090,30 @@ class MockVLLM:
                     "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
                     "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": 40, "total_tokens": prompt_tokens + 40}}
             return json.dumps(body).encode()
+        offered = {((t.get("function") or {}).get("name")) for t in (payload.get("tools") or [])}
+        if "backtest" in offered and k % 4 in (1, 2):
+            # exercise the graft_workspace tools end to end in the dry run (the real model chooses freely)
+            if k % 4 == 1:
+                fn = {"name": "backtest", "arguments": json.dumps(
+                    {"code": "def step(grid, action, x, y):\n    return grid, {}\n"})}
+                with self.lock:
+                    self.state["ws_backtests"] += 1
+            else:
+                fn = {"name": "workspace", "arguments": json.dumps(
+                    {"op": "save", "name": "model.py", "content": "# candidate\ndef step(g,a,x,y):\n    return g,{}\n"})}
+                with self.lock:
+                    self.state["ws_saves"] += 1
+            message = {"role": "assistant", "content": "Testing a mechanics hypothesis.", "reasoning": reasoning,
+                       "tool_calls": [{"id": f"call-{k}", "type": "function", "function": fn}]}
+            completion_tokens = len(reasoning) // 4 + 60
+            with self.lock:
+                self.state["prompt_tokens"] += prompt_tokens
+                self.state["generation_tokens"] += completion_tokens
+                self.state["tool_calls"] += 1
+            return json.dumps({"id": f"chatcmpl-mock-{k}", "object": "chat.completion", "model": self.served_model,
+                               "choices": [{"index": 0, "message": message, "finish_reason": "tool_calls"}],
+                               "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+                                         "total_tokens": prompt_tokens + completion_tokens}}).encode()
         if k % 7 == 3:
             content = "World model: still exploring. Plan: inspect the segmentation next."
             message = {"role": "assistant", "content": content, "reasoning": reasoning}
@@ -2257,6 +2393,42 @@ def render_summary(result: dict, telemetry: dict) -> str:
             f"  PROBE-SAFETY GAME_OVERs {saf.get('game_overs_total')} ({_fmt(saf.get('game_overs_per_run'), 2)}/run over {saf.get('game_overs_runs')} runs; "
             f"yield900 base {saf.get('base_game_overs_per_run')}) | live-cap score {_fmt(saf.get('live_cap_score_total'), 2)} "
             f"({_fmt(saf.get('live_cap_score_per_game'), 2)}/game over {saf.get('live_cap_runs')} runs; yield900 base {saf.get('base_live_cap_score_per_game')}/game)")
+    wsx = agg.get("ws") or {}
+    if "graft_workspace" in installed or wsx.get("backtests_total"):
+        knobs = {k: env.get(k) for k in WS_ENV_KEYS if env.get(k) is not None}
+        gate = wsx.get("gate") or {}
+        pri = (agg.get("probe") or {}).get("primary") or {}
+        saf = (agg.get("probe") or {}).get("safety") or {}
+        per_run = {stem: f"{(g.get('ws') or {}).get('backtests', 0)}/{(g.get('ws') or {}).get('backtests_green', 0)}"
+                   for stem, g in sorted(telemetry.get("per_game", {}).items())}
+        lines.append(
+            f"  WS     backtests {wsx.get('backtests_total')} ({_fmt(wsx.get('backtests_per_game'), 2)}/game; gate >= "
+            f"{WS_GATE['backtests_per_game_min']:g}) in {wsx.get('runs_with_backtest')}/{tot.get('games')} runs "
+            f"({_pct(wsx.get('runs_with_backtest_share'))}; gate >= {_pct(WS_GATE['runs_with_backtest_share_min'])}) | "
+            f"GREEN models {wsx.get('backtests_green_total')} ({_pct(wsx.get('green_share'))} of backtests) in "
+            f"{wsx.get('runs_with_green')} runs | best match share mean {_pct(wsx.get('best_match_share_mean'))} | "
+            f"saves {wsx.get('saves_total')} | model size mean {_fmt(wsx.get('code_chars_mean'), 0)} chars | "
+            f"verifier time {_fmt(wsx.get('backtest_seconds_total'), 0)} s total | "
+            f"ENGAGED = {'YES' if gate.get('engaged') else 'NO'} "
+            f"{{{', '.join(k + ('+' if v.get('ok') else '-') for k, v in gate.items() if isinstance(v, dict))}}} | "
+            f"grafts {installed} | flags {knobs}")
+        lines.append(
+            f"  WS-CONVERT green world models on {wsx.get('green_levels_total')} (run, level) pairs -> level then CLEARED on "
+            f"{wsx.get('cleared_after_green_total')} ({_pct(wsx.get('conversion'))}) | backtests/greens per run {per_run}")
+        delta = pri.get("delta_vs_base")
+        lines.append(
+            f"  WS-PRIMARY levels {pri.get('levels_total')} over {pri.get('games')} runs / {pri.get('draws')} draw(s) = "
+            f"{_fmt(pri.get('levels_per_draw'), 1)}/draw vs pooled six-draw base {pri.get('base_levels_mean')} "
+            f"(sd {pri.get('base_levels_sd')}) -> delta {('%+.1f' % delta) if delta is not None else '-'} "
+            f"({('%+.2f' % (delta / pri['base_levels_sd'])) if delta is not None else '-'} sd; 25-game waves only; "
+            f">= 48 step candidate, 45-47 redraw, <= 44 dead) | never-passed walls {pri.get('walls_passed_n')}/"
+            f"{pri.get('walls_total')} passed {pri.get('walls_passed')} (present: {len(pri.get('walls_present') or [])}; target >= 3)")
+        lines.append(
+            f"  WS-SAFETY GAME_OVERs {saf.get('game_overs_total')} ({_fmt(saf.get('game_overs_per_run'), 2)}/run; base "
+            f"{saf.get('base_game_overs_per_run')}) | live-cap {_fmt(saf.get('live_cap_score_per_game'), 2)}/game (base "
+            f"{saf.get('base_live_cap_score_per_game')}) | fit-the-clock: calls/game {_fmt(agg.get('calls_per_game'))} x e2e "
+            f"{_fmt(ce.get('mean'))} s = {_fmt((agg.get('calls_per_game') or 0) * (ce.get('mean') or 0), 0)} s "
+            f"+ verifier {_fmt((wsx.get('backtest_seconds_total') or 0) / max(1, tot.get('games') or 1), 0)} s/game vs 7920 s")
     ca = agg.get("carry") or {}
     if "graft_carry" in installed or ca.get("compactions_total") or ca.get("calls_marked"):
         knobs = {k: env.get(k) for k in CARRY_ENV_KEYS if env.get(k) is not None}
@@ -2510,9 +2682,11 @@ class Wave:
         self.result["grafts"]["status"] = graft_status(self.arm)   # the graft's own counters (retry_log, skips, ...)
         probe_per_game = (self.result["grafts"]["status"].get("graft_probe") or {}).get("per_game")
         carry_per_game = (self.result["grafts"]["status"].get("graft_carry") or {}).get("per_game")
+        ws_per_game = (self.result["grafts"]["status"].get("graft_workspace") or {}).get("per_game")
         telemetry = build_telemetry(self.out_dir / "transcripts", rows, shim_records,
                                     calls_budget=self.max_calls, wave_preemptions=md.get("preemptions"),
-                                    graft_per_game=probe_per_game, carry_per_game=carry_per_game)
+                                    graft_per_game=probe_per_game, carry_per_game=carry_per_game,
+                                    ws_per_game=ws_per_game)
         self.result["max_calls_stops"] = dict(_MAX_CALLS.get("stops") or {})
         self.result["concurrency_override"] = self.concurrency != GEOMETRY["concurrency"]
         telemetry["arm"] = self.arm

@@ -109,14 +109,28 @@ class WsTests(unittest.TestCase):
         agent._ensure_session(self.state_path)
         agent._step_env_callback = sess.step_env
         agent._current_valid_actions = ["UP"]
-        ws._wstate(agent, self.state_path)
-        return agent._ws
+        st = ws._wstate(agent, self.state_path)
+        st.transcript_path = self.transcript      # in production analyze() sets this from the solver's kwarg
+        return st
 
     # 01 -----------------------------------------------------------------
     def test_01_install(self):
         self.assertIn(self.status, {"workspace: OK", "workspace: SKIP (already applied)"})
-        for n in ("_tools", "_dispatch_tool", "_run_python_tool", "_compact_action_result"):
+        for n in ("analyze", "_tools", "_dispatch_tool", "_run_python_tool", "_compact_action_result"):
             self.assertTrue(hasattr(getattr(self.agent_mod.ToolAgent, n), "_ws_stock"), n)
+
+    def test_01b_analyze_supplies_the_real_transcript_path(self):
+        """Regression: the runtime stem is '<run>_tool_runtime_state', so guessing the transcript path
+        from state_path silently wrote every marker into the wrong file (found in the first dry run)."""
+        agent = self._agent()
+        sess = _FakeSession(self.runtime_mod, self.state_path)
+        reply = self.agent_mod._ChatCompletionResult(message={"role": "assistant", "content": "hi"},
+                                                     finish_reason="stop", usage={})
+        with mock.patch.object(self.agent_mod.ToolAgent, "_chat_completion", return_value=reply):
+            agent.analyze(self.state_path, 0, valid_actions=["UP"], step_env=sess.step_env,
+                          transcript_path=self.transcript, analysis_step=1)
+        self.assertEqual(agent._ws.transcript_path, self.transcript)
+        self.assertEqual(agent._ws.game, "dc22-test_p0")   # run stem: run_regime_wave keys per-run telemetry by it
 
     # 02 -----------------------------------------------------------------
     def test_02_flag_off_is_stock(self):
@@ -182,7 +196,7 @@ class WsTests(unittest.TestCase):
         self.assertEqual(res2["first_mismatch"]["kind"], "grid")
         self.assertEqual(res2["best_so_far"], "3/3")            # best is remembered across calls
         text = self.transcript.read_text()
-        self.assertIn("[WS-BACKTEST] game=dc22-test level=1 matched=3/3 green=1", text)
+        self.assertIn("[WS-BACKTEST] game=dc22-test_p0 level=1 matched=3/3 green=1", text)
         s = ws.status()
         self.assertEqual((s["backtests"], s["backtests_green"]), (2, 1))
 
@@ -201,7 +215,7 @@ class WsTests(unittest.TestCase):
         os.environ["WS_MAX_FILES"] = "1"
         d({"op": "save", "name": "a", "content": "1"})
         self.assertIn("error", d({"op": "save", "name": "b", "content": "2"}))
-        self.assertIn("[WS-SAVE] game=dc22-test name=m.py chars=8", self.transcript.read_text())
+        self.assertIn("[WS-SAVE] game=dc22-test_p0 name=m.py chars=8", self.transcript.read_text())
 
     # 07 -----------------------------------------------------------------
     def test_07_preamble_injected(self):
