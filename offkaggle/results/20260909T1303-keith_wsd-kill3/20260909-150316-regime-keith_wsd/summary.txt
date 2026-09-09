@@ -1,0 +1,28 @@
+REGIME WAVE  arm=keith_wsd  status=done  dry_run=False  games=6  wall=1.23 h
+  endpoint https://a-m-mobasher--arc3-flashnext-serve.modal.run/v1  model Qwen/Qwen3.8-Flash-Next-NVFP4
+  IDENTITY profile 'kv5-bf16-mtp3-c8-cg32' (expected 'kv5-bf16-mtp3-c8-cg32', ok=True) | gpu ok=True ['0, NVIDIA RTX PRO 6000 Blackwell Server Edition, 97887 MiB, 580.95.05, 12.0']
+  geometry conc 3 | 7920 s/game | analyzer_timeout 900 | max_actions None | max_calls 60 | wave cap 9000 s | public25 geometry: False
+  stock agent sha 74ab69105240 (== june_stock pin) | framework f68b6850b242 | pkls pinned
+  ARM KNOB  CONTEXT_WINDOW=32768  MAX_OUTPUT=0  UPSCALE=4 ([256, 256] px, ~64 vision tok/img derived)  (yield 900 s, temp 0.6/0.95/20, thinking true); harness-reported {'max_output_tokens': 'server default', 'context_budget_tokens': '31744', 'yield_seconds': '900.0'}
+  SCORE 4.96 total | levels 8 (1.33/game) | actions 841 (140/game) | zero-level games 0 | states {'gave_up': 6}
+  CADENCE calls/game 56.0 | turns/game 36.0 | distinct steps/game 36.0 | actions/call 2.50 | calls/turn 1.56
+  REASONING chars/call mean 2752 median 2059 p90 6345 (n=336) | no-tool-call share - | length-finish share - | finish {'tool_calls': 336}
+  TURNS step-executed 97.2% | yielded 2.8% | outcomes {'step_executed': 210, 'yielded': 6}
+  CLIENT e2e/call mean 30.0 s median 12.2 s p90 38.6 s | prompt tok/call 19575 | completion tok/call 2735 | redirected posts 24 | post errors 0
+  VLLM   requests 360 | e2e mean 28.8 s | queue 0.0 s | inference 28.7 s | TPOT 10.1 ms | gen tok/req 2735 | gen tok/s 222 | MTP accept 56.9% | preemptions 0 | prefix hit - | finished {'abort': 0.0, 'error': 0.0, 'length': 24.0, 'repetition': 0.0, 'stop': 336.0}
+  REF keith V14 commit: 55 calls/game, reasoning 3406/2206, 53 turns/game, e2e 142 s, queue 124 s, MTP 60%, 1.44 lv/game, 6.76 pts
+  WS     backtests 0 (0.00/game; gate >= 1) in 0/6 runs (0.0%; gate >= 50.0%) | GREEN models 0 (- of backtests) in 0 runs | best match share mean - | saves 2 | model size mean - chars | verifier time 0 s total | ENGAGED = NO {backtests_per_game-, runs_with_backtest_share-} | grafts {'graft_workspace': 'workspace: OK'} | flags {'WS_ENABLE': '1', 'WS_MAX_FILES': '12', 'WS_MAX_FILE_CHARS': '20000', 'WS_BACKTEST_TIMEOUT': '30', 'WS_LOG_MAX': '400', 'WS_PREAMBLE': '1', 'WS_PREAMBLE_MAX_CHARS': '12000', 'WS_MISMATCH_CELLS': '12', 'WS_DIRECT_ENABLE': '1', 'WS_DIRECT_AFTER_ACTIONS': '40', 'WS_DIRECT_MAX_CALLS': '3', 'WS_DIRECT_MAX_PER_GAME': '2', 'WS_DIRECT_MAX_TRANSITIONS': '12', 'WS_DIRECT_MAX_CELLS': '60'}
+  WS-DIRECT fired on 8 (run, level) pairs in 6/6 runs | model-build calls 24 (no-code 24, call-failed 0) | VERIFIED models handed to the play loop 0 | best match 0.0% | **CONVERSION 0/0 (-)** = verified-model levels the run then CLEARED
+  WS-CONVERT green world models on 0 (run, level) pairs -> level then CLEARED on 0 (-) | backtests/greens per run {'cd82-fb555c5d_p0': '0/0', 'cd82-fb555c5d_p1': '0/0', 'dc22-fdcac232_p0': '0/0', 'dc22-fdcac232_p1': '0/0', 'lf52-271a04aa_p0': '0/0', 'lf52-271a04aa_p1': '0/0'}
+  WS-PRIMARY levels 8 over 6 runs / 2 draw(s) = 4.0/draw vs pooled six-draw base 39.33 (sd 2.34) -> delta -35.3 (-15.10 sd; 25-game waves only; >= 48 step candidate, 45-47 redraw, <= 44 dead) | never-passed walls 1/12 passed ['lf52'] (present: 2; target >= 3)
+  WS-SAFETY GAME_OVERs 1 (0.17/run; base 0.87) | live-cap 5.42/game (base 8.42) | fit-the-clock: calls/game 56.0 x e2e 30.0 s = 1678 s + verifier 0 s/game vs 7920 s
+  WALL   attempts 6/6 (L2 reached 6; attempt = L2 with >= 30 calls left) | passes 2 (level 3 reached) | void 0 {} | calls@L2 {'cd82-fb555c5d_p0': 26, 'cd82-fb555c5d_p1': 30, 'dc22-fdcac232_p0': 14, 'dc22-fdcac232_p1': 15, 'lf52-271a04aa_p0': 14, 'lf52-271a04aa_p1': 19} | UPTAKE wall 0.0% (0/95) all 0.0%
+  FIRST-CALL prompt_tokens (n_messages==2) mean 4590 n=6 [4590..4591] | keith baseline ~4050 | delta +540 | UPSCALE=4: up8 expects ≈ +192 (+0 => processor downscaled = no-op; >> => geometry differs)
+  DRAWS 2 | levels per (game, draw): {'cd82-fb555c5d': [1, 1], 'dc22-fdcac232': [1, 1], 'lf52-271a04aa': [2, 2]}
+  run               lv/n    act  calls turns reas_mean  len%  notool%  e2e_s   score  retry probe wall/b  evid  hypo  wall%  upt%  c@L2 att void  state
+  cd82-fb555c5d_p0    1/6    169    54    42      3001      -       -   39.0    4.59    0/0   0/0  14.12     0     0   0.0%  0.0%    26   Y    -  gave_up
+  cd82-fb555c5d_p1    1/6    104    57    39      2675      -       -   24.8    4.76    0/0   0/0   6.75     0     0   0.0%  0.0%    30   Y    -  gave_up
+  dc22-fdcac232_p0    1/6    140    57    29      3165      -       -   30.5    4.76    0/0   0/0   0.99     0     0   0.0%  0.0%    14   Y    -  gave_up
+  dc22-fdcac232_p1    1/6    135    57    31      3332      -       -   29.3    4.76    0/0   0/0   0.93     0     0   0.0%  0.0%    15   Y    -  gave_up
+  lf52-271a04aa_p0   2/10    116    57    35      1840      -       -   23.1    5.45    0/0   0/0   0.28     0     0   0.0%  0.0%    14   Y    -  gave_up
+  lf52-271a04aa_p1   2/10    177    54    40      2496      -       -   33.0    5.45    0/0   0/0   1.25     0     0   0.0%  0.0%    19   Y    -  gave_up

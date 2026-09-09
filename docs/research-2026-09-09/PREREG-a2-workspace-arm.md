@@ -216,3 +216,40 @@ Measured on the real dc22L2 transitions: 24/300 renders ~3,846 tokens, 12/60 ren
 
 Same geometry as every A2 read: `--games cd82,dc22,lf52 --draws 2 --concurrency 3 --max-calls 60 --per-game-s 7920`,
 fresh boot, ≈$3. Running total on A2 after this: ≈$12.
+
+## RESULT 4 2026-09-09 — `keith_wsd` pass 2: window hit, still 0 models ⇒ **HARD STOP APPLIED, A2 → FALLBACK**
+
+Wave `offkaggle/results/20260909T1303-keith_wsd-kill3` (fresh boot, identity ok, 1.23 h, ≈$4, 0 errors, 0 preemptions).
+
+**The parameter change did exactly what the arithmetic said, and it changed nothing.**
+
+| | pass 1 | pass 2 | Stage-1 greens |
+|---|---|---|---|
+| directed prompt | 11.0-14.8k | **5.7-11.6k** | 7,123 |
+| output available | 18.0-21.8k | **21.2-27.1k** | ~25k |
+| verified models | 0 of 15 | **0 of 24** | green in 2-3 calls |
+
+GATE 1 passed even more strongly than before: fired on **8 (run, level) pairs in 6 of 6 runs**. GATE 2 failed:
+**24 model-build calls, 24 no-code, 0 verified models**, 5,016 s of GPU. Every call ended `finish=length` having
+spent 21-27k tokens inside `<think>` without emitting a fence. CONVERSION remains unanswerable.
+Levels 8 (= base), zero-level games 0, GAME_OVERs 0.17/run (base 0.87), 1 of the 2 never-passed walls present passed.
+
+**The pre-registered hard stop applies: A2 goes to the fallback, with no fourth tuning pass.** Three passes, and the
+decisive one put the live directed build inside the exact prompt/output window where the identical procedure went
+green offline in 2-3 calls. The window was never the explanation.
+
+**WHAT IS ESTABLISHED, AND WHAT IS NOT.** Established: (a) the brain builds correct verified executable world models
+offline from our own stuck-at-a-wall transitions, reproducibly (Stage-1, 4/4 green); (b) live, inside the duck loop,
+it will not elect to use a verifier (0 calls in 358, two discoverability conditions) and will not produce a file even
+when the harness directs it with the same data, same contract, same verifier and the same token window (0 of 24);
+(c) so the offline result does not transfer into this loop, and the failure is in the LOOP, not the brain and not the
+tooling. NOT established, and now unanswerable by this route: whether a verified model would convert into cleared
+levels. A2's central question dies untested.
+
+**A plausible mechanism for the offline/online gap, recorded but NOT tested** (it would be a fourth pass): offline
+each build was a fresh, dedicated process whose entire context was the task; live, the directed call is issued from
+inside a long-running agent whose habits, notes and 30+ turns of play history dominate its behaviour, and it appears
+to reason like a player rather than a modeller no matter what the system prompt of that one call says.
+
+**A2 CLOSED. Fallback per the plan: A3/A4 (port NOOA or Polyphony — loops in which model-building is structural
+rather than an optional detour) plus Track D (Oct-1 absorption).** A2 total ≈$13 over 5 runs.
