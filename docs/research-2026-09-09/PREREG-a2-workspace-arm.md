@@ -48,3 +48,33 @@ levels is only a safety check.
 **Prior, stated before data:** engagement is the real risk, not capability — Stage-1 settled capability. The
 honest expectation is that a first live arm gets partial uptake and few greens, and that the first result is a
 discoverability fix rather than a verdict on A2.
+
+## RESULT 1 (CONTROL) 2026-09-09 — `keith_ws` pre-prompt-fix: ENGAGEMENT FAILED ⇒ **UNREAD, not refuted**
+
+Wave `offkaggle/results/20260909T0804-keith_ws-kill` (fresh boot, identity ok, 0.59 h, ≈$2.5, 0 errors,
+0 preemptions, 0 length-finishes).
+
+**GATE 1 ENGAGEMENT: FAILED.** 360 model calls, **0 backtests in 0 of 6 runs** (gate: >= 1/game and >= 50 % of
+runs), 1 workspace save. GATE 2 (>= 1 green model) unreachable in consequence. Per the pre-registration this makes
+the arm **UNREAD, not refuted**: the model never exercised the capability, so nothing was learned about A2's idea.
+SAFETY fine: levels **7 vs the base's 8**, zero-level games 0, GAME_OVERs 0.83/run vs 0.87, no VOIDs.
+
+**CAUSE FOUND, and it is in the stock prompts rather than the model.** Both tools were correctly advertised in the
+schema on every request (verified in the prompt logs and the shim), but the stock prompt asserts the opposite:
+* `prompts.py:82` (system): "- The only tool is `python`; call it with one ephemeral `code` string."
+* `tool_agent.py:1223` (USER prompt, re-sent EVERY turn — **44 times** in one 60-call run):
+  "Only tool: `python`. It receives ..."
+The harness told the model the capability did not exist while the schema offered it. The single workspace save
+across 360 calls is the model noticing the schema in spite of the prompt, which is the shape one expects.
+
+**FIX (committed eb71df3, in the graft only, flag-gated):** when WS is enabled both strings are rewritten to name
+all three tools; flag-off leaves both stock, and a missing string is a recorded skip rather than an error so a
+bundle change degrades quietly. The replacement ends "`python`." so the stock sentence that follows still reads
+correctly (a grammar break the test caught). test_graft_workspace 12/12 both bundles, runner 32/32.
+
+**RESULT 2 = the same kill test with the fix**, everything else identical (same games, draws, geometry, seed-free
+sampling). That pair isolates discoverability: the control above is the zero-uptake baseline. Reads unchanged —
+GATE 1 engagement, GATE 2 >= 1 green model, SAFETY levels >= 6. If engagement now passes, the arm becomes readable
+and the wave decision follows the pre-registered wave reads; if it still fails with the prompt corrected, the
+model is declining a capability it has been plainly told about, which IS a real (and much more interesting)
+negative about A2 rather than an instrument artefact.
