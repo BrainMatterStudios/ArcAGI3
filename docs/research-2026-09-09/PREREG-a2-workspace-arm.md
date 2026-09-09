@@ -156,3 +156,42 @@ keith_ws prompt-fixed 8.
   clock (fit-the-clock reported: they are queued model calls, ~150 s each live, so 3 per level is ~6 % of a game).
 * Secondary: best matched/total per directed attempt even when not green; whether the play loop then LOADS the saved
   model (workspace loads > 0) — a verified model it never opens is a different failure from one it opens and misuses.
+
+## RESULT 3 2026-09-09 — `keith_wsd` directed build: GATE 1 PASSED, **GATE 2 FAILED** (0 models in 15 calls)
+
+Two runs: `20260909T1128` ABORTED by me after 12 min (~$1) on an instrument fault — the entry grid was rendered as
+space-separated ints, putting cd82's prompt at 27,999 tokens with 4,769 left for output. Fixed to the Stage-0 hex
+encoding (a full 64x64 grid + 24 transitions now renders in ~1.8k tokens, with a test asserting < 12k).
+`20260909T1146-keith_wsd-kill2` is the real read (0.88 h, ≈$3, 0 errors, 0 preemptions).
+
+* **GATE 1 — DID IT FIRE: PASSED.** 5 (run, level) pairs in **5 of 6 runs** (cd82 L1 and L3, dc22 L1 and L2, lf52 L2).
+  The 40-action threshold is right; the trigger is not the problem.
+* **GATE 2 — DID IT BUILD: FAILED. 0 verified models in 15 model-build calls — 15/15 `no_code`.** Every call ended
+  `finish=length` having spent its whole output budget reasoning: prompts 11.0-14.8k, output 18.0-21.8k, ~200-240 s
+  each, **2,824 s of GPU** total across the wave.
+* **PRIMARY (conversion): unreachable.** Nothing was ever handed to the play loop, so A2's deciding question is
+  still unanswered.
+* SAFETY: levels 7 (base 8, keith_ws 7-8), zero-level games 1, GAME_OVERs 1.00/run vs 0.87. The 2,824 s tax bought
+  nothing; in live 25-game geometry those would be queued ~150 s calls, i.e. ~19 play calls per game surrendered.
+
+**DIAGNOSIS, and it is a narrow operating window I had not identified.** Stage-1's greens came from a **7,123-token
+prompt with ~25k output**. Live, the same procedure sees 11-15k prompts (self-generated transitions have far denser
+changed-cell lists than the curated 20-transition slice) and therefore 18-22k output, and at that ratio the model
+reliably overruns its budget inside `<think>` — the exact Stage-0 hard-game failure mode. So the directed build is
+not refuted as an idea; the implementation is outside the window where the brain can do it.
+
+**HONEST ACCOUNTING.** Four A2 runs so far: control (unread — stock prompt said python was the only tool), prompt-fixed
+(unread — model will not elect to build), directed v1 (aborted — my int encoding), directed v2 (fires, cannot build —
+my prompt/output ratio). Three of the four were faults in my instrument, not facts about A2, and the pre-registered
+gates are the only reason that is visible rather than a tidy false story about the idea failing. Total ≈$9.
+
+**DECISION (Ahmed's; nothing started).**
+1. **One more parameter pass, ~$3:** `WS_DIRECT_MAX_TRANSITIONS` 24 -> 12 and a hard changed-cell cap (~60/transition)
+   to land the prompt near 6-7k and output near 25k — Stage-1's proven window. This is a one-line change to an arm
+   that already fires reliably, and it is the only untested version of the hypothesis. Risk: a fourth instrument
+   iteration on my own diagnosis.
+2. **Stop A2** and take the pre-registered fallback: A3/A4 (port NOOA or Polyphony, loops built around model-building)
+   plus Track D (Oct-1 absorption), with three weeks to the milestone.
+Recommendation: (1) exactly once, with a hard stop — if the directed build still cannot produce one verified model
+inside Stage-1's own window, the live setting genuinely differs from the offline one and A2 goes to the fallback
+without further tuning.
