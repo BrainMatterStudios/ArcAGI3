@@ -78,3 +78,47 @@ GATE 1 engagement, GATE 2 >= 1 green model, SAFETY levels >= 6. If engagement no
 and the wave decision follows the pre-registered wave reads; if it still fails with the prompt corrected, the
 model is declining a capability it has been plainly told about, which IS a real (and much more interesting)
 negative about A2 rather than an instrument artefact.
+
+## RESULT 2 2026-09-09 — `keith_ws` WITH the prompt fix: the verifier is still UNUSED
+
+Wave `offkaggle/results/20260909T0844-keith_ws-kill2` (fresh boot, identity ok, 0.59 h, ≈$2.5, 0 errors,
+0 preemptions). Prompt confirmed corrected in the transcripts ("Tools: `python` ..., `backtest` ..., `workspace` ...").
+
+| | control (prompt says python-only) | fixed (prompt names all three) | stock base |
+|---|---|---|---|
+| backtest calls | 0 in 6 runs | **0 in 6 runs** | n/a |
+| workspace calls | 1 save | 3 calls / 2 saves, in 1 run | n/a |
+| levels | 7 | 8 | 8 |
+| score | 1.81 | 5.11 | — |
+| never-passed walls present / passed | 2 / 0 | 2 / **2** (dc22, lf52) | 2 / 1 |
+| GAME_OVERs per run | 0.83 | 0.33 | 0.87 |
+
+**GATE 1 ENGAGEMENT: FAILED AGAIN — 0 backtests in 358 python calls and 877 logged transitions.** GATE 2
+unreachable. The graft itself is healthy: 340 preambles injected, 877 transitions captured, 2 saves, 0 errors,
+0 skips. The model used the *storage* affordance (one run saved `lib.py` 1,178 chars and `mechanics` 1,265 chars)
+and never once used the *verifier*.
+
+**This is now a substantive finding, not an instrument artefact.** Two independent discoverability conditions —
+tools in the schema only, and tools in the schema WITH the prompt corrected to name them — both produced zero
+verifier use. Combined with Stage-1, where the same brain built a green 20/20 model of this very game's wall in 2-3
+calls when handed the data and asked, the gap is located precisely: **it is not capability and not discoverability.
+The model does not spontaneously choose to invest in building a world model mid-game.** Its habitual
+observe-hypothesise-act loop has a short payoff horizon; model-building is a large deferred-payoff detour it never
+elects to take.
+
+**Do not read the secondary numbers as a win.** Levels 8 vs the control's 7 vs the base's 8, on 6 runs, is noise;
+score 5.11 vs 1.81 is a handful of efficient clears; both never-passed walls present were passed here (control 0/2,
+carry-0.75 1/2), which is suggestive at n=2 and nothing more. None of it can be attributed to a verifier that was
+never called.
+
+**FORK (Ahmed's call; nothing started).**
+1. **Harness-directed model building** — when a run is stuck at a wall for K calls, the harness itself asks the
+   model to produce a world model from the recorded transitions and hands the verified result back. This makes the
+   live loop match the Stage-1 setup that demonstrably works. Risk on record: five engaged-and-flat replications say
+   harness-forced *behaviour* shaping does not move levels — but those forced things the model was already doing
+   (act sooner, analyse less), whereas this directs it to do something it does WELL and never elects. ~1 day, ~$3.
+2. **A3/A4 — port NOOA or Polyphony**, loops built around model-building rather than the duck's act-first loop, so
+   the investment is structural rather than optional. 1-2 days each; the clock gate is the first read.
+3. **Stop here on A2** and put the remaining time into Track D (Oct-1 absorption), which the plan calls certain value.
+Recommendation: (1) first, because it is the cheapest test of the one hypothesis Stage-1 left open, and its result
+also tells us whether (2) is worth the port.
