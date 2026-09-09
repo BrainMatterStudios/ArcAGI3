@@ -890,3 +890,49 @@ which hash moved. It never pushes. Verified rather than asserted: it reproduces 
 end-to-end run against the real Kaggle API on 09-09 returned the same two hashes recorded on 09-02 — which also
 confirms **keith V14 is unchanged since**. Checklist: `docs/TRACK-D-absorption-checklist.md` (H+0..H+24, with the
 cost gate placed *before* port enthusiasm and pre-registration required before reading any wave).
+
+---
+
+## PRE-REGISTERED — `keith` at CADENCE geometry (conc 6 / 1767 s), written 2026-09-09 BEFORE data
+
+**Hypothesis.** A turn can hold a SECOND model call only if the call returns before the 60 s turn
+budget. At the live cadence (conc 28, e2e 145 s) it never does: calls/turn 1.02, the within-turn
+analysis→act loop never runs, and these walls fell 0/14. At conc 3 (e2e 16-20 s, calls/turn 1.66) the
+UNMODIFIED base passed cd82/dc22/lf52 L2 **4/4** on matched call counts. Conc 14 (e2e 68 s) missed the
+threshold by 8 s and read 32 vs 36 — consistent with the account, i.e. a near miss, not a refutation.
+
+**Knob: geometry only. No graft. Stock bytes, `keith` arm, unchanged analyzer env.**
+
+`--arm keith --games all --draws 1 --concurrency 6 --per-game-s 1767`
+
+**Why 6 and why 1767.** Server throughput is fixed (~0.17 req/s; 3 running slots under the 5 GiB KV
+reservation), so **calls/game ≈ 50 at EVERY concurrency** — lower concurrency does not buy calls, it
+buys cadence in a shorter window. Setting `per_game_s = 32400 × conc / 110` keeps the 110-game run
+inside the pinned notebook budget, so this arm is **live-legal as a two-constant change to the flown
+v4 notebook**. conc 6 → est e2e ≈ 36 s (clear of the 60 s budget, unlike conc 9's ≈53 s) while keeping
+6 requests in flight against 3 running slots so the GPU stays fed. 25-game wave ≈ 2.05 h, ≈$9.
+
+**ENGAGEMENT (checked FIRST; failure ⇒ VOID, not dead — the mechanism never ran):**
+* median e2e per call **< 60 s**, and
+* **calls/turn ≥ 1.5** (live base 1.02; conc-3 reference 1.66), and
+* calls/game **≥ 40** (guards the underfed-GPU confound at low concurrency; expected ≈50).
+
+**PRIMARY — levels on the 25-game set, vs the pooled base 39.33, sd 2.34:**
+* **≥ 48** → step candidate → propose a live flight (Ahmed's go required)
+* **45–47** → positive, redraw counterbalanced in a fresh session before any claim
+* **≤ 44** → DEAD by rule, even if engaged. Engaged-and-flat would be the sixth replication.
+
+**CO-PRIMARY — walls.** The 12 never-passed walls, all 12 present: **≥ 3 passes** required for a step
+claim. The conc-3 instrument's 4/4 on cd82/dc22/lf52 L2 predicts these specifically; report them named.
+
+**SAFETY / diagnosis lines to record regardless:** e2e distribution, calls/turn, calls/game, yields %,
+actions/game, GAME_OVERs/run, vLLM running/waiting and preemptions, zero-level games, wall clock.
+
+**What each outcome means.** Engaged + ≥48 → cadence is the lever, it is live-legal, and adaptive
+allocation and the level-1 laboratory build on top of it. Engaged + ≤44 → cadence does NOT convert on
+the full geometry, the conc-3 wall result was wall-specific or small-n, and the campaign moves to the
+model axis. Not engaged → void, re-run at conc 4 or 3.
+
+**Queued behind it (DIAGNOSTIC, not deployable):** the same games at conc 6 with the per-game clock
+left at 7,920 s, which multiplies calls/game ~4.5x by extending wave length. That arm separates
+"budget converts" from "cadence converts". Only worth running if the deployable arm is engaged.
