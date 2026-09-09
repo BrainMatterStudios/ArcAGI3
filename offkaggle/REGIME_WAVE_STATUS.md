@@ -936,3 +936,31 @@ model axis. Not engaged → void, re-run at conc 4 or 3.
 **Queued behind it (DIAGNOSTIC, not deployable):** the same games at conc 6 with the per-game clock
 left at 7,920 s, which multiplies calls/game ~4.5x by extending wave length. That arm separates
 "budget converts" from "cadence converts". Only worth running if the deployable arm is engaged.
+
+### ADDENDUM to the cadence pre-registration — written 2026-09-09 while the arm was still in preflight
+
+Recovered from data we already had (`20260903T0553-kv10-keith` vs the same-session base
+`20260902T2121-keith`), i.e. NOT from the arm now running. **The gates above are unchanged.**
+
+| wave | levels /25 | calls/game | calls/turn |
+|---|---|---|---|
+| base | 36 | 55.80 | 1.02 |
+| KV10 (double the KV reservation) | 43 | **82.16** | **1.03** |
+
+**BUDGET DOES CONVERT, BUT SUBLINEARLY: +47% calls/game bought +19% levels** (elasticity ≈0.4).
+That is the "does budget convert to levels" question, answered for free from an old wave. At this
+elasticity, doubling levels/game needs roughly **5x** the calls, which is not purchasable on one GPU.
+So the whole throughput/allocation family is worth tens of percent, not a step — consistent with
+KV10's recorded verdict (+0.28 lv/game, no step) and with the 9-06 half-concurrency wave.
+
+**Crucially, KV10's calls/turn stayed 1.03.** Doubling the running slots halves e2e to ~90 s, which is
+STILL above the 60 s turn budget, so turns remained single-call. KV10 and conc-14 are therefore the
+same null: both improved throughput, neither crossed the cadence threshold. The cadence account
+retrodicts both.
+
+**What this sharpens for the arm now running.** If conc 6 behaves as a pure throughput lever it should
+land near 43 levels — which the pre-registered band already calls DEAD (≤44). To clear 48 it must do
+something throughput alone cannot, which is exactly the claim under test: multi-call turns restoring
+the within-turn analysis→act loop. The 4/4-vs-0/14 wall result is the only evidence that it is
+structurally different rather than just faster. **This makes the co-primary wall count the more
+informative read of the two.**
