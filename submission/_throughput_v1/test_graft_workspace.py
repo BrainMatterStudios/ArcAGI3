@@ -116,7 +116,8 @@ class WsTests(unittest.TestCase):
     # 01 -----------------------------------------------------------------
     def test_01_install(self):
         self.assertIn(self.status, {"workspace: OK", "workspace: SKIP (already applied)"})
-        for n in ("analyze", "_tools", "_dispatch_tool", "_run_python_tool", "_compact_action_result"):
+        for n in ("analyze", "_tools", "_dispatch_tool", "_run_python_tool", "_compact_action_result",
+                  "_build_user_prompt"):
             self.assertTrue(hasattr(getattr(self.agent_mod.ToolAgent, n), "_ws_stock"), n)
 
     def test_01b_analyze_supplies_the_real_transcript_path(self):
@@ -131,6 +132,23 @@ class WsTests(unittest.TestCase):
                           transcript_path=self.transcript, analysis_step=1)
         self.assertEqual(agent._ws.transcript_path, self.transcript)
         self.assertEqual(agent._ws.game, "dc22-test_p0")   # run stem: run_regime_wave keys per-run telemetry by it
+
+    def test_01c_prompt_matches_the_tool_schema(self):
+        """The first live kill test got 181 python calls and ZERO backtest/workspace calls because the stock
+        prompts assert python is the only tool - in the system prompt once and in the USER prompt every turn
+        (44x in a 60-call run). With WS on, both must name all three tools; with WS off, both stay stock."""
+        agent = self._agent()
+        self.assertNotIn("The only tool is", agent._system_prompt)
+        self.assertIn("Three tools:", agent._system_prompt)
+        up = agent._build_user_prompt(3, valid_actions=["UP"])
+        self.assertNotIn("Only tool: `python`.", up)
+        self.assertIn("backtest", up)
+        self.assertIn("workspace", up)
+        self.assertIn("`python`. It receives", up)      # the stock sentence that follows still reads correctly
+        os.environ["WS_ENABLE"] = "0"
+        stock_up = agent._build_user_prompt(3, valid_actions=["UP"])
+        self.assertIn("Only tool: `python`.", stock_up)
+        self.assertEqual(ws.status()["errors"], 0)
 
     # 02 -----------------------------------------------------------------
     def test_02_flag_off_is_stock(self):

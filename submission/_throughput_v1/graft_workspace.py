@@ -105,6 +105,19 @@ DEFAULT_LOG_MAX = 400
 DEFAULT_PREAMBLE_MAX_CHARS = 12000
 DEFAULT_MISMATCH_CELLS = 12
 
+# The stock prompts assert, in the SYSTEM prompt once and in the USER prompt EVERY turn (44x in a
+# 60-call run), that python is the only tool. That contradicts the tool schema this graft extends and
+# is why the first keith_ws kill test got 181 python calls and ZERO backtest/workspace calls: the model
+# was told the capability does not exist. These two rewrites make the prompt match the schema.
+SYSTEM_ONLY_TOOL = "- The only tool is `python`; call it with one ephemeral `code` string.\n"
+SYSTEM_TOOLS_LINE = ("- Three tools: `python` (one ephemeral `code` string), `backtest` (check a candidate world "
+                     "model against the transitions you have actually recorded in THIS game) and `workspace` "
+                     "(save/load files that persist across turns, unlike `python`).\n")
+USER_ONLY_TOOL = "Only tool: `python`."
+# ends with "`python`." so the stock sentence that follows (" It receives ...") still reads correctly
+USER_TOOLS_LINE = ("Tools: `python` (ephemeral), `backtest` (verify a candidate world model against this game's "
+                   "recorded transitions), `workspace` (files that persist across turns).\n`python`.")
+
 TRANSCRIPT_LABEL = "HARNESS WS"
 BACKTEST_MARK = "[WS-BACKTEST]"
 SAVE_MARK = "[WS-SAVE]"
@@ -524,12 +537,38 @@ def install() -> str:
     if getattr(agent_mod, "_ToolDispatchResult", None) is None or getattr(agent_mod, "_append_transcript_section", None) is None:
         return "workspace: SKIP (module helpers missing)"
 
+    _STOCK["build_system_prompt"] = getattr(agent_mod, "_build_system_prompt", None)
+    _STOCK["build_user_prompt"] = cls._build_user_prompt
     _STOCK["analyze"] = cls.analyze
     _STOCK["tools"] = cls._tools
     _STOCK["dispatch"] = cls._dispatch_tool
     _STOCK["run_python_tool"] = cls._run_python_tool
     _STOCK["compact"] = cls._compact_action_result
     dispatch_cls = agent_mod._ToolDispatchResult
+
+    def _build_system_prompt(*args, **kwargs):
+        text = _STOCK["build_system_prompt"](*args, **kwargs)
+        if not enabled():
+            return text
+        try:
+            if SYSTEM_ONLY_TOOL in text:
+                return text.replace(SYSTEM_ONLY_TOOL, SYSTEM_TOOLS_LINE, 1)
+            _skip("system_only_tool_line_absent")
+        except Exception:  # noqa: BLE001
+            _error()
+        return text
+
+    def _build_user_prompt(self, action_num, *args, **kwargs):
+        text = _STOCK["build_user_prompt"](self, action_num, *args, **kwargs)
+        if not enabled():
+            return text
+        try:
+            if USER_ONLY_TOOL in text:
+                return text.replace(USER_ONLY_TOOL, USER_TOOLS_LINE, 1)
+            _skip("user_only_tool_line_absent")
+        except Exception:  # noqa: BLE001
+            _error()
+        return text
 
     def analyze(self, state_path, action_num, valid_actions=None, step_env=None, **kwargs):
         # the solver passes the real transcript path here; guessing it from state_path is wrong
@@ -640,6 +679,11 @@ def install() -> str:
             _error()
             return dispatch_cls(json.dumps({"tool": name, "error": type(exc).__name__}, indent=2), step_executed=False)
 
+    if _STOCK["build_system_prompt"] is not None:
+        _build_system_prompt._ws_stock = _STOCK["build_system_prompt"]
+        agent_mod._build_system_prompt = _build_system_prompt
+    _build_user_prompt._ws_stock = _STOCK["build_user_prompt"]
+    cls._build_user_prompt = _build_user_prompt
     analyze._ws_stock = _STOCK["analyze"]
     _tools._ws_stock = _STOCK["tools"]
     _dispatch_tool._ws_stock = _STOCK["dispatch"]
