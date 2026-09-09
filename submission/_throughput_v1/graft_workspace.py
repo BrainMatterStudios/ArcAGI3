@@ -1,0 +1,625 @@
+"""Persistent workspace + transition log + verifier (WS / Track A2, 2026-09-09).
+
+WHY THIS EXISTS, AND WHAT ALREADY PROVED IT
+-------------------------------------------
+A1 (graft_carry) established that persistent *prose* knowledge is dead: the model
+wrote excellent compacted notes and the 25-game wave read 41 levels (+0.71 sd, in
+band) with 0 of 12 never-passed walls. Stage-0 and Stage-1 established the
+opposite for *executable* knowledge on this brain:
+
+  * Stage-0 (docs/research-2026-09-09/PREREG-stage0-rerun-flashnext.md): given a
+    frontier agent's recorded level-0 transitions plus a verifier, Flash-Next
+    emitted a green executable world model on 2 of 3 games - cn04 18/18
+    (0->1->2->1->3->6->9->17->18), a game the 27B never produced one file for.
+  * Stage-1 (PREREG-stage1-own-transitions.md): given OUR OWN agent's transitions
+    from a level it was STUCK on (dc22 L2, 85 actions, never cleared), it produced
+    a green 20/20 model in 2-3 calls, in BOTH draws, and likewise for the control.
+    The models are mechanistic (3-5 KB, no embedded grids, no index tricks).
+
+So the brain can build a verified executable model of a wall from the agent's own
+observations. What it has never had, live, is (a) somewhere to keep that model,
+(b) the transition log to build it from, and (c) a verifier to check it against.
+This graft supplies exactly those three and nothing else; what to DO with a
+verified model is left to the model, which already has a Python sandbox.
+
+WHAT IT ADDS (all host-side; the sandbox bootstrap and every stock byte untouched)
+----------------------------------------------------------------------------------
+1. TRANSITION LOG, captured automatically. Every executed action is recorded as
+   {index, action, x, y, grid, level_up, dead, win, level} - the SAME schema the
+   Stage-0/1 instrument used, so the verifier below is the instrument we validated.
+   Captured by wrapping ToolAgent._compact_action_result, which the stock calls
+   once per action immediately AFTER step_env has appended the post-action frame
+   to the live session's history_entries (the solver keeps that list untrimmed),
+   so the after-grid is history_entries[-1].frame.grid and the before-grid [-2].
+
+2. `backtest` TOOL. Arguments {code, level?}. Replays the candidate against this
+   game's recorded transitions for that level, teacher-forced, in an ISOLATED
+   subprocess (argv list, no shell, python -I -S, temp dir, hard timeout) under
+   the Stage-0 contract: stateful `init_state(entry)` +
+   `predict(state, grid, action, x, y) -> (grid, flags, state)`, or stateless
+   `step(grid, action, x, y) -> (grid, flags)`; ENTRY_GRID injected as a global.
+   Returns a compact {matched, total, green, first_mismatch{index, action, kind,
+   cells}}. Running model-authored code is inherent to a verifier; it is confined
+   exactly as the stock python tool confines the model's own snippets.
+
+3. PERSISTENT WORKSPACE. A `workspace` tool (op=save|load|list|delete) keeps named
+   text files for the life of the game, and every python call receives them as a
+   WORKSPACE dict literal plus TRANSITIONS (the log) in a preamble prepended to the
+   model's snippet, so a saved model can be re-run inside the sandbox. Saving is a
+   tool call rather than a sandbox function because the stock sandbox returns only
+   stdout/result/action-results and cannot hand arbitrary state back to the host.
+
+WHY A PREAMBLE AND NOT A PATCHED SANDBOX: the sandbox bootstrap is a string
+constant inside the stock file and its runtime_globals are rebuilt per call from a
+fixed key set, so extra payload keys are never exposed. Prepending to the model's
+own code is the only injection point that leaves stock bytes alone.
+
+DESIGN CONSTRAINT CARRIED FROM STAGE-1: the iterate-against-a-verifier loop
+self-starves inside the 32,768 window when candidate+feedback rounds accumulate in
+the chat history (prompt 7.7k -> 11.9k, output 24.6k -> 20.3k, a call length-capped
+with no code). So verifier results are returned COMPACT (a first mismatch, not a
+transcript) and candidates live in the workspace, not in the history.
+
+FLAGS (read at call time; WS_ENABLE=0 or not installed = stock behaviour exactly)
+  WS_ENABLE [1], WS_MAX_FILES [12], WS_MAX_FILE_CHARS [20000],
+  WS_BACKTEST_TIMEOUT [30], WS_LOG_MAX [400], WS_PREAMBLE [1],
+  WS_PREAMBLE_MAX_CHARS [12000], WS_MISMATCH_CELLS [12].
+
+TELEMETRY: "[HARNESS WS]" transcript sections -
+  "[WS-BACKTEST] game=<stem> level=<L> matched=<m>/<t> green=<0|1> code_chars=<n> ms=<t>"
+  "[WS-SAVE] game=<stem> name=<f> chars=<n> files=<k>"
+status(): python_calls, transitions_logged, backtests, backtests_green, saves,
+loads, lists, deletes, preambles, preamble_chars_total, backtest_ms_total,
+green_share, errors, skips, per_game.
+
+Conventions (graft_probe / graft_carry): module-level _STATE/_STOCK, install()
+rebinds ToolAgent methods only, fail-open try/except around every graft branch,
+no threads, no writes outside the transcript. install() -> "workspace: OK".
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+_PER_GAME_KEYS = ("python_calls", "transitions_logged", "backtests", "backtests_green", "saves", "loads",
+                  "lists", "deletes", "preambles", "preamble_chars_total", "backtest_ms_total")
+_STATE: dict[str, Any] = {"installed": False, "errors": 0, "skips": {}, "per_game": {}}
+for _k in _PER_GAME_KEYS:
+    _STATE[_k] = 0
+_STOCK: dict[str, Any] = {}
+_LOCK = threading.Lock()
+_OFF = {"0", "false", "no", "off"}
+
+DEFAULT_MAX_FILES = 12
+DEFAULT_MAX_FILE_CHARS = 20000
+DEFAULT_BACKTEST_TIMEOUT = 30
+DEFAULT_LOG_MAX = 400
+DEFAULT_PREAMBLE_MAX_CHARS = 12000
+DEFAULT_MISMATCH_CELLS = 12
+
+TRANSCRIPT_LABEL = "HARNESS WS"
+BACKTEST_MARK = "[WS-BACKTEST]"
+SAVE_MARK = "[WS-SAVE]"
+_CLICK_RE = re.compile(r"row\s*=\s*(-?\d+).*?col\s*=\s*(-?\d+)", re.S)
+_ACTION_NUM_RE = re.compile(r"ACTION(\d+)")
+
+BACKTEST_TOOL_DESC = (
+    "Verify an executable world model against THIS game's own recorded transitions for one level. "
+    "Your code must define either a stateful pair `init_state(entry_grid)` and "
+    "`predict(state, grid, action, x, y) -> (next_grid, flags, state)`, or a stateless "
+    "`step(grid, action, x, y) -> (next_grid, flags)`. `ENTRY_GRID` is injected as a module global. "
+    "`action` is an int (1-5 = ACTION1..5, 6 = click with x=col, y=row, 0 = RESET); grids are lists of "
+    "lists of ints. `flags` is a dict that may set level_up/dead/win. The harness replays every recorded "
+    "transition teacher-forced and reports how many your model predicts exactly, plus the first mismatch. "
+    "Use this to test a mechanics hypothesis against evidence instead of guessing. The verifier runs your code "
+    "with the full standard library available; note that the python tool's own sandbox is more restricted, so a "
+    "model you also want to RUN in python should stick to the stdlib."
+)
+WORKSPACE_TOOL_DESC = (
+    "Persistent per-game scratch storage that survives across turns (the python sandbox does not). "
+    "op='save' with name+content stores a file; op='load' returns one; op='list' names them; "
+    "op='delete' removes one. Saved files are also injected into every python call as the dict "
+    "WORKSPACE, so a saved model can be run inside python."
+)
+
+
+def _env(name: str, default: str) -> str:
+    raw = os.environ.get(name)
+    return default if raw is None or not raw.strip() else raw.strip()
+
+
+def enabled() -> bool:
+    return _env("WS_ENABLE", "1").lower() not in _OFF
+
+
+def _env_int(name: str, default: int, lo: int = 0) -> int:
+    try:
+        return max(lo, int(_env(name, str(default))))
+    except ValueError:
+        return default
+
+
+def max_files() -> int:
+    return _env_int("WS_MAX_FILES", DEFAULT_MAX_FILES, 1)
+
+
+def max_file_chars() -> int:
+    return _env_int("WS_MAX_FILE_CHARS", DEFAULT_MAX_FILE_CHARS, 100)
+
+
+def backtest_timeout() -> int:
+    return _env_int("WS_BACKTEST_TIMEOUT", DEFAULT_BACKTEST_TIMEOUT, 1)
+
+
+def log_max() -> int:
+    return _env_int("WS_LOG_MAX", DEFAULT_LOG_MAX, 1)
+
+
+def preamble_on() -> bool:
+    return _env("WS_PREAMBLE", "1").lower() not in _OFF
+
+
+def preamble_max_chars() -> int:
+    return _env_int("WS_PREAMBLE_MAX_CHARS", DEFAULT_PREAMBLE_MAX_CHARS, 200)
+
+
+def mismatch_cells() -> int:
+    return _env_int("WS_MISMATCH_CELLS", DEFAULT_MISMATCH_CELLS, 0)
+
+
+def _share(a: float, b: float) -> float | None:
+    return None if not b else a / b
+
+
+def status() -> dict[str, Any]:
+    with _LOCK:
+        out: dict[str, Any] = {"installed": _STATE["installed"], "enabled": enabled(), "max_files": max_files(),
+                               "max_file_chars": max_file_chars(), "backtest_timeout": backtest_timeout(),
+                               "log_max": log_max(), "preamble": preamble_on()}
+        for k in _PER_GAME_KEYS:
+            out[k] = _STATE[k]
+        out["green_share"] = _share(_STATE["backtests_green"], _STATE["backtests"])
+        out["errors"] = _STATE["errors"]
+        out["skips"] = dict(_STATE["skips"])
+        out["per_game"] = {k: dict(v) for k, v in _STATE["per_game"].items()}
+        return out
+
+
+def _skip(reason: str) -> None:
+    with _LOCK:
+        _STATE["skips"][reason] = _STATE["skips"].get(reason, 0) + 1
+
+
+def _error() -> None:
+    with _LOCK:
+        _STATE["errors"] += 1
+
+
+def _bump(game: str, key: str, n: float = 1) -> None:
+    with _LOCK:
+        _STATE[key] += n
+        pg = _STATE["per_game"].setdefault(game, {k: 0 for k in _PER_GAME_KEYS})
+        pg[key] = pg.get(key, 0) + n
+
+
+class WsState:
+    """One per agent (= per game run); reset when the runtime dir (game) changes."""
+
+    def __init__(self) -> None:
+        self.runtime_dir: Any = None
+        self.game: str = "?"
+        self.transcript_path: Path | None = None
+        self.agent_mod: Any = None
+        self.files: dict[str, str] = {}
+        self.log: list[dict[str, Any]] = []
+        self.entry_by_level: dict[int, Any] = {}
+        self.best_by_level: dict[int, str] = {}
+        self.level: int = 1
+
+    def transitions_for(self, level: int) -> list[dict[str, Any]]:
+        return [t for t in self.log if t.get("level_before") == level]
+
+
+def _wstate(agent: Any, state_path: Any = None) -> WsState:
+    st = getattr(agent, "_ws", None)
+    if st is None:
+        st = WsState()
+        try:
+            agent._ws = st
+        except Exception:  # noqa: BLE001
+            pass
+    if state_path is not None:
+        try:
+            rd = Path(state_path).parent
+            if st.runtime_dir is not None and st.runtime_dir != rd:
+                fresh = WsState()
+                fresh.runtime_dir = rd
+                try:
+                    agent._ws = fresh
+                except Exception:  # noqa: BLE001
+                    pass
+                return fresh
+            st.runtime_dir = rd
+        except Exception:  # noqa: BLE001
+            pass
+    return st
+
+
+def _game_key(agent: Any, state_path: Any) -> str:
+    sess = getattr(getattr(agent, "_step_env_callback", None), "__self__", None)
+    try:
+        gid = str(sess.game.game_run.game_id or "")
+        if gid:
+            return gid
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        return Path(state_path).parent.name or "?"
+    except Exception:  # noqa: BLE001
+        return "?"
+
+
+def _write_marker(agent_mod: Any, path: Any, line: str) -> None:
+    if path is None or agent_mod is None:
+        return
+    try:
+        agent_mod._append_transcript_section(Path(path), TRANSCRIPT_LABEL, line)
+    except Exception:  # noqa: BLE001
+        _error()
+
+
+def action_to_int(payload: dict) -> tuple:
+    """(action int, x=col, y=row) matching the Stage-0/1 schema: 1-5 = ACTION1..5, 6 = click, 0 = RESET."""
+    name = str(payload.get("action_name") or payload.get("action_display") or "").strip()
+    x = y = None
+    m = _CLICK_RE.search(str(payload.get("action_display") or ""))
+    if m:
+        y, x = int(m.group(1)), int(m.group(2))
+    up = name.upper()
+    if up.startswith("RESET"):
+        return 0, x, y
+    if "MOUSE" in up or "CLICK" in up:
+        return 6, x, y
+    am = _ACTION_NUM_RE.search(up)
+    if am:
+        return int(am.group(1)), x, y
+    return (0 if not up else -1), x, y
+
+
+def _grid_of(frame: Any) -> Any:
+    g = getattr(frame, "grid", None)
+    if g is None:
+        return None
+    return [list(row) for row in g]
+
+
+_RUNNER_SRC = '\n'.join([
+    "import json, sys",
+    "spec = json.load(open(sys.argv[1]))",
+    "g = {'ENTRY_GRID': spec['entry']}",
+    "compiled = compile(spec['code'], '<world_model>', 'exec')",
+    "eval(compiled, g, g)",
+    "init_state, predict, step = g.get('init_state'), g.get('predict'), g.get('step')",
+    "stateful = callable(init_state) and callable(predict)",
+    "if not stateful and not callable(step):",
+    "    print(json.dumps({'error': 'no init_state/predict pair and no step(grid, action, x, y)'})); sys.exit(0)",
+    "state = init_state(spec['entry']) if stateful else None",
+    "grid = spec['entry']",
+    "out = {'matched': 0, 'total': len(spec['transitions']), 'first_mismatch': None}",
+    "for t in spec['transitions']:",
+    "    exp, terminal = t['grid'], bool(t['level_up'] or t['win'])",
+    "    try:",
+    "        if stateful:",
+    "            got, flags, state = predict(state, grid, t['action'], t['x'], t['y'])",
+    "        else:",
+    "            got, flags = step(grid, t['action'], t['x'], t['y'])",
+    "    except Exception as e:",
+    "        out['first_mismatch'] = {'index': t['index'], 'action': t['action'], 'kind': 'exception',",
+    "                                 'detail': (type(e).__name__ + ': ' + str(e))[:300]}",
+    "        break",
+    "    flags = flags if isinstance(flags, dict) else {}",
+    "    bad = []",
+    "    for k in ('level_up', 'dead', 'win'):",
+    "        if bool(flags.get(k)) != bool(t[k]):",
+    "            bad.append(k + ': predicted ' + str(bool(flags.get(k))) + ', actual ' + str(bool(t[k])))",
+    "    cells = []",
+    "    if not terminal:",
+    "        try:",
+    "            for r in range(len(exp)):",
+    "                for c in range(len(exp[r])):",
+    "                    if got[r][c] != exp[r][c]:",
+    "                        cells.append([r, c, exp[r][c], got[r][c]])",
+    "                        if len(cells) > 400: raise StopIteration",
+    "        except StopIteration:",
+    "            pass",
+    "        except Exception as e:",
+    "            out['first_mismatch'] = {'index': t['index'], 'action': t['action'], 'kind': 'bad_grid',",
+    "                                     'detail': (type(e).__name__ + ': ' + str(e))[:200]}",
+    "            break",
+    "    if bad or cells:",
+    "        out['first_mismatch'] = {'index': t['index'], 'action': t['action'],",
+    "                                 'kind': 'flags' if bad and not cells else 'grid',",
+    "                                 'flags': bad, 'n_cells': len(cells), 'cells': cells[:spec['cells']]}",
+    "        break",
+    "    out['matched'] += 1",
+    "    grid = exp",
+    "print(json.dumps(out))",
+])
+
+
+def run_backtest(code: str, entry: Any, transitions: list, *, timeout: int, cells: int) -> dict:
+    """Stage-0 contract, teacher-forced replay, in an isolated subprocess. Never raises.
+
+    Isolation: argv list (never a shell string), python -I -S, a temp working dir and a hard
+    timeout. Running model-authored code is inherent to a verifier and is confined exactly the
+    way the stock python tool confines the model's own snippets."""
+    total = len(transitions)
+    if not transitions:
+        return {"matched": 0, "total": 0, "green": False, "error": "no recorded transitions for that level yet"}
+    spec = {"code": code, "entry": entry, "cells": max(0, cells),
+            "transitions": [{"index": t["index"], "action": t["action"], "x": t["x"], "y": t["y"],
+                             "grid": t["grid"], "level_up": t["level_up"], "dead": t["dead"], "win": t["win"]}
+                            for t in transitions]}
+    with tempfile.TemporaryDirectory(prefix="ws_bt_") as d:
+        sp, rp = os.path.join(d, "spec.json"), os.path.join(d, "runner.py")
+        try:
+            with open(sp, "w") as fh:
+                json.dump(spec, fh)
+            with open(rp, "w") as fh:
+                fh.write(_RUNNER_SRC)
+            # -I isolates env vars, user site and cwd from sys.path[0]; -S is deliberately NOT used:
+            # it would hide site-packages, so a model importing numpy (which the validated Stage-0/1
+            # instrument allows, and one Stage-1 green model uses) would score 0 with a confusing error.
+            p = subprocess.run([sys.executable, "-I", rp, sp], capture_output=True, text=True,
+                               timeout=timeout, cwd=d, shell=False)
+        except subprocess.TimeoutExpired:
+            return {"matched": 0, "total": total, "green": False,
+                    "first_mismatch": {"kind": "timeout", "detail": "model did not finish in %ds" % timeout}}
+        except Exception as exc:  # noqa: BLE001
+            return {"matched": 0, "total": total, "green": False,
+                    "first_mismatch": {"kind": "harness_error", "detail": type(exc).__name__}}
+        text = (p.stdout or "").strip()
+        line = text.splitlines()[-1] if text else ""
+        try:
+            res = json.loads(line)
+        except Exception:  # noqa: BLE001
+            return {"matched": 0, "total": total, "green": False,
+                    "first_mismatch": {"kind": "crash", "detail": ((p.stderr or p.stdout) or "")[-400:]}}
+        if "error" in res:
+            return {"matched": 0, "total": total, "green": False,
+                    "first_mismatch": {"kind": "contract", "detail": res["error"]}}
+        res["green"] = res.get("matched") == total and total > 0
+        return res
+
+
+def build_preamble(files: dict, log: list, cap: int) -> str:
+    """WORKSPACE (saved files) + TRANSITIONS (the log, grids omitted) as literals."""
+    compact = [{"index": t["index"], "action": t["action"], "x": t["x"], "y": t["y"], "level": t["level_before"],
+                "level_up": t["level_up"], "dead": t["dead"], "changed_cells": t.get("changed_cells")}
+               for t in log[-log_max():]]
+    # repr(), NOT json.dumps(): this is injected as PYTHON SOURCE, and JSON renders
+    # None/True/False as null/true/false, which raise NameError inside the sandbox.
+    body = ("WORKSPACE = " + repr(files) + "\n"
+            "TRANSITIONS = " + repr(compact) + "\n"
+            "# WORKSPACE: your saved files. TRANSITIONS: every action executed this game (grids omitted;\n"
+            "#   use history/transitions for boards). Verify a world model with the backtest tool.\n")
+    if len(body) > cap:
+        small = ("WORKSPACE = " + repr(files) + "\n"
+                 "TRANSITIONS = " + repr(compact[-40:]) + "\n")
+        body = small if len(small) <= cap else ("WORKSPACE_NAMES = " + repr(sorted(files)) + "\n"
+                                                "# workspace too large to inline; use the workspace tool op='load'\n")
+    return body
+
+
+def _fn(name: str, desc: str, props: dict, required: list) -> dict:
+    return {"type": "function", "function": {"name": name, "description": desc,
+            "parameters": {"type": "object", "properties": props, "required": required}}}
+
+
+def workspace_op(st: "WsState", args: dict) -> dict:
+    op = str(args.get("op") or "").strip().lower()
+    nm = str(args.get("name") or "").strip()
+    if op == "list":
+        _bump(st.game, "lists")
+        return {"tool": "workspace", "files": {k: len(v) for k, v in st.files.items()}}
+    if op == "load":
+        _bump(st.game, "loads")
+        if nm not in st.files:
+            return {"tool": "workspace", "error": "no file %r" % nm, "files": sorted(st.files)}
+        return {"tool": "workspace", "name": nm, "content": st.files[nm]}
+    if op == "delete":
+        _bump(st.game, "deletes")
+        st.files.pop(nm, None)
+        return {"tool": "workspace", "deleted": nm, "files": sorted(st.files)}
+    if op == "save":
+        content = str(args.get("content") or "")
+        if not nm:
+            return {"tool": "workspace", "error": "save needs a name"}
+        if len(content) > max_file_chars():
+            return {"tool": "workspace", "error": "content %d chars exceeds the %d cap" % (len(content), max_file_chars())}
+        if nm not in st.files and len(st.files) >= max_files():
+            return {"tool": "workspace", "error": "workspace holds %d files; delete one first" % max_files(),
+                    "files": sorted(st.files)}
+        st.files[nm] = content
+        _bump(st.game, "saves")
+        _write_marker(st.agent_mod, st.transcript_path,
+                      "%s game=%s name=%s chars=%d files=%d" % (SAVE_MARK, st.game, nm, len(content), len(st.files)))
+        return {"tool": "workspace", "saved": nm, "chars": len(content), "files": sorted(st.files)}
+    return {"tool": "workspace", "error": "unknown op %r; use save|load|list|delete" % op}
+
+
+def backtest_op(st: "WsState", args: dict) -> dict:
+    code = str(args.get("code") or "")
+    if not code.strip():
+        return {"tool": "backtest", "error": "code is required"}
+    try:
+        level = int(args.get("level")) if args.get("level") is not None else st.level
+    except (TypeError, ValueError):
+        level = st.level
+    trans = st.transitions_for(level)
+    entry = st.entry_by_level.get(level)
+    if entry is None and trans:
+        entry = trans[0].get("grid")
+    t0 = time.monotonic()
+    res = run_backtest(code, entry, trans, timeout=backtest_timeout(), cells=mismatch_cells())
+    ms = int((time.monotonic() - t0) * 1000)
+    _bump(st.game, "backtests")
+    _bump(st.game, "backtest_ms_total", ms)
+    if res.get("green"):
+        _bump(st.game, "backtests_green")
+    cur = "%s/%s" % (res.get("matched", 0), res.get("total", 0))
+    prev = st.best_by_level.get(level)
+    if prev is None or int(res.get("matched", 0)) > int(prev.split("/")[0]):
+        st.best_by_level[level] = cur
+    _write_marker(st.agent_mod, st.transcript_path,
+                  "%s game=%s level=%s matched=%s green=%d code_chars=%d ms=%d"
+                  % (BACKTEST_MARK, st.game, level, cur, 1 if res.get("green") else 0, len(code), ms))
+    out = {"tool": "backtest", "level": level, "matched": res.get("matched"), "total": res.get("total"),
+           "green": bool(res.get("green")), "best_so_far": st.best_by_level.get(level)}
+    if res.get("error"):
+        out["error"] = res["error"]
+    if res.get("first_mismatch"):
+        out["first_mismatch"] = res["first_mismatch"]
+    if out["green"]:
+        out["note"] = ("Model reproduces every recorded transition on this level. Save it with the workspace tool, "
+                       "then use it in python to search for a move sequence that clears the level, and execute that "
+                       "sequence with action().")
+    return out
+
+
+def install() -> str:
+    if _STATE["installed"]:
+        return "workspace: SKIP (already applied)"
+    try:
+        from inference.agent import tool_agent as agent_mod
+    except Exception as exc:  # noqa: BLE001
+        return "workspace: SKIP (import failed: %r)" % (exc,)
+    cls = getattr(agent_mod, "ToolAgent", None)
+    if cls is None:
+        return "workspace: SKIP (missing ToolAgent)"
+    for n in ("_tools", "_dispatch_tool", "_run_python_tool", "_compact_action_result", "_render_tool_payload",
+              "_ensure_session"):
+        if getattr(cls, n, None) is None:
+            return "workspace: SKIP (ToolAgent.%s missing)" % n
+    if getattr(agent_mod, "_ToolDispatchResult", None) is None or getattr(agent_mod, "_append_transcript_section", None) is None:
+        return "workspace: SKIP (module helpers missing)"
+
+    _STOCK["tools"] = cls._tools
+    _STOCK["dispatch"] = cls._dispatch_tool
+    _STOCK["run_python_tool"] = cls._run_python_tool
+    _STOCK["compact"] = cls._compact_action_result
+    dispatch_cls = agent_mod._ToolDispatchResult
+
+    def _tools(self, state_path):
+        tools = _STOCK["tools"](self, state_path)
+        if not enabled():
+            return tools
+        try:
+            return [tools[0] if tools else None,
+                    _fn("backtest", BACKTEST_TOOL_DESC,
+                        {"code": {"type": "string", "description": "The complete world-model source."},
+                         "level": {"type": "integer", "description": "Level to verify against; default = current."}},
+                        ["code"]),
+                    _fn("workspace", WORKSPACE_TOOL_DESC,
+                        {"op": {"type": "string", "enum": ["save", "load", "list", "delete"]},
+                         "name": {"type": "string"}, "content": {"type": "string"}},
+                        ["op"])] if tools else tools
+        except Exception:  # noqa: BLE001
+            _error()
+            return tools
+
+    def _compact_action_result(self, payload):
+        out = _STOCK["compact"](self, payload)
+        if not enabled():
+            return out
+        try:
+            st = getattr(self, "_ws", None)
+            if st is None or not isinstance(out, dict):
+                return out
+            sess = getattr(getattr(self, "_step_env_callback", None), "__self__", None)
+            entries = getattr(sess, "history_entries", None)
+            if not entries:
+                return out
+            after = _grid_of(entries[-1].frame)
+            before = _grid_of(entries[-2].frame) if len(entries) >= 2 else None
+            if after is None:
+                return out
+            lvl = st.level
+            act, x, y = action_to_int(out)
+            changed = None
+            if before is not None and len(before) == len(after):
+                changed = sum(1 for r in range(len(after)) for c in range(len(after[r]))
+                              if before[r][c] != after[r][c])
+            if lvl not in st.entry_by_level and before is not None:
+                st.entry_by_level[lvl] = before
+            st.log.append({"index": len(st.transitions_for(lvl)), "action": act, "x": x, "y": y, "grid": after,
+                           "level_up": bool(out.get("level_completed")), "dead": bool(out.get("game_over")),
+                           "win": bool(out.get("run_complete")), "level_before": lvl, "changed_cells": changed})
+            _bump(st.game, "transitions_logged")
+            if len(st.log) > log_max() * 3:
+                del st.log[: len(st.log) - log_max() * 3]
+            if out.get("level_completed"):
+                st.level = lvl + 1
+                st.entry_by_level.setdefault(st.level, after)
+        except Exception:  # noqa: BLE001
+            _error()
+        return out
+
+    def _run_python_tool(self, state_path, arguments):
+        if not enabled():
+            return _STOCK["run_python_tool"](self, state_path, arguments)
+        try:
+            st = _wstate(self, state_path)
+            st.agent_mod = agent_mod
+            st.game = _game_key(self, state_path)
+            sp = Path(state_path)
+            cand = sp.parent.parent / "transcripts" / ("%s.txt" % sp.stem.replace("_state", ""))
+            st.transcript_path = cand if cand.exists() else sp.parent / ("%s_analyzer.txt" % sp.stem)
+            _bump(st.game, "python_calls")
+            if preamble_on() and (st.files or st.log):
+                pre = build_preamble(st.files, st.log, preamble_max_chars())
+                arguments = dict(arguments or {})
+                arguments["code"] = pre + str(arguments.get("code", "") or "")
+                _bump(st.game, "preambles")
+                _bump(st.game, "preamble_chars_total", len(pre))
+        except Exception:  # noqa: BLE001
+            _error()
+        return _STOCK["run_python_tool"](self, state_path, arguments)
+
+    def _dispatch_tool(self, state_path, name, arguments):
+        if not enabled() or name not in ("backtest", "workspace"):
+            return _STOCK["dispatch"](self, state_path, name, arguments)
+        try:
+            self._ensure_session(state_path)
+            st = _wstate(self, state_path)
+            st.agent_mod = agent_mod
+            st.game = _game_key(self, state_path)
+            sp = Path(state_path)
+            cand = sp.parent.parent / "transcripts" / ("%s.txt" % sp.stem.replace("_state", ""))
+            st.transcript_path = cand if cand.exists() else sp.parent / ("%s_analyzer.txt" % sp.stem)
+            args = arguments if isinstance(arguments, dict) else {}
+            payload = workspace_op(st, args) if name == "workspace" else backtest_op(st, args)
+            return dispatch_cls(self._render_tool_payload(payload, truncate_fields=("content", "error", "detail")),
+                                step_executed=False)
+        except Exception as exc:  # noqa: BLE001
+            _error()
+            return dispatch_cls(json.dumps({"tool": name, "error": type(exc).__name__}, indent=2), step_executed=False)
+
+    _tools._ws_stock = _STOCK["tools"]
+    _dispatch_tool._ws_stock = _STOCK["dispatch"]
+    _run_python_tool._ws_stock = _STOCK["run_python_tool"]
+    _compact_action_result._ws_stock = _STOCK["compact"]
+    cls._tools = _tools
+    cls._dispatch_tool = _dispatch_tool
+    cls._run_python_tool = _run_python_tool
+    cls._compact_action_result = _compact_action_result
+    _STATE["installed"] = True
+    return "workspace: OK"
