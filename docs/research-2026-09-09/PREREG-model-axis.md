@@ -83,3 +83,51 @@ M0–M1 are local and cost only time. M2 is a Modal serving session (~$5–15). 
 (~$9 each). **Stop rule: if M2 is not passed within two working sessions, stop and report it as an
 engineering blocker rather than grinding** — the Oct 1 absorption window is the higher-EV use of the
 remaining time, and its tooling is already built.
+
+---
+
+# RESULT — M2 BLOCKED, established 2026-09-10 before spending anything
+
+**The stop rule fired, correctly and early.** The pre-registration said "M2 is the serving gate,
+where every previous fine-tune died; known hard part: the base is NVFP4 and merge-and-requantise is
+unproven here and may be the real blocker." The reality is harder than that, and it is a scale
+blocker rather than a tooling one.
+
+**What the served model actually is.** `RadixArk/Qwen3.8-Flash-Next-NVFP4` quantises
+`Qwen/Qwen3.8-Flash-Next`, whose config reads:
+
+| | |
+|---|---|
+| architecture | `Qwen4ExpForConditionalGeneration`, hybrid linear/full attention, MTP, multimodal |
+| experts | **512 per layer, top-10 routed**, 48 layers |
+| MoE params | ~121 B (active ~6 B — the community "131B-A6B" naming checks out) |
+| bf16 on disk | **360 GB across 131 shards** |
+| vocab / hidden | 248,320 / 2,560 |
+
+This is not the 8 B dense model the plan's "test-time training" language implicitly assumed. **NVFP4 is
+the only reason it fits one 96 GB card at all** (~90 GB of weights).
+
+**Why that blocks M1 as much as M2.** LoRA training needs the unquantised base resident: 360 GB, so
+at least five 80 GB cards to hold weights before any activations, gradients or optimizer state. A
+realistic configuration is 8×H100, roughly $40/h on Modal, so a short run is $400+ — and that is
+before a merge-and-NVFP4-requantise pass over a 121 B MoE, which remains unproven here. Against a
+per-experiment budget of $9–25 this is a **20–50× gap**. It is not a question of effort.
+
+**Untested alternative, recorded not endorsed:** training adapters against the FP4 weights directly
+and serving them as vLLM runtime LoRAs, which would skip merge-and-requantise entirely. It still
+needs ~90 GB resident plus activations, so it is at best a multi-GPU job, and FP4-base LoRA training
+plus LoRA-with-MTP serving are both unproven. I did not pursue it: the training side is the blocker
+either way.
+
+**VERDICT: the model axis is DEAD at our budget — blocked on scale, not on will, and not refuted as
+an idea.** Reopen only if per-experiment spend rises by ~an order of magnitude, or if someone
+publishes an adapter for this exact checkpoint that vLLM can serve at the keith V14 regime.
+
+**Cost of establishing this: $0 and under an hour**, because the stop rule put the blocker ahead of
+the training work. M0 (the corpus) is still built, committed and reproducible — 2,047 records with a
+by-game held-out split — and it is the right input for any future adapter, or for a retrieval /
+few-shot use that needs no training at all.
+
+**PER THE PRE-REGISTRATION'S OWN FALLBACK: Track D (Oct 1 absorption) is now the campaign.** Its
+tooling was built and verified against the live Kaggle API on 09-09
+(`offkaggle/absorb_kernel.py`, `docs/TRACK-D-absorption-checklist.md`).
