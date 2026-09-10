@@ -1065,3 +1065,43 @@ engaged-and-flat replication, and the strongest possible evidence that supplying
 computation is not enough because the agent will not *act* on a model either; that would close the
 "help it model" family completely and leave Track D as the only lane. Not engaged → void, fix the
 block plumbing and re-run.
+
+## RESULT — arm `keith_fx` (harness-computed dynamics; 08:19→10:35 UTC, ≈$9) — **DEAD by rule**
+
+Artifacts `offkaggle/results/20260910-081906-regime-keith_fx`.
+
+**ENGAGEMENT — PASSED, emphatically.** The block appeared in **97.2 % of turns** (gate ≥ 60 %) and
+**25/25 games** carried a block with ≥ 2 action lines (gate ≥ 50 %). Spot-checked live mid-wave: on
+dc22 at turn 10 the block read `RIGHT x9: moves 1 obj by (+0,+2) [8/9]`, `LEFT x7: (+0,-2) [7/7]`,
+`DOWN x3: (+2,+0) [3/3]`, plus which MOUSE clicks were inert. **The information was correct, arrived
+free, and arrived on essentially every turn.**
+
+**PRIMARY: 35 levels vs pooled base 39.33 (sd 2.34) = −4.33 = −1.85 sd → DEAD by rule.**
+**CO-PRIMARY: 1 of 12 never-passed walls (sb26 L2), target ≥ 3.**
+Zero-level games **7 vs the base's 2**. actions/game 141 vs 154; actions/call 2.56 vs 2.76.
+
+**PROCESS NOTE (my error, caught and corrected).** I first ran this through
+`read_cadence_arm.py`, which applies the CADENCE arm's engagement gates (median e2e < 60 s,
+calls/turn ≥ 1.5). Those are meaningless here — `keith_fx` runs at the LIVE geometry by design, so
+147 s / 1.02 is the base condition, not a failure — and the script printed **VOID**. The correct
+gates are this arm's own, written in its pre-registration, and they PASS. The script has since been
+guarded so it refuses arms it was not written for.
+
+**VERDICT — this closes the "help the agent model" family.** It was the strongest available version
+of the idea: rather than ask the agent to build a model (A2: 0 verifier calls in 358), or direct it to
+(0 models in 24 calls), the harness computed correct dynamics itself, for zero model calls, and put
+them in front of the agent on 97 % of turns. Levels went **down**. This is the **seventh**
+engaged-and-flat replication and the second that is engaged-and-*negative*.
+
+Read together with the corpus measurement (0 of 2,047 successful calls forward-simulate) the
+conclusion is sharper than "it did not help": **the agent does not act on a dynamics model even when
+one is handed to it, correct and free.** The missing thing is not the information and not the
+ability to derive it — it is the disposition to plan with it, and that is not reachable from the
+harness side. Independent corroboration from the 09-10 sweep: Tycho measured the same shape, where
+automatic repair produced models that *"reproduce observed transitions much more accurately, yet
+reaches only 83.07"* against 88.49 — **world-model fidelity does not buy action quality.**
+
+**Consequence for the queue.** `keith_fxs` (effects + sweep) is demoted: its effects half is now
+measured dead. `keith_sweep` remains a *different* knob — it changes the ACTION distribution rather
+than the prompt content, which is what AutumnBench actually diagnoses — but this result lowers its
+prior materially and that should be said before it is run, not after.

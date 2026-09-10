@@ -35,6 +35,15 @@ def main(run_dir):
         tel = json.loads(tp.read_text()).get("aggregate", {})
     games = res["games"]
 
+    # GUARD (added after I misapplied this script to keith_fx on 09-10): the engagement
+    # gates below are the CADENCE arm's and are meaningless for an arm running at the live
+    # geometry. Refuse rather than print a misleading VOID.
+    arm = res.get("arm")
+    if arm not in ("keith", "keith_cadence"):
+        print(f"REFUSING: this reader encodes the CADENCE arm's gates; run arm is {arm!r}.")
+        print("Use that arm's own pre-registered gates (offkaggle/REGIME_WAVE_STATUS.md).")
+        return 2
+
     geo = res.get("geometry", {})
     print("=" * 78)
     print(f"CADENCE ARM READ — {run_dir.name}")
