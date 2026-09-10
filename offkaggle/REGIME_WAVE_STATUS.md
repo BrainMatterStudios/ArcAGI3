@@ -1151,3 +1151,22 @@ zero-level games, GAME_OVERs/run, preemptions, and the implied elasticity
 the agent, given three times the budget at identical cadence, does not go deeper. That is a
 capability statement, not a harness one, and it would be worth more than a positive result on any
 single graft.
+
+### CORRECTION to the `keith_fx` write-up (same day, before the next arm reads out)
+
+I wrote that "levels went **down**". That over-claims. The pre-registered verdict is **DEAD** — it did
+not clear 48 — and that stands. But **"worse than base" is NOT established by one draw.**
+
+Checked directly: within the wave, correlation between how rich a game's effect block ever got
+(max action lines) and its final levels is **−0.086 over 25 games**, i.e. no dose-response gradient.
+The bucketing is degenerate anyway — **24 of 25 games saw a 7+-line block** — so the arm delivered a
+full-width table essentially everywhere and there is no dose variation to exploit. A −1.85 sd point
+estimate on a single draw (p ≈ 0.06) is comfortably inside what a low draw produces.
+
+**The defensible statements are:** the mechanism engaged on 97.2 % of turns with correct content; the
+arm did not clear the bar; and there is no evidence the block itself is harmful. The same caveat
+applies to the cadence arm's −2.28 sd (p ≈ 0.02, one draw) — stronger, but still one draw.
+
+This does not change either verdict or the conclusion that the "help the agent model" family is
+closed, because that conclusion rests on the *absence of gain* across four independent attempts
+(A2 tool, A2 directed, fx free-and-correct, plus Tycho's external fidelity result), not on harm.
