@@ -1213,3 +1213,28 @@ policies in `R-triage-family-bounded.md` extrapolation rather than opportunity.
 **NEXT, in order:** (1) patch the O(n²) state write — cheap, and required before any budget arm;
 (2) re-run this arm cleanly; (3) only then read the elasticity. Disk on this machine sits at 93 % on
 the Data volume, so headroom must be confirmed before the re-run.
+
+## SMOKE — `keith_budget` instrument test (3 games, conc 3, 1 h clock, ≈$5) — **PASS**
+
+Run per Ahmed's 09-10 instruction to test small before spending again. Design: 3 games at
+concurrency 3 collapses the queue (e2e 9.7–12.9 s vs the live 145 s), so a **1-hour** clock still
+drives games into the high-action regime that broke the previous wave — the failure mode is
+reproduced at a fifth of the cost.
+
+`graft_compactstate: compact_json+batch_write(yes): OK`
+
+| game | levels | actions | e2e | state |
+|---|---|---|---|---|
+| cd82 | 2 / 6 | 495 | 12.4 s | gave_up (clock) |
+| dc22 | 0 / 6 | 1,091 | 12.9 s | gave_up (clock) |
+| tn36 | 0 / 7 | **3,659** | 9.7 s | gave_up (clock) |
+
+**INSTRUMENT: PASS. Zero ENOSPC, zero crashes, all three ran to their full clock, whole run
+directory 101 MB.** tn36 reached **3,659 actions** — 24× the live base of 154, and nearly 4× the 959
+that crashed the previous wave — with no disk pressure at all. The O(n²) write is fixed.
+
+**SIGNAL (secondary, n=3, and cadence-confounded — the queue is collapsed here):** these three games
+average 1.18 / 0.91 / 0.91 levels at base, ≈3.0 levels total. With **3–24× the actions** they produced
+**2**. **tn36 spent 3,659 actions and cleared nothing.** That is a third independent pointer, after
+KV10 (elasticity 0.4 at +47 %) and the void wave's salvage (0.06 at +141 %), that budget stops
+converting well before 3×. It is not a verdict: n=3, hard games, and the low-latency confound.
