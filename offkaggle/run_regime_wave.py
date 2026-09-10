@@ -268,15 +268,24 @@ SWEEP_ENV_KEYS = ("SWEEP_ENABLE", "SWEEP_MAX_ACTIONS", "SWEEP_REPEAT")
 KEITH_SWEEP_ENV = {**KEITH_ANALYZER_ENV, "SWEEP_ENABLE": "1", "SWEEP_MAX_ACTIONS": "8", "SWEEP_REPEAT": "1"}
 # the stack: harness-computed dynamics fed from action 1 by the opening sweep
 KEITH_FXS_ENV = {**KEITH_FX_ENV, "SWEEP_ENABLE": "1", "SWEEP_MAX_ACTIONS": "8", "SWEEP_REPEAT": "1"}
+# 09-10 graft_compactstate: instrument patch, NOT a candidate. The budget arm died with
+# ENOSPC on 17/25 games because write_runtime_state re-serialises the whole history after
+# every action with indent=2 -- O(n^2) bytes, invisible at 154 actions and fatal at 3x.
+# Compact JSON (6.5x, byte-identical on read-back) + one write per step_env batch instead
+# of one per action (~2.8x at the measured 2.76 actions/call). Nothing model-visible changes.
+CSTATE_ENV_KEYS = ()
+KEITH_BUDGET_ENV = {**KEITH_ANALYZER_ENV}
 ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV, "keith_yield900": KEITH_YIELD900_ENV,
            "keith_retry": KEITH_RETRY_ENV, "keith_evid": KEITH_EVID_ENV, "keith_hypo": KEITH_HYPO_ENV,
-           "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV, "keith_carry": KEITH_CARRY_ENV, "keith_ws": KEITH_WS_ENV, "keith_wsd": KEITH_WSD_ENV, "keith_fx": KEITH_FX_ENV, "keith_sweep": KEITH_SWEEP_ENV, "keith_fxs": KEITH_FXS_ENV}
+           "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV, "keith_carry": KEITH_CARRY_ENV, "keith_ws": KEITH_WS_ENV, "keith_wsd": KEITH_WSD_ENV, "keith_fx": KEITH_FX_ENV, "keith_sweep": KEITH_SWEEP_ENV, "keith_fxs": KEITH_FXS_ENV,
+           "keith_budget": KEITH_BUDGET_ENV}
 ARMS = tuple(ARM_ENV)
 # grafts (submission/_throughput_v1/<name>.py, install() -> "<name>: OK") an arm installs in memory
 ARM_GRAFTS = {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",), "keith_hypo": ("graft_hypo",),
               "keith_probe": ("graft_probe",), "keith_carry": ("graft_carry",), "keith_ws": ("graft_workspace",), "keith_wsd": ("graft_workspace",),
               "keith_fx": ("graft_effects",), "keith_sweep": ("graft_sweep",),
-              "keith_fxs": ("graft_effects", "graft_sweep")}
+              "keith_fxs": ("graft_effects", "graft_sweep"),
+              "keith_budget": ("graft_compactstate",)}
 GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_", "PROBE_", "CARRY_", "WS_", "EFFECTS_", "SWEEP_")     # every graft flag; scrubbed from the shell for every arm
 GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEYS + CARRY_ENV_KEYS + WSD_ENV_KEYS + EFFECTS_ENV_KEYS + SWEEP_ENV_KEYS
 # loss-ledger-3 reference reads for the PROBE gate (docs/research-2026-09-08/R-loss-ledger-3.md, yield900 regime)
