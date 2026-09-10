@@ -1170,3 +1170,46 @@ applies to the cadence arm's −2.28 sd (p ≈ 0.02, one draw) — stronger, but
 This does not change either verdict or the conclusion that the "help the agent model" family is
 closed, because that conclusion rests on the *absence of gain* across four independent attempts
 (A2 tool, A2 directed, fx free-and-correct, plus Tycho's external fidelity result), not on harm.
+
+## RESULT — `keith_budget3x` — **VOID (instrument failure), with informative salvage**
+
+Killed at +280 min. **17 of 25 games crashed with `OSError: [Errno 28] No space left on device`**,
+all within a few minutes of +194 min. The wave cannot be read against its gates.
+
+**ROOT CAUSE, and it is a finding in its own right.** `write_runtime_state` runs after **every**
+action and re-serialises the **entire** history with `indent=2`. At ~17 KB per history entry that is
+**O(n²) bytes written per game**:
+
+| | actions | final state file | total bytes written |
+|---|---|---|---|
+| base game | 154 | 2.6 MB | 0.19 GB |
+| this wave's crashed games | 371 | 6.2 MB | **1.12 GB** |
+| tn36, the worst | 959 | 15.9 MB | **7.46 GB** |
+
+Across 25 concurrent games at ~371 actions that is **~28 GB of write churn**, which is why ENOSPC
+fired with 30 GB showing free — it is churn against APFS purgeable space, not steady-state storage.
+**It scales with the square of the action count, so it is invisible at the live budget (154 actions)
+and fatal at 3x.** Any future budget-increasing experiment must patch this first.
+
+**SALVAGE — the numbers for the 17 games that ran are real, and they point one way.**
+
+| | actions/game | levels/game |
+|---|---|---|
+| base | 154 | 1.57 |
+| this wave, before the crash | **371 (2.4x)** | **1.71 (1.09x)** |
+
+**Implied elasticity 0.06**, against the **0.4** measured by KV10 at +47 %. The per-game detail is
+starker: **tn36 spent 959 actions and cleared ZERO levels**; sp80 524 → 0; bp35 498 → 0; wa30 785 → 1.
+Meanwhile lp85 cleared 5 in 166 actions and re86 5 in 437. Extra budget flowed overwhelmingly into
+games that were already stuck, exactly as the doomed-tail analysis predicted (62.5 % of actions land
+on a level never cleared), and it did not convert.
+
+**STATUS: this is NOT the answer to the pre-registered question, and must not be quoted as one.**
+The games crashed at roughly half their intended clock and are not a clean 25-game read. But the
+direction is strong enough to matter: if it holds, **elasticity decays hard between +47 % and +141 %**,
+which caps the throughput / allocation / triage family at the low end and makes the aggressive triage
+policies in `R-triage-family-bounded.md` extrapolation rather than opportunity.
+
+**NEXT, in order:** (1) patch the O(n²) state write — cheap, and required before any budget arm;
+(2) re-run this arm cleanly; (3) only then read the elasticity. Disk on this machine sits at 93 % on
+the Data volume, so headroom must be confirmed before the re-run.
