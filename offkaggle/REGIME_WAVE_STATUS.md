@@ -1105,3 +1105,49 @@ reaches only 83.07"* against 88.49 — **world-model fidelity does not buy actio
 measured dead. `keith_sweep` remains a *different* knob — it changes the ACTION distribution rather
 than the prompt content, which is what AutumnBench actually diagnoses — but this result lowers its
 prior materially and that should be said before it is run, not after.
+
+---
+
+## PRE-REGISTERED — `keith_budget3x` (pure budget knob), written 2026-09-10 BEFORE data
+
+**The one unknown that bounds every remaining family.** Throughput levers, adaptive allocation and
+triage all convert budget into levels through a single exchange rate, and we have measured that rate
+**once**: the KV10 wave bought +47 % calls for +19 % levels, an elasticity of ≈0.4. Everything built
+on it — including the triage simulation's headline — is an extrapolation from one point.
+
+**Why this design and not the one I first specified.** My earlier "diagnostic arm" was conc 9 at the
+unchanged clock. That changes TWO things at once: it triples calls/game *and* drops e2e from 145 s to
+~53 s. The 09-10 cadence result (−2.28 sd) proved e2e is **not** inert, so that design would confound
+budget with cadence and could not answer this question. Instead:
+
+`--arm keith --games all --draws 1 --concurrency 28 --per-game-s 23760`
+
+With 25 games at concurrency 28 **every game runs in parallel**, so e2e stays at the base 145 s and
+the **only** thing that moves is the per-game clock. Pure budget knob, cadence held constant.
+≈164 calls/game (2.9× the base 55.8), wall ≈6.6 h, ≈$27.
+
+**NOT LIVE-LEGAL and not intended to be.** 3× the per-game clock cannot fit 110 games in the pinned
+32,400 s notebook budget. This is a measurement, not a candidate. Nothing here can be flown.
+
+**ENGAGEMENT (checked first; failure ⇒ VOID):** calls/game **≥ 140** (target ≈164; the arm must
+actually receive the budget) and median e2e **within 120–175 s** (cadence genuinely unchanged).
+
+**PRIMARY — levels on 25 games, read as an ELASTICITY, against pooled base 39.33:**
+* **≥ 60 levels** → elasticity holds near 0.4 out to 3×. Budget converts. The triage/allocation family
+  is a genuine route to a step and should be built; the aggressive policies in
+  `docs/research-2026-09-10/R-triage-family-bounded.md` become credible rather than extrapolation.
+* **46–59** → partial conversion (elasticity ~0.1–0.3). Triage worth roughly +10–30 %, worth building
+  but not a step on its own.
+* **≤ 45** → **budget does NOT convert at scale.** The entire throughput/allocation/triage family is
+  capped at the low end, the KV10 point was the flat part of a curve that was already bending, and —
+  taken with today's two engaged-and-negative results and the blocked model axis — **no harness lever
+  remains**, which makes Track D absorption the whole campaign rather than the leading option.
+
+**SAFETY / DIAGNOSIS to record regardless:** calls/game, e2e distribution, calls/turn, actions/game,
+zero-level games, GAME_OVERs/run, preemptions, and the implied elasticity
+`(levels/39.33 − 1) / (calls/55.8 − 1)` — which is the number this wave exists to produce.
+
+**Note on what a NULL here would mean.** It would be the cleanest possible statement of our ceiling:
+the agent, given three times the budget at identical cadence, does not go deeper. That is a
+capability statement, not a harness one, and it would be worth more than a positive result on any
+single graft.
