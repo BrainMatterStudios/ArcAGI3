@@ -1016,3 +1016,52 @@ that it bounds the clock explanation, not that it isolates cadence).
 Together with the KV10 elasticity (+47 % calls → +19 % levels), the throughput/cadence family is now
 closed as a source of a step: every reachable point on the curve is worth tens of percent at best, and
 the live-legal points are negative.
+
+---
+
+## PRE-REGISTERED — arm `keith_fx` (harness-computed dynamics), written 2026-09-10 BEFORE data
+
+**The measurement it comes from** (`docs/research-2026-09-10/R-what-our-agent-actually-does.md`):
+across **2,047 tool calls made on levels the run went on to CLEAR**, our agent forward-simulated a
+next state **0 times (0.0 %)**, ran any search in 2.2 %, verified a prediction in 0.2 %, and touched
+`transitions` — the harness's own before/after affordance — in 3.2 %. Median 9 lines of code, median
+action-list length 1. **It is a reactive perceive-and-act loop.** Six experiments say we cannot talk
+it into being anything else, and A2 proved we cannot tool it into one either (0 verifier calls in 358).
+
+**So this arm does not ask.** The harness folds every real `(before, action, after)` triple into an
+object-level effect table in pure python — objects matched by the stock `segment_layer`'s
+translation-invariant hash — and appends a capped block to the user prompt. **Zero extra model calls.
+No behaviour change is required for the information to arrive.**
+
+**External convergence (found independently, after the graft was built):** PRO-LONG's harness appends
+to a log after every action *automatically* — the agent never decides to write, only to read — and its
+full-log vs no-log ablation reads 41.2 % vs 24.0 % pass@1. That is the same structural answer to A2's
+failure: we removed the wrong side of the problem.
+
+**Offline validation on real game data (before any spend):** replayed over recorded events, the table
+recovers dc22's movement rule outright — `UP moves 1 obj by (-2,+0) [34/37]`, `RIGHT (+0,+2) [19/22]`,
+`LEFT (+0,-2) [10/10]` — and g50t's `RIGHT/LEFT ±6 [44/84, 37/64]`. Appear/vanish is suppressed when
+near-universal, because 18 of 25 games tick a HUD every action (the standing HUD law) and a
+near-universal effect carries no information.
+
+**Knob:** plain `keith` base + the `EFFECTS_*` keys + `graft_effects`. Nothing else differs.
+`--arm keith_fx --games all --draws 1` at the live geometry (conc 28, 7,920 s).
+
+**ENGAGEMENT (checked FIRST; failure ⇒ VOID, not dead).** Measured post-hoc by grepping the
+transcripts' `[USER PROMPT]` sections for `Observed action effects`:
+* the block appears in **≥ 60 %** of turns (it cannot appear before the first action, so 100 % is
+  impossible), and
+* in **≥ 50 %** of games the block carries **≥ 2 action lines** (a one-line table is not dynamics).
+
+**PRIMARY — levels on 25 games vs pooled base 39.33, sd 2.34:** **≥ 48** step candidate / **45–47**
+redraw / **≤ 44** DEAD by rule, engaged or not.
+**CO-PRIMARY — ≥ 3 of the 12 six-draw never-passed walls**, all 12 present.
+**SAFETY:** prompt tokens/call (expect ≈ +250 vs base 20,061), calls/game vs 55.8, GAME_OVERs/run vs
+0.87, zero-level games vs 2, e2e/call, wall clock.
+
+**What each outcome means.** Engaged + ≥48 → the first step of the campaign, and it says the gap was
+an information-derivation gap the harness can close for free. Engaged + ≤44 → the **seventh**
+engaged-and-flat replication, and the strongest possible evidence that supplying the missing
+computation is not enough because the agent will not *act* on a model either; that would close the
+"help it model" family completely and leave Track D as the only lane. Not engaged → void, fix the
+block plumbing and re-run.

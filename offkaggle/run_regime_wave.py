@@ -245,15 +245,27 @@ KEITH_WSD_ENV = {**KEITH_WS_ENV, "WS_DIRECT_ENABLE": "1", "WS_DIRECT_AFTER_ACTIO
                  # 18-22k, and the model overran that budget on 15/15 builds. Stage-1's greens had a 7,123-token
                  # prompt and ~25k output; these land live prompts near 3-5k.
                  "WS_DIRECT_MAX_TRANSITIONS": "12", "WS_DIRECT_MAX_CELLS": "60"}
+# 09-10 graft_effects: the harness computes the dynamics the agent never computes. Measured
+# (docs/research-2026-09-10/R-what-our-agent-actually-does.md): across 2,047 tool calls made on
+# levels the run went on to CLEAR, the agent forward-simulated a next state ZERO times, ran any
+# search in 2.2 %, and touched `transitions` in 3.2 %. So this arm does not ask it to model --
+# the harness folds every real (before, action, after) triple into an object-level effect table
+# in pure python (no extra model calls) and appends a capped block to the user prompt.
+# Single knob vs plain `keith`: the EFFECTS_* keys and the graft. Pre-reg: REGIME_WAVE_STATUS.md.
+EFFECTS_ENV_KEYS = ("EFFECTS_MAX_ACTIONS", "EFFECTS_MAX_CHARS", "EFFECTS_MIN_OCCURRENCES",
+                    "EFFECTS_UNIVERSAL_PCT")
+KEITH_FX_ENV = {**KEITH_ANALYZER_ENV, "EFFECTS_MAX_ACTIONS": "8", "EFFECTS_MAX_CHARS": "900",
+                "EFFECTS_MIN_OCCURRENCES": "1", "EFFECTS_UNIVERSAL_PCT": "90"}
 ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV, "keith_yield900": KEITH_YIELD900_ENV,
            "keith_retry": KEITH_RETRY_ENV, "keith_evid": KEITH_EVID_ENV, "keith_hypo": KEITH_HYPO_ENV,
-           "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV, "keith_carry": KEITH_CARRY_ENV, "keith_ws": KEITH_WS_ENV, "keith_wsd": KEITH_WSD_ENV}
+           "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV, "keith_carry": KEITH_CARRY_ENV, "keith_ws": KEITH_WS_ENV, "keith_wsd": KEITH_WSD_ENV, "keith_fx": KEITH_FX_ENV}
 ARMS = tuple(ARM_ENV)
 # grafts (submission/_throughput_v1/<name>.py, install() -> "<name>: OK") an arm installs in memory
 ARM_GRAFTS = {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",), "keith_hypo": ("graft_hypo",),
-              "keith_probe": ("graft_probe",), "keith_carry": ("graft_carry",), "keith_ws": ("graft_workspace",), "keith_wsd": ("graft_workspace",)}
-GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_", "PROBE_", "CARRY_", "WS_")     # every graft flag; scrubbed from the shell for every arm
-GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEYS + CARRY_ENV_KEYS + WSD_ENV_KEYS
+              "keith_probe": ("graft_probe",), "keith_carry": ("graft_carry",), "keith_ws": ("graft_workspace",), "keith_wsd": ("graft_workspace",),
+              "keith_fx": ("graft_effects",)}
+GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_", "PROBE_", "CARRY_", "WS_", "EFFECTS_")     # every graft flag; scrubbed from the shell for every arm
+GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEYS + CARRY_ENV_KEYS + WSD_ENV_KEYS + EFFECTS_ENV_KEYS
 # loss-ledger-3 reference reads for the PROBE gate (docs/research-2026-09-08/R-loss-ledger-3.md, yield900 regime)
 LEDGER3_REFERENCE = {"turns_ge3_analysis_share": 0.15, "wall_actions_ratio_median": 0.72, "yields_per_draw": "27-30",
                      "analysis_call_share": 0.49,
