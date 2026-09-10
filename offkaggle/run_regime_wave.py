@@ -256,16 +256,29 @@ EFFECTS_ENV_KEYS = ("EFFECTS_MAX_ACTIONS", "EFFECTS_MAX_CHARS", "EFFECTS_MIN_OCC
                     "EFFECTS_UNIVERSAL_PCT")
 KEITH_FX_ENV = {**KEITH_ANALYZER_ENV, "EFFECTS_MAX_ACTIONS": "8", "EFFECTS_MAX_CHARS": "900",
                 "EFFECTS_MIN_OCCURRENCES": "1", "EFFECTS_UNIVERSAL_PCT": "90"}
+# 09-10 graft_sweep: AutumnBench (arXiv:2510.19788, 43 grid worlds, 517 humans vs frontier models)
+# measures reasoning models spending <7 % of actions on resets+no-ops vs humans ~12.5 % EACH, and
+# "not treating resets as special actions" -- i.e. never using them as experimental instruments. The
+# 09-10 sweep called this the largest idea in the literature nobody has tested. Our corpus agrees from
+# the other side (0 of 2,047 successful calls forward-simulate). So the HARNESS runs the experiment:
+# before the model's first decision it fires each valid action once and repeats one, buying a complete
+# one-observation-per-action map for ~|A|+1 actions. Cheap in SCORE because level 1 carries weight 1 of
+# a 21-55 denominator, and actions on a level never cleared cost exactly zero.
+SWEEP_ENV_KEYS = ("SWEEP_ENABLE", "SWEEP_MAX_ACTIONS", "SWEEP_REPEAT")
+KEITH_SWEEP_ENV = {**KEITH_ANALYZER_ENV, "SWEEP_ENABLE": "1", "SWEEP_MAX_ACTIONS": "8", "SWEEP_REPEAT": "1"}
+# the stack: harness-computed dynamics fed from action 1 by the opening sweep
+KEITH_FXS_ENV = {**KEITH_FX_ENV, "SWEEP_ENABLE": "1", "SWEEP_MAX_ACTIONS": "8", "SWEEP_REPEAT": "1"}
 ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV, "keith_yield900": KEITH_YIELD900_ENV,
            "keith_retry": KEITH_RETRY_ENV, "keith_evid": KEITH_EVID_ENV, "keith_hypo": KEITH_HYPO_ENV,
-           "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV, "keith_carry": KEITH_CARRY_ENV, "keith_ws": KEITH_WS_ENV, "keith_wsd": KEITH_WSD_ENV, "keith_fx": KEITH_FX_ENV}
+           "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV, "keith_carry": KEITH_CARRY_ENV, "keith_ws": KEITH_WS_ENV, "keith_wsd": KEITH_WSD_ENV, "keith_fx": KEITH_FX_ENV, "keith_sweep": KEITH_SWEEP_ENV, "keith_fxs": KEITH_FXS_ENV}
 ARMS = tuple(ARM_ENV)
 # grafts (submission/_throughput_v1/<name>.py, install() -> "<name>: OK") an arm installs in memory
 ARM_GRAFTS = {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",), "keith_hypo": ("graft_hypo",),
               "keith_probe": ("graft_probe",), "keith_carry": ("graft_carry",), "keith_ws": ("graft_workspace",), "keith_wsd": ("graft_workspace",),
-              "keith_fx": ("graft_effects",)}
-GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_", "PROBE_", "CARRY_", "WS_", "EFFECTS_")     # every graft flag; scrubbed from the shell for every arm
-GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEYS + CARRY_ENV_KEYS + WSD_ENV_KEYS + EFFECTS_ENV_KEYS
+              "keith_fx": ("graft_effects",), "keith_sweep": ("graft_sweep",),
+              "keith_fxs": ("graft_effects", "graft_sweep")}
+GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_", "PROBE_", "CARRY_", "WS_", "EFFECTS_", "SWEEP_")     # every graft flag; scrubbed from the shell for every arm
+GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEYS + CARRY_ENV_KEYS + WSD_ENV_KEYS + EFFECTS_ENV_KEYS + SWEEP_ENV_KEYS
 # loss-ledger-3 reference reads for the PROBE gate (docs/research-2026-09-08/R-loss-ledger-3.md, yield900 regime)
 LEDGER3_REFERENCE = {"turns_ge3_analysis_share": 0.15, "wall_actions_ratio_median": 0.72, "yields_per_draw": "27-30",
                      "analysis_call_share": 0.49,
