@@ -181,7 +181,7 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert rw.KEITH_WS_ENV["WS_ENABLE"] == "1" and rw.KEITH_WS_ENV["LOCAL_ANALYZER_YIELD_SECONDS"] == "900"
     assert rw.ARM_GRAFTS["keith_ws"] == ("graft_workspace",)
     assert "WS_" in rw.GRAFT_ENV_PREFIXES and set(rw.WS_ENV_KEYS) <= set(rw.GRAFT_FLAG_KEYS)
-    assert rw.ARMS[-3:] == ("keith_budget", "keith_ctx16", "keith_ctx12", "keith_ctx8")
+    assert rw.ARMS[-3:] == ("keith_ctx16", "keith_ctx12", "keith_ctx8")
     d7 = {k for k in set(rw.KEITH_WS_ENV) | set(rw.KEITH_WSD_ENV) if rw.KEITH_WS_ENV.get(k) != rw.KEITH_WSD_ENV.get(k)}
     assert d7 == {"WS_DIRECT_ENABLE", "WS_DIRECT_AFTER_ACTIONS", "WS_DIRECT_MAX_CALLS", "WS_DIRECT_MAX_PER_GAME",
                   "WS_DIRECT_MAX_TRANSITIONS", "WS_DIRECT_MAX_CELLS"}, d7
