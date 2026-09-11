@@ -1238,3 +1238,56 @@ average 1.18 / 0.91 / 0.91 levels at base, ≈3.0 levels total. With **3–24× 
 **2**. **tn36 spent 3,659 actions and cleared nothing.** That is a third independent pointer, after
 KV10 (elasticity 0.4 at +47 %) and the void wave's salvage (0.06 at +141 %), that budget stops
 converting well before 3×. It is not a verdict: n=3, hard games, and the low-latency confound.
+
+## RESULT — `keith_budget` 3x clean (conc 28 / 23,760 s; 19:25→02:01 UTC, 6.6 h, ≈$27) — **BUDGET CONVERTS**
+
+Instrument held: **zero ENOSPC, zero crashes**, 24 gave_up + **1 WON**, disk landed at 14 GB
+(guard threshold 8 GB, never tripped). The `graft_compactstate` fix did its job.
+
+**ENGAGEMENT — PASS on both gates.** calls/game **169.8** (gate ≥140, = **3.04×** the base 55.8);
+median e2e **128.8 s** (gate 120–175 s, so cadence genuinely held and this is a pure budget knob).
+
+**PRIMARY: 56 levels vs pooled base 39.33 (sd 2.34) = +16.67 = +7.12 sd → band PARTIAL (46–59).**
+
+| | base | 3x arm | ratio |
+|---|---|---|---|
+| calls/game | 55.8 | 169.8 | 3.04× |
+| actions/game | 154 | 618 | 4.01× |
+| levels (25 games) | 39.33 | **56** | 1.42× |
+| mean score/game | 6.40 | **13.76** | **2.15×** |
+| zero-level games | 2 | 2 | — |
+
+**IMPLIED ELASTICITY 0.21** (KV10 measured 0.40 at +47 %). So elasticity *decays* — 0.40 → 0.21 — but
+budget **does** convert, substantially, out to 3×. The depth distribution moves right: games stuck at
+one level fall 14 → 8, and 5–6-level games go 0 → 3.
+**`ft09` WON OUTRIGHT: 6/6 levels, score 100.00, in 105 actions** — the first outright win in this
+campaign's rig history.
+
+## CORRECTION — I called this wrong twice yesterday, and it matters
+
+After the void wave I wrote that its salvage "points one way", quoting an implied elasticity of
+**0.06**, and then called the 3-game smoke a "third independent pointer" that budget stops converting
+before 3×. **Both readings were wrong.** The clean number is **0.21 with the score more than doubling.**
+
+Why the salvage misled: those games were killed by ENOSPC at roughly **half** their intended clock,
+and at high budget the levels arrive **late** — the whole point of the extra budget is the back half of
+the game. Reading a wave cut off mid-run as if it were a budget measurement was the error, and I
+should have labelled it unreadable rather than directional. The smoke (n=3, hard games, collapsed
+queue) never carried the weight I gave it either.
+
+## WHAT IT DOES AND DOES NOT UNLOCK
+
+**It is NOT live-legal and cannot be made so.** 3× the per-game clock needs 3× the total GPU-hours;
+the Kaggle session is pinned at 32,400 s. This arm is a measurement, exactly as pre-registered.
+
+**Redistribution inside the fixed budget captures only a fraction of it.** Re-running the triage
+simulation with the now-**measured** 0.21 (every policy below sits inside the measured uplift range,
+so this is no longer extrapolation): best net **+1.11** on a 9.12 base = **+12 %**. The reason is
+structural — triage can only move budget between games, and the total is fixed, while the conversion
+is sublinear.
+
+**The finding that matters:** the agent is **not** at a capability ceiling on depth. Given 3× the calls
+at identical cadence it goes markedly deeper, clears a game outright, and doubles the score. What
+bounds us is total compute, not comprehension — which is the opposite of the conclusion the previous
+six engaged-and-flat results were pointing toward, and it re-opens *anything that buys effective
+calls per game* as the lever class worth attacking.
