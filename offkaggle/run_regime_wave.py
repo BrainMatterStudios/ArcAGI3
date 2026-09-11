@@ -283,20 +283,28 @@ KEITH_BUDGET_ENV = {**KEITH_ANALYZER_ENV}
 # same GPU-hours buy more calls. Six engaged-and-flat results say context CONTENT does not
 # move levels; NONE of them tested REMOVING it to buy calls. That is the untested direction.
 CTX16_ENV = {**KEITH_ANALYZER_ENV, "LOCAL_ANALYZER_CONTEXT_WINDOW": "16384"}
+# 09-11 keith_nr16: ctx16 bought calls (55.8 -> 81.8) and died (-7.83 sd) because it kept only
+# ~5.2 retained turns vs the base's ~12.6 -- a retained turn costs ~2,217 tokens and ~1,300 of
+# those are the assistant's REASONING. Strip reasoning from RETAINED history and a turn costs
+# ~917, restoring ~12.5 turns at a 16,384 window: the SAME history depth as base at HALF the
+# sequence length, so twice the running slots and twice the calls. Counter-evidence recorded
+# before the run: OpenAI attribute 13.3 -> 38.3 % to retained reasoning.
+NR16_ENV = {**KEITH_ANALYZER_ENV, "LOCAL_ANALYZER_CONTEXT_WINDOW": "16384"}
 CTX12_ENV = {**KEITH_ANALYZER_ENV, "LOCAL_ANALYZER_CONTEXT_WINDOW": "12288"}
 CTX8_ENV = {**KEITH_ANALYZER_ENV, "LOCAL_ANALYZER_CONTEXT_WINDOW": "8192"}
 ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV, "keith_yield900": KEITH_YIELD900_ENV,
            "keith_retry": KEITH_RETRY_ENV, "keith_evid": KEITH_EVID_ENV, "keith_hypo": KEITH_HYPO_ENV,
            "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV, "keith_carry": KEITH_CARRY_ENV, "keith_ws": KEITH_WS_ENV, "keith_wsd": KEITH_WSD_ENV, "keith_fx": KEITH_FX_ENV, "keith_sweep": KEITH_SWEEP_ENV, "keith_fxs": KEITH_FXS_ENV,
            "keith_budget": KEITH_BUDGET_ENV,
-           "keith_ctx16": CTX16_ENV, "keith_ctx12": CTX12_ENV, "keith_ctx8": CTX8_ENV}
+           "keith_ctx16": CTX16_ENV, "keith_nr16": NR16_ENV, "keith_ctx12": CTX12_ENV, "keith_ctx8": CTX8_ENV}
 ARMS = tuple(ARM_ENV)
 # grafts (submission/_throughput_v1/<name>.py, install() -> "<name>: OK") an arm installs in memory
 ARM_GRAFTS = {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",), "keith_hypo": ("graft_hypo",),
               "keith_probe": ("graft_probe",), "keith_carry": ("graft_carry",), "keith_ws": ("graft_workspace",), "keith_wsd": ("graft_workspace",),
               "keith_fx": ("graft_effects",), "keith_sweep": ("graft_sweep",),
               "keith_fxs": ("graft_effects", "graft_sweep"),
-              "keith_budget": ("graft_compactstate",)}
+              "keith_budget": ("graft_compactstate",),
+              "keith_nr16": ("graft_noreason",)}
 GRAFT_ENV_PREFIXES = ("RETRY_", "EVID_", "HYPO_", "PROBE_", "CARRY_", "WS_", "EFFECTS_", "SWEEP_")     # every graft flag; scrubbed from the shell for every arm
 GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEYS + CARRY_ENV_KEYS + WSD_ENV_KEYS + EFFECTS_ENV_KEYS + SWEEP_ENV_KEYS
 # loss-ledger-3 reference reads for the PROBE gate (docs/research-2026-09-08/R-loss-ledger-3.md, yield900 regime)

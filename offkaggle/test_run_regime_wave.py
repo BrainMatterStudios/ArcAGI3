@@ -122,7 +122,7 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert (rw.KEITH_ANALYZER_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"], rw.KEITH_ANALYZER_ENV["LOCAL_ANALYZER_MAX_OUTPUT"]) == ("32768", "0")
     assert (rw.FLIGHT_ANALYZER_ENV["LOCAL_ANALYZER_CONTEXT_WINDOW"], rw.FLIGHT_ANALYZER_ENV["LOCAL_ANALYZER_MAX_OUTPUT"]) == ("24576", "4096")
     assert rw.ARMS == ("keith", "flight", "keith_yield180", "keith_yield900", "keith_retry", "keith_evid", "keith_hypo", "keith_up8",
-                       "keith_probe", "keith_carry", "keith_ws", "keith_wsd", "keith_fx", "keith_sweep", "keith_fxs", "keith_budget", "keith_ctx16", "keith_ctx12", "keith_ctx8")
+                       "keith_probe", "keith_carry", "keith_ws", "keith_wsd", "keith_fx", "keith_sweep", "keith_fxs", "keith_budget", "keith_ctx16", "keith_nr16", "keith_ctx12", "keith_ctx8")
     # the original single-knob arm differs from the keith base on exactly the yield key
     d2 = {k for k in set(rw.KEITH_ANALYZER_ENV) | set(rw.KEITH_YIELD180_ENV)
           if rw.KEITH_ANALYZER_ENV.get(k) != rw.KEITH_YIELD180_ENV.get(k)}
@@ -146,6 +146,9 @@ def test_arms_differ_on_exactly_the_window_keys():
     # the budget arm is the plain keith env plus ONLY the instrument patch (no flags)
     assert rw.KEITH_BUDGET_ENV == rw.KEITH_ANALYZER_ENV
     assert rw.ARM_GRAFTS["keith_budget"] == ("graft_compactstate",)
+    # nr16 is the SAME window as ctx16; the only difference is the graft
+    assert rw.NR16_ENV == rw.CTX16_ENV
+    assert rw.ARM_GRAFTS["keith_nr16"] == ("graft_noreason",)
     # the context arms differ from the keith base on exactly ONE key, the window
     for arm, want in ((rw.CTX16_ENV, "16384"), (rw.CTX12_ENV, "12288"), (rw.CTX8_ENV, "8192")):
         d = {k for k in set(rw.KEITH_ANALYZER_ENV) | set(arm)
@@ -163,7 +166,8 @@ def test_arms_differ_on_exactly_the_window_keys():
                              "keith_carry": ("graft_carry",), "keith_ws": ("graft_workspace",),
                              "keith_wsd": ("graft_workspace",), "keith_fx": ("graft_effects",), "keith_sweep": ("graft_sweep",),
                              "keith_fxs": ("graft_effects", "graft_sweep"),
-                             "keith_budget": ("graft_compactstate",)}
+                             "keith_budget": ("graft_compactstate",),
+                             "keith_nr16": ("graft_noreason",)}
     # 09-08 Track A1: the carry arm differs from keith_yield900 (its base) by exactly the graft's CARRY_* flags
     d5 = {k for k in set(rw.KEITH_YIELD900_ENV) | set(rw.KEITH_CARRY_ENV)
           if rw.KEITH_YIELD900_ENV.get(k) != rw.KEITH_CARRY_ENV.get(k)}
@@ -181,7 +185,7 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert rw.KEITH_WS_ENV["WS_ENABLE"] == "1" and rw.KEITH_WS_ENV["LOCAL_ANALYZER_YIELD_SECONDS"] == "900"
     assert rw.ARM_GRAFTS["keith_ws"] == ("graft_workspace",)
     assert "WS_" in rw.GRAFT_ENV_PREFIXES and set(rw.WS_ENV_KEYS) <= set(rw.GRAFT_FLAG_KEYS)
-    assert rw.ARMS[-3:] == ("keith_ctx16", "keith_ctx12", "keith_ctx8")
+    assert rw.ARMS[-3:] == ("keith_nr16", "keith_ctx12", "keith_ctx8")
     d7 = {k for k in set(rw.KEITH_WS_ENV) | set(rw.KEITH_WSD_ENV) if rw.KEITH_WS_ENV.get(k) != rw.KEITH_WSD_ENV.get(k)}
     assert d7 == {"WS_DIRECT_ENABLE", "WS_DIRECT_AFTER_ACTIONS", "WS_DIRECT_MAX_CALLS", "WS_DIRECT_MAX_PER_GAME",
                   "WS_DIRECT_MAX_TRANSITIONS", "WS_DIRECT_MAX_CELLS"}, d7

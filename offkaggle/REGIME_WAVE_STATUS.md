@@ -1536,3 +1536,43 @@ each turn without dropping turns — a different intervention from shrinking the
 one of these that changes *composition* rather than *capacity*). External evidence runs against it
 (OpenAI's retained-reasoning result was 13.3 → 38.3), which is exactly why it is worth one wave
 rather than an assumption.
+
+---
+
+## PRE-REGISTERED — `keith_nr16` (same turns, half the tokens), written 2026-09-11 BEFORE data
+
+**The diagnosis this is built on.** `keith_ctx16` bought calls (55.8 → 81.8) and died (−7.83 sd). The
+measured cause was **turn depth**: a retained turn costs ~2,217 tokens and **~1,300 of those are the
+assistant's reasoning**, so a 16,384 window keeps only **~5.2** turns against the base's **~12.6**.
+
+**The intervention.** Strip `reasoning` from messages as they enter *retained* history. A turn then
+costs ~917 tokens, and a 16,384 window keeps **~12.5** turns — the **same history depth as the 32,768
+base at half the sequence length**. Same turns, twice the slots, twice the calls. The **current**
+turn keeps its reasoning; only past turns lose the text, and their content, tool calls and tool
+results all survive.
+
+**Arm = `keith_ctx16`'s env (window 16384) + `graft_noreason`. Identical window to ctx16, so the pair
+is a clean controlled comparison of exactly one thing: whether retained reasoning is worth its tokens.**
+
+**COUNTER-EVIDENCE, recorded before the run because it is strong.** OpenAI attribute 13.3 % → 38.3 %
+on the public set to **retained reasoning** plus compaction. Our own A1 probe proved the stock really
+does carry reasoning on every retained turn (1,268 request pairs, slope 1.0), so this is a genuine
+subtraction, not a no-op. If that result transfers, this arm removes the most valuable thing in the
+context and should read badly. **Nobody has measured what retained reasoning is worth when its cost
+is paid in calls.** That is the question.
+
+**MECHANISM GATE (first):** calls/game **≥ 80** (ctx16 got 81.8) AND **actions/call ≥ 2.0**
+(base 2.76; ctx16 collapsed to 1.35). Actions/call is again the real test — if turn depth was the
+cause, restoring turns should restore it.
+
+**PRIMARY — levels vs pooled base 39.33 (sd 2.34):** ≥48 step / 45–47 redraw / ≤44 dead.
+Projection ≈103 calls/game ≈ **46 levels** — below the bar alone, as expected; KV 6.5 GiB would add
+~+4 on top and is the queued follow-up **only if this arm's actions/call holds**.
+
+**THE THREE-WAY READ, which is what makes this worth $9:**
+* **actions/call recovers to ~2.7 and levels ≥ 45** → turn depth was the cause, retained reasoning is
+  NOT worth its tokens for this model, and we have a live-legal lever for the first time.
+* **actions/call recovers but levels stay low** → turns matter and reasoning matters too; the trade is
+  a wash and the family closes.
+* **actions/call stays ~1.35** → turn depth was NOT the cause of ctx16's collapse, my diagnosis is
+  wrong, and something else about a small window breaks the agent.
