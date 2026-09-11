@@ -1396,3 +1396,49 @@ so there are exactly two ways to raise them:
 **Both routes are now closed.** The 3× budget result (56 levels, ft09 won outright) is real and
 remains **unreachable live**, because there is no live-legal way to buy the calls it needs. That is
 the honest state: we know what would work and we cannot afford it.
+
+---
+
+## PRE-REGISTERED — `keith_ctx16`, written 2026-09-11 BEFORE data
+
+**I over-closed yesterday and this corrects it.** After `keith_ctx12` read −11.68 sd I wrote that
+"both routes to more live slots are now closed". That generalised **one point** into a route.
+
+**The collapse at 12,288 has a MECHANISTIC threshold, not a smooth gradient.** Context budget minus
+the 3,170-token system prompt and a ~745-token user prompt leaves the history budget. The longest
+single observed completion is **10,439 tokens**:
+
+| window | history budget | fits one max-length turn? | tested |
+|---|---|---|---|
+| 32,768 | 27,829 | yes | yes (base) |
+| **16,384** | **11,445** | **yes** | **NO** |
+| 12,288 | 7,349 | **no — thrashes** | yes (−11.68 sd) |
+| 8,192 | 3,253 | no | no (cancelled) |
+
+**16,384 sits on the other side of the threshold.** At 12,288 a single long-reasoning turn cannot fit
+in the whole history budget, so the trimmer evicts constantly and actions/call fell 2.76 → 0.27.
+At 16,384 that specific failure cannot occur. This is a different regime, not a milder dose.
+
+**Knob:** `LOCAL_ANALYZER_CONTEXT_WINDOW` 32768 → **16384**, nothing else. Live geometry, live-legal,
+≈2.2 h, ≈$9.
+
+**MECHANISM GATE (first):** calls/game **≥ 80** (base 55.8) AND **actions/call ≥ 2.0** (base 2.76;
+ctx12 collapsed to 0.27). **The second is the real test** — it is the quantity that failed last time,
+and if it collapses again the threshold theory is wrong and the whole shrink-sequences route is
+genuinely closed, which is worth knowing for $9.
+
+**PRIMARY — levels vs pooled base 39.33 (sd 2.34):** ≥48 step / 45–47 redraw / ≤44 dead.
+Projection ≈103 calls/game and ≈46 levels — *below* the bar on its own, which is expected and fine:
+this arm exists to establish whether the route is alive, not to clear the bar alone.
+
+**WHAT ELSE I WRONGLY CLOSED, recorded so it is not lost:**
+1. **KV 6–6.5 GiB.** The Kaggle law says headroom is "≤1–2 GiB above the public 5 GiB" because 8 and
+   10 GiB OOMed. **6 and 6.5 were never tried** and are inside the stated headroom.
+2. **System-prompt trim.** 3,170 tokens re-sent on every call; cutting it raises history capacity and
+   shortens sequences at the same time. Never tested.
+3. **Service time.** `calls/game = 32,400 × slots / (110 × service)`. I only ever attacked slots.
+   Service is 17.8 s, decode-dominated, and the regime pins `num_speculative_tokens=3`. Raising MTP
+   attacks the denominator. **I never mentioned this axis at all.**
+
+**Combinations multiply slots.** Projected: ctx16k + KV 6.5 GiB ≈ 134 calls/game ≈ **50.9 levels**
+(clears); adding a 2k system-prompt trim ≈ 154 calls ≈ **53.8**. Each component is live-legal.

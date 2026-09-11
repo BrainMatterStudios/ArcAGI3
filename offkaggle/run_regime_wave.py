@@ -282,13 +282,14 @@ KEITH_BUDGET_ENV = {**KEITH_ANALYZER_ENV}
 # window shortens sequences, so more fit in the 5 GiB KV, the queue drains faster and the
 # same GPU-hours buy more calls. Six engaged-and-flat results say context CONTENT does not
 # move levels; NONE of them tested REMOVING it to buy calls. That is the untested direction.
+CTX16_ENV = {**KEITH_ANALYZER_ENV, "LOCAL_ANALYZER_CONTEXT_WINDOW": "16384"}
 CTX12_ENV = {**KEITH_ANALYZER_ENV, "LOCAL_ANALYZER_CONTEXT_WINDOW": "12288"}
 CTX8_ENV = {**KEITH_ANALYZER_ENV, "LOCAL_ANALYZER_CONTEXT_WINDOW": "8192"}
 ARM_ENV = {"keith": KEITH_ANALYZER_ENV, "flight": FLIGHT_ANALYZER_ENV, "keith_yield180": KEITH_YIELD180_ENV, "keith_yield900": KEITH_YIELD900_ENV,
            "keith_retry": KEITH_RETRY_ENV, "keith_evid": KEITH_EVID_ENV, "keith_hypo": KEITH_HYPO_ENV,
            "keith_up8": KEITH_UP8_ENV, "keith_probe": KEITH_PROBE_ENV, "keith_carry": KEITH_CARRY_ENV, "keith_ws": KEITH_WS_ENV, "keith_wsd": KEITH_WSD_ENV, "keith_fx": KEITH_FX_ENV, "keith_sweep": KEITH_SWEEP_ENV, "keith_fxs": KEITH_FXS_ENV,
            "keith_budget": KEITH_BUDGET_ENV,
-           "keith_ctx12": CTX12_ENV, "keith_ctx8": CTX8_ENV}
+           "keith_ctx16": CTX16_ENV, "keith_ctx12": CTX12_ENV, "keith_ctx8": CTX8_ENV}
 ARMS = tuple(ARM_ENV)
 # grafts (submission/_throughput_v1/<name>.py, install() -> "<name>: OK") an arm installs in memory
 ARM_GRAFTS = {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",), "keith_hypo": ("graft_hypo",),
