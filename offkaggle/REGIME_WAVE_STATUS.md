@@ -1488,3 +1488,51 @@ challenge is what produced this; the $9 bought a real closure instead of an infe
 not move levels. These two arms say context *capacity* moves them enormously — −7.83 sd at half the
 window, −11.68 sd at a third. Those are different claims about the same resource, and the pair is now
 measured rather than assumed.
+
+## SIZING — the two remaining "buy calls" routes, closed by arithmetic on MEASURED data (2026-09-11, $0)
+
+Rather than spend two more waves, both remaining routes were sized from telemetry already on disk.
+
+**ROUTE C — service time / MTP. Measured, not assumed.** Pulled `vllm:spec_decode_*` from a wave's
+own metrics: at MTP-3 the per-position acceptance is **76.0 % → 58.3 % → 45.4 %** (decay ratio 0.78),
+giving **2.80 tokens per forward pass** against a theoretical ceiling of 4.00. Extrapolating that
+measured decay, and charging a conservative 3 % extra cost per speculation position:
+
+| MTP | tokens/forward | decode speedup | service | calls/game | levels |
+|---|---|---|---|---|---|
+| 3 (today) | 2.80 | 1.00× | 17.8 s | 50 | 38.4 |
+| 5 | 3.43 | 1.16× | 15.6 s | 57 | 39.5 |
+| 8 | 3.94 | 1.22× | 14.8 s | 60 | 39.9 |
+
+**The ceiling settles it independently of my decay assumption:** to reach 48 levels on service alone,
+service would have to fall to **7.7 s**, i.e. decode from 16.2 s to 6.1 s — a **2.6× decode speedup**,
+which speculation cannot deliver. Even *perfect* acceptance at MTP-8 (physically impossible) reaches
+only 50.8 levels.
+
+**ROUTE B — KV headroom.** 6.0–6.5 GiB is inside the recorded Kaggle law and untried, worth
+**+20–30 % calls ≈ 40–41 levels**. Real, and short.
+
+**EVERY REMAINING LIVE-LEGAL COMBINATION:**
+
+| configuration | calls/game | levels |
+|---|---|---|
+| base | 50 | 38.4 |
+| KV 6.5 | 65 | 40.6 |
+| MTP-5 | 57 | 39.5 |
+| KV 6.5 + MTP-5 | 74 | 42.0 |
+| **KV 6.5 + MTP-8 (most optimistic reading of both)** | 78 | **42.6** |
+
+**The best live-legal case is 42.6 levels against a 48 bar — short by 5.4 — and it already stacks the
+most favourable reading of both knobs**: KV at 6.5 GiB when 8 GiB OOMed on the Kaggle card, and MTP-8
+when measured acceptance is already decaying 76 → 58 → 45 % per position.
+
+**VERDICT: the whole "buy more calls per game" family is closed, on measured quantities rather than
+inference.** The binding term is elasticity 0.21 — a 56 % call increase (the best available) buys
+only 12 % more levels. The 3× budget result (56 levels, ft09 won outright) stays real and stays
+unreachable, because there is no live-legal route to 3× the calls.
+
+**Still genuinely open, and NOT closed by this:** dropping reasoning from retained history (shortens
+each turn without dropping turns — a different intervention from shrinking the window, and the only
+one of these that changes *composition* rather than *capacity*). External evidence runs against it
+(OpenAI's retained-reasoning result was 13.3 → 38.3), which is exactly why it is worth one wave
+rather than an assumption.
