@@ -1576,3 +1576,46 @@ Projection ≈103 calls/game ≈ **46 levels** — below the bar alone, as expec
   a wash and the family closes.
 * **actions/call stays ~1.35** → turn depth was NOT the cause of ctx16's collapse, my diagnosis is
   wrong, and something else about a small window breaks the agent.
+
+## RESULT — `keith_nr16` (ctx16 + drop reasoning from retained history; ≈$9) — **DEAD, −8.26 sd, and my diagnosis was wrong**
+
+**Both mechanism gates FAILED, and it is WORSE than the arm it was built to fix.**
+
+Controlled pair — identical 16,384 window, only the graft differs:
+
+| | median prompt | completion/call | e2e | calls/game | actions/call | levels |
+|---|---|---|---|---|---|---|
+| base (32,768) | 21,738 | 1,297 | 26.6 s | 56.8 | 2.74 | 39.33 |
+| ctx16 | 9,582 | 1,118 | 90.1 s | 81.8 | 1.35 | 21 |
+| **nr16** | **9,435** | **1,632** | **132.7 s** | **59.2** | **0.77** | **20** |
+
+**THE STRUCTURAL MISTAKE, and it is the useful part.** I claimed this would give "the same turns at
+half the sequence length". It did not, and it could not: **the trimmer always fills the window
+budget.** nr16's median prompt (9,435) is essentially ctx16's (9,582). Dropping reasoning bought
+**more turns**, not **shorter sequences** — exactly the failure mode I had already written down for
+the graft *alone*, and then assumed the smaller window would prevent. It does not.
+
+**Sequence length is set by the context window, full stop.** So dropping reasoning can never buy
+slots, and the only lever on sequence length remains the window itself — which is measured
+catastrophic. **This closes the composition route as well as the capacity route.**
+
+**AND RETAINED REASONING IS LOAD-BEARING.** More reasoning-free turns did *worse* than fewer turns
+with reasoning: actions/call **0.77 vs 1.35**. Stripped of its own past thinking the model **generated
+46 % more tokens per call** (1,632 vs 1,118) — it re-derives what it can no longer see — which pushed
+e2e from 90 s to **133 s** and *cut* calls/game from 81.8 to 59.2. The intervention paid for turns in
+calls and got neither.
+
+This is the **third** pre-registered outcome of the three I wrote down: actions/call did not recover,
+so turn depth was **not** the cause of ctx16's collapse. It independently corroborates OpenAI's
+retained-reasoning result (13.3 → 38.3 %) from the subtraction side, on an open model, at our budget.
+
+**STATE OF THE "BUY CALLS" FAMILY — now closed on all four routes:**
+| route | verdict |
+|---|---|
+| shrink the window | catastrophic, two points, smooth gradient |
+| drop reasoning (composition) | **this arm** — cannot shorten sequences, and reasoning is load-bearing |
+| raise KV 6–6.5 GiB | untried, sized at ≈40–41 levels |
+| service time / MTP | sized from measured acceptance at ≈39.5–39.9 levels |
+
+Best possible remaining combination ≈**42.6 levels against a 48 bar.** The 3× budget result
+(56 levels, ft09 won outright) stays real and stays unreachable.
