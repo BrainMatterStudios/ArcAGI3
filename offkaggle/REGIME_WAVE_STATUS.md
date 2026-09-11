@@ -1442,3 +1442,49 @@ this arm exists to establish whether the route is alive, not to clear the bar al
 
 **Combinations multiply slots.** Projected: ctx16k + KV 6.5 GiB ≈ 134 calls/game ≈ **50.9 levels**
 (clears); adding a 2k system-prompt trim ≈ 154 calls ≈ **53.8**. Each component is live-legal.
+
+## RESULT — `keith_ctx16` (window 16384; 11:16→13:30 UTC, ≈$9) — **DEAD, and it refutes my threshold theory**
+
+**MECHANISM GATE: calls PASS, actions/call FAIL — and actions/call was the stated real test.**
+
+| | base 32768 | ctx16 | ctx12 |
+|---|---|---|---|
+| median prompt | 20,061 | 9,582 | 6,674 |
+| calls/game | 55.8 | **81.8 (1.47×)** | 108.4 |
+| **actions/call** | **2.76** | **1.35 (FAIL, gate 2.0)** | 0.27 |
+| levels | 39.33 | **21** | 12 |
+
+**PRIMARY: 21 levels vs 39.33 = −7.83 sd → DEAD.** Projection was ~46; it came in at 21.
+
+**THE THRESHOLD THEORY IS REFUTED.** I predicted 16,384 would be a *different regime* because its
+11,445-token history budget holds the longest observed turn (10,439) while 12,288's 7,349 does not.
+It holds that turn **and still lost half its actions/call**:
+
+| window | history budget | holds a max turn? | actions/call | levels |
+|---|---|---|---|---|
+| 32,768 | 27,829 | yes | 2.76 | 39.33 |
+| 16,384 | 11,445 | **yes** | **1.35** | 21 |
+| 12,288 | 7,349 | no | 0.27 | 12 |
+
+Degradation tracks context **smoothly**. There is no safe window to sit at, and the mechanism is not
+the eviction edge I hypothesised — it is that **context capacity is strongly load-bearing across its
+whole range**.
+
+**ROUTE A (shrink sequences) IS NOW PROPERLY CLOSED** — two points, a monotone gradient, and an
+understood mechanism, rather than the single point I over-generalised from yesterday. Ahmed's
+challenge is what produced this; the $9 bought a real closure instead of an inference.
+
+**WHAT REMAINS GENUINELY UNTESTED (do not close these by inference):**
+1. **KV 6–6.5 GiB** — inside the recorded Kaggle headroom ("≤1–2 GiB above the public 5"); only 8 and
+   10 GiB OOMed. Worth ≈+20–30 % calls ≈ **+4 % levels** at elasticity 0.21. Real, but far short alone.
+2. **Service time / MTP** — `calls/game = 32,400 × slots / (110 × service)`. Every arm so far attacked
+   *slots*; nothing has attacked the **denominator**. Service is 17.8 s, decode-dominated, and the
+   regime pins `num_speculative_tokens=3`. **Still completely untouched.**
+3. **Drop reasoning from retained history** — shortens each turn without dropping turns, which is a
+   different intervention from shrinking the window (that drops turns). Strong external evidence
+   *against* it: OpenAI's retained-reasoning result was 13.3 → 38.3. Untested here nonetheless.
+
+**A SECOND, SEPARATE FINDING worth keeping.** Six engaged-and-flat arms said context *content* does
+not move levels. These two arms say context *capacity* moves them enormously — −7.83 sd at half the
+window, −11.68 sd at a third. Those are different claims about the same resource, and the pair is now
+measured rather than assumed.
