@@ -1,0 +1,19 @@
+REGIME WAVE  arm=keith_budget  status=done  dry_run=False  games=3  wall=1.01 h
+  endpoint https://a-m-mobasher--arc3-flashnext-serve.modal.run/v1  model Qwen/Qwen3.8-Flash-Next-NVFP4
+  IDENTITY profile 'kv5-bf16-mtp3-c8-cg32' (expected 'kv5-bf16-mtp3-c8-cg32', ok=True) | gpu ok=True ['0, NVIDIA RTX PRO 6000 Blackwell Server Edition, 97887 MiB, 580.95.05, 12.0']
+  geometry conc 3 | 3600 s/game | analyzer_timeout 900 | max_actions None | max_calls None | wave cap 5400 s | public25 geometry: False
+  stock agent sha 74ab69105240 (== june_stock pin) | framework f68b6850b242 | pkls pinned
+  ARM KNOB  CONTEXT_WINDOW=32768  MAX_OUTPUT=0  UPSCALE=4 ([256, 256] px, ~64 vision tok/img derived)  (yield 60 s, temp 0.6/0.95/20, thinking true); harness-reported {'max_output_tokens': 'server default', 'context_budget_tokens': '31744', 'yield_seconds': '60.0'}
+  SCORE 1.84 total | levels 2 (0.67/game) | actions 5245 (1748/game) | zero-level games 2 | states {'gave_up': 3}
+  CADENCE calls/game 174.0 | turns/game 125.0 | distinct steps/game 120.7 | actions/call 10.05 | calls/turn 1.39
+  REASONING chars/call mean 2274 median 1140 p90 4642 (n=522) | no-tool-call share 0.4% | length-finish share - | finish {'tool_calls': 520, 'stop': 2}
+  TURNS step-executed 95.7% | yielded 4.3% | outcomes {'step_executed': 359, 'yielded': 16}
+  CLIENT e2e/call mean 11.7 s median 8.6 s p90 22.1 s | prompt tok/call 20606 | completion tok/call 937 | redirected posts 0 | post errors 0
+  VLLM   requests 522 | e2e mean 10.8 s | queue 0.0 s | inference 10.7 s | TPOT 9.4 ms | gen tok/req 937 | gen tok/s 135 | MTP accept 65.3% | preemptions 0 | prefix hit - | finished {'abort': 0.0, 'error': 0.0, 'length': 0.0, 'repetition': 0.0, 'stop': 522.0}
+  REF keith V14 commit: 55 calls/game, reasoning 3406/2206, 53 turns/game, e2e 142 s, queue 124 s, MTP 60%, 1.44 lv/game, 6.76 pts
+  WALL   attempts 1/3 (L2 reached 1; attempt = L2 with >= 30 calls left) | passes 1 (level 3 reached) | void 0 {} | calls@L2 {'cd82-fb555c5d_p0': 22, 'dc22-fdcac232_p0': None, 'tn36-ef4dde99_p0': None} | UPTAKE wall 0.0% (0/340) all 0.0%
+  FIRST-CALL prompt_tokens (n_messages==2) mean 4055 n=3 [4055..4059] | keith baseline ~4050 | delta +5 | UPSCALE=4: up8 expects ≈ +192 (+0 => processor downscaled = no-op; >> => geometry differs)
+  run               lv/n    act  calls turns reas_mean  len%  notool%  e2e_s   score  retry probe wall/b  evid  hypo  wall%  upt%  c@L2 att void  state
+  cd82-fb555c5d_p0    2/6    495   217   145      2340      -    0.5%   12.4    5.52    0/0   0/0   8.34     0     0   0.0%  0.0%    22   Y    -  gave_up
+  dc22-fdcac232_p0    0/6   1091   150   106      3028      -       -   12.9    0.00    0/0   0/0  18.49     0     0   0.0%  0.0%  None   -    -  gave_up
+  tn36-ef4dde99_p0    0/7   3659   155   124      1452      -    0.6%    9.7    0.00    0/0   0/0 114.34     0     0   0.0%  0.0%  None   -    -  gave_up

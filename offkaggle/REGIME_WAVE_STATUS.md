@@ -1291,3 +1291,50 @@ at identical cadence it goes markedly deeper, clears a game outright, and double
 bounds us is total compute, not comprehension — which is the opposite of the conclusion the previous
 six engaged-and-flat results were pointing toward, and it re-opens *anything that buys effective
 calls per game* as the lever class worth attacking.
+
+---
+
+## PRE-REGISTERED — `keith_ctx12` (trade context for calls), written 2026-09-11 BEFORE data
+
+**Where this comes from.** The 3x budget arm proved budget **converts** (169.8 calls/game → 56 levels,
++7.12 sd, elasticity **0.21**) but cannot fly: tripling the clock needs 3× the GPU-hours. Live,
+
+```
+calls/game = 32,400 x running_slots / (110 x service)        [concurrency cancels]
+```
+
+so the only live-legal lever is **running slots = KV / average sequence length**. Shrinking the
+context window shortens sequences, fits more in the 5 GiB KV, drains the queue faster, and buys more
+calls from the *same* GPU-hours.
+
+**Six engaged-and-flat results say context CONTENT does not move levels. None of them tested
+REMOVING it to buy calls.** That is the untested direction, and it is a one-env-var change.
+
+**Knob:** `LOCAL_ANALYZER_CONTEXT_WINDOW` 32768 → **12288**. Nothing else differs from `keith`.
+Live geometry otherwise (conc 28, 7,920 s). ≈2.2 h, ≈$9. **Live-legal**: it is one constant in the
+flown notebook.
+
+**Projection (to be falsified, not assumed):** budget 11,264, prompt ≈7,100, slots ≈8.5,
+**≈140 calls/game (2.5×)**, and at elasticity 0.21 ≈**51.8 levels**. History drops to ≈7,285 tokens,
+about 3 retained turns.
+
+**MECHANISM GATE (checked FIRST; this is the part most likely to be wrong).** My slots model is a
+projection, never measured. Required: **calls/game ≥ 90** (a real rise from 55.8) and **median prompt
+tokens ≤ 9,000**. If calls do NOT rise, the slots model is wrong and the arm is VOID — that is a
+cheap, valuable negative about how this server actually allocates KV, and it kills the whole
+context-for-calls idea without any claim about levels.
+
+**PRIMARY — levels on 25 games vs pooled base 39.33 (sd 2.34):** **≥ 48** step candidate / **45–47**
+redraw / **≤ 44** dead.
+
+**THE REAL RISK, stated up front.** Elasticity 0.21 was measured at *constant* context with a longer
+clock. Here each call is **cheaper but dumber** — ~3 retained turns instead of ~10. If call quality
+falls faster than call count rises, levels drop even though the mechanism engages. That outcome is
+the informative one: it would mean context is load-bearing after all, which the six flat results
+never actually tested.
+
+**SAFETY:** calls/game, median + max prompt tokens, calls/turn, e2e, actions/game, zero-level games,
+eviction share, GAME_OVERs/run.
+
+**QUEUED:** `keith_ctx8` (window 8192, projected ≈221 calls/game and ≈63.7 levels) runs only if
+ctx12's mechanism gate passes — a dose-response pair is worth far more than either point alone.
