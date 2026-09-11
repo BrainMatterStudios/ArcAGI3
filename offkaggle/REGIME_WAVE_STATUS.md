@@ -1338,3 +1338,61 @@ eviction share, GAME_OVERs/run.
 
 **QUEUED:** `keith_ctx8` (window 8192, projected ≈221 calls/game and ≈63.7 levels) runs only if
 ctx12's mechanism gate passes — a dose-response pair is worth far more than either point alone.
+
+## RESULT — `keith_ctx12` (context 32768 → 12288; 07:58→10:12 UTC, ≈$9) — **DEAD, catastrophically**
+
+**MECHANISM GATE: PASSED. The slots model was right.**
+
+| | base | ctx12 |
+|---|---|---|
+| median prompt tokens | 20,061 | **6,674** |
+| calls/game | 55.8 | **108.4 (1.94×)** |
+
+Shrinking the window genuinely buys calls, almost exactly as projected. That part of the theory holds.
+
+**PRIMARY: 12 levels vs pooled base 39.33 (sd 2.34) = −27.33 = −11.68 sd.** The worst read in the
+campaign by a wide margin. **15 of 25 games cleared ZERO levels** (base 2).
+
+**WHY — the pre-registered risk, and it is not subtle:**
+
+| | base | ctx12 |
+|---|---|---|
+| actions/game | 154 | **29 (0.19×)** |
+| **actions per call** | **2.76** | **0.27** |
+
+Nearly twice the calls, and each one almost never acts. A 10× collapse in actions-per-call swamped
+the 1.94× gain in calls.
+
+**MECHANISM OF THE COLLAPSE (measured, not guessed).** At window 12,288 the context budget is 11,264.
+Subtract the 3,170-token system prompt and a ~745-token user prompt and **~7,349 tokens remain for
+history**. Observed completion tokens reach **10,439 on a single call** (mean 1,044). **One
+long-reasoning turn does not fit in the entire history budget.** The trimmer then evicts constantly —
+this is the same edge the A1 work already found, where the stock trim can strip back to the system
+message alone when one turn's own assistant+tool pair exceeds the budget. The agent spends its extra
+calls thrashing rather than acting.
+
+## THE CORRECTION THIS FORCES ON MY OWN REASONING
+
+I justified this arm with: "six engaged-and-flat results say context CONTENT does not move levels;
+none tested REMOVING it." That framing was right about the gap and **wrong about the inference**.
+Those six results shaped or added content **within a fixed, ample window**. This arm removed
+**capacity**, and capacity turns out to be strongly load-bearing: −11.68 sd.
+
+**Content is worth little; capacity is worth enormously.** Those are different claims and I had been
+treating the first as evidence about the second.
+
+**`keith_ctx8` IS CANCELLED, not queued.** Its window is smaller still, so the dose-response is
+already answered in the direction that matters and running it would spend $9 to confirm a
+catastrophe. The pre-registration said the pair was worth more than either point; that was true only
+if the first point was survivable.
+
+## WHERE THIS LEAVES THE LIVE-LEGAL PATH
+
+Live, `calls/game = 32,400 × running_slots / (110 × service)`. Slots = KV ÷ average sequence length,
+so there are exactly two ways to raise them:
+* **shrink sequences** — measured here, **catastrophic**;
+* **raise KV** — measured on the rig as +0.28 lv/game, and it **OOM'd on the Kaggle card** at 8/10 GiB.
+
+**Both routes are now closed.** The 3× budget result (56 levels, ft09 won outright) is real and
+remains **unreachable live**, because there is no live-legal way to buy the calls it needs. That is
+the honest state: we know what would work and we cannot afford it.
