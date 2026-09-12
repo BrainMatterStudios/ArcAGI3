@@ -6,6 +6,19 @@ and the completeness critique (`CRITIQUE-workflow-completeness-raw.md`). This do
 with the critique's twelve gaps applied. Judges' totals: Absorption 112, Loop shape 110, Outsider 104,
 Compute 102, Model axis 97; two of three ranked Absorption first.
 
+
+## 0. Status 2026-09-12 evening (results in `offkaggle/REGIME_WAVE_STATUS.md` "RESULTS 2026-09-12")
+
+* **Step 5 KV 6.0 GiB: ALIVE.** Boots on the Kaggle card; 38 levels; +18 % calls/game; e2e 120 s. Kernel
+  `arc3-keith-kv6` v1 is submission #1, ready for the next slot (needs Ahmed's go).
+* **Step 2b prefix caching without MTP: CLOSED by its gate** (hit 15.7 % < 20 %; calls +9 % < +10 %;
+  preemptions 0.54/req). Cheap untested follow-up: dropping MTP frees 7.5 GiB, so APC + KV 10-12 GiB fits.
+* **Step 2a oracle probe: instrument fixed, read NEGATIVE.** 15/15 clones valid; guided 0/5, oracle 0/5,
+  control 0/5 on wa30 L3 within the 100-move budget. The kill line fires: no harness-planner / effect-table
+  planner is built. Optional 50-min follow-up with the budget lifted to separate "cannot" from "cannot within
+  budget".
+* Slot 09-12 used: yield900 draw #4 (sub 56184013, pending).
+
 ## 1. Verdict in one paragraph
 
 We sit at ~3.2 because we fly the best public artifact (a byte copy of keith V14) and nothing public

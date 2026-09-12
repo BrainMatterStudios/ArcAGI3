@@ -1718,3 +1718,46 @@ counterbalanced redraw; VOID = any HTTP 5xx, a vLLM process restart between the 
 preemptions/request > 0.5; end-of-clock ReadTimeouts no longer void. Ahmed's other decisions the same day:
 restart-at-the-wall graft YES (kill test first, Kaggle GPU quota only); yield900 draw #4 YES (one draw);
 model-axis serving gate YES (Kaggle GPU quota).
+
+---
+
+## RESULTS 2026-09-12 — three Kaggle commit runs (plan steps 5, 2b, 2a); read under the corrected rule
+
+Instrument: Kaggle GPU commit runs of the byte copy on the RTX PRO 6000 (25 public games, conc 28, 7,920 s,
+one session at a time; outputs `scratchpad/kernel_out/<kernel>/`). Public-commit reference for this
+instrument: keith V14 commit 36 levels / 55 calls/game / e2e 142 s / 6.76 pts (`REF keith V14 commit` line);
+earlier Kaggle commit draws of our copy read 42 (base) and 37 (yield900). Single draws: ±7 levels resolvable.
+
+### `arc3-keith-kv6` (KV 5 → 6.0 GiB, nothing else; 11:19→13:39Z) — **BOOTS, ALIVE, live-legal**
+Model loading 81.8 GiB + 6.0 GiB KV fits (8 and 10 GiB OOMed on this card on 09-06). **38 levels** (dist
+0:4 1:12 2:4 3:2 4:3), score 7.47 vs ref 6.76; **64.9 calls/game (+18 % vs 55)**, e2e 120 s (ref 142),
+queue 100 s, inference 19.9 s, actions/call 2.73, preemptions 0.02/request, 1,391 gen tok/req. Consistent with
+the audit's sizing (calls ∝ KV^0.56: 1.2× KV → +11-16 %) and with elasticity ~0.2 (+18 % calls → ~+4 %
+levels, inside one-draw noise). This is submission #1 of the plan: kernel `arc3-keith-kv6` v1 COMPLETE,
+byte copy + two changed lines. Next: 6.5 GiB commit only if Ahmed wants the boundary; otherwise fly 6.0.
+
+### `arc3-keith-apc` (prefix caching ON, MTP OFF, KV 5 GiB; 14:49→17:09Z) — **closed by the pre-registered gate**
+Boots (no `--mamba-cache-mode` needed; `enable_prefix_caching=True` in the engine args). **Prefix hit rate
+15.7 %** (4.81 M / 30.7 M tokens) — below the 20 % kill line. **59.9 calls/game (+9 %)** — below the +10 %
+net-calls gate, and that gain comes with MTP off (inference 37.8 s vs 19.9 s; queue 92 s). Preemptions
+**0.54/request** (VOID flag under the new rule: APC pins blocks in the 5 GiB KV). 36 levels (= ref).
+Model loading **74.3 GiB** without the MTP head (7.5 GiB less than with MTP). VERDICT: caching-without-MTP
+at KV 5 GiB is not a lever. UNTESTED and cheap: the 7.5 GiB freed by dropping MTP means **APC + KV 10-12 GiB**
+should fit on this card, which is exactly the regime where a prefix cache stops thrashing (hit rate ≫ 16 %,
+preemptions ≪ 0.5). One commit run (~2.3 h) would settle it; not run without a go.
+
+### `arc3-oracle-probe-fn` (oracle probe rebuilt on the flown Flash-Next base; 17:59→18:49Z) — **instrument FIXED, brain read NEGATIVE**
+Both preflights passed (short: `[1,2,3]`; game-length: 7 actions, finish=stop). **All 15 clones valid** —
+every clone executed the full 100-move budget (328 acting turns, 3.7-5.5 actions/turn), so the 08-29 "0 moves"
+artefact (`preserve_thinking` instead of `enable_thinking`) is gone. Results: **guided 0/5, oracle 0/5,
+control 0/5**; blocks delivered 2-4 of 5 (best: guided clone 4, 1 left, 4 delivered); 19 % of replies still
+finish=length at 3,000 tokens but parsed. Guided clone 0 shows the limit-cycle pathology verbatim (`[3,5,4,4,5]`
+repeated for 8 turns). Under the ORIGINAL pre-registration (`build_oracle_probe.py`: oracle < 50 % AND
+guided < 50 % ⇒ "it cannot execute a correct handed-to-it model, even step-by-step"), this is the negative
+branch: on wa30 L3 the served brain cannot turn either the full mechanics or per-turn instructions into a
+100-move solution (engine-verified 82-move solution exists). Caveat stated once: the 100-move budget is the
+level's own and leaves 18 moves of slack; one clone reached 4/5, so "cannot execute" and "cannot execute
+within budget" are not separated. Plan step 2a's kill line (ORACLE < 50 % ⇒ every "harness supplies
+dynamics, model plans" design is dead on this brain) **fires**: no effect-table planner is built. Optional
+$0-slot / 50-min follow-up: the same kernel with the level budget lifted (ORACLE_PROBE_MAX_MOVES=250,
+engine budget bypassed) to separate the two readings — only if Ahmed wants the distinction.
