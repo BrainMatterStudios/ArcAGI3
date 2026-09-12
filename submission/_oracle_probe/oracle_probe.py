@@ -275,6 +275,7 @@ def one_clone(clone: int, arm: str, model: str, max_moves: int,
     moves, turns = 0, 0
     history: list[str] = []
     unparsed_sample = [None]
+    unparsed_streak = 0
     t0 = time.time()
     while moves < min(budget, max_moves) and turns < 40:
         turns += 1
@@ -296,7 +297,16 @@ def one_clone(clone: int, arm: str, model: str, max_moves: int,
             if unparsed_sample[0] is None:
                 unparsed_sample[0] = reply[:1200]
             history.append("(no parsable action)")
+            unparsed_streak += 1
+            if unparsed_streak >= 3:
+                # INSTRUMENT GUARD (2026-09-12): three unparsable replies in a row is a
+                # broken request path, not a brain result. Abort the clone as INVALID
+                # instead of burning 40 turns and reporting a fake 0-move failure.
+                return {"clone": clone, "arm": arm, "error": "unparsable_x3",
+                        "moves": moves, "won": False, "turns": turns,
+                        "unparsed_sample": unparsed_sample[0]}
             continue
+        unparsed_streak = 0
         verdict, done = M.run_actions(live, acts, lc0)
         moves += done
         history.append(",".join(map(str, acts[:done])))
