@@ -67,7 +67,7 @@ python3 offkaggle/absorb_kernel.py diff \
       regime (vLLM flags, KV, MTP, context, concurrency, per-game clock),
       **(c)** anything that would not survive our box.
 - [ ] **Cost gate first, before any port enthusiasm.** Compute the release's
-      completion tokens per game and compare to ours (~83,094 at ~1,293/call).
+      completion tokens per game and compare to ours (~73,600-74,200 per game for true stock V14 waves; the earlier ~83,094 figure was the carry75 arm — corrected 2026-09-12).
       This is the metric that killed Polyphony and it is hardware-independent.
       If their loop needs materially more decode per game than one RTX PRO 6000
       can serve at concurrency 28, it will not reproduce here no matter how good
@@ -138,4 +138,4 @@ python3 -m kaggle kernels push -p submission/_absorb_<name>/push
 | public-25 does not predict LB | never select on a local wave alone |
 | per-game sd ~1.2 levels, live sd ~0.3/draw | +10-30% levers are unmeasurable; only step changes are visible |
 | pooled base 39.33 levels sd 2.34 | the rig's null; anything inside is dead |
-| ~83,094 completion tokens per game, ~1,293/call | the decode budget; the cost gate for any port |
+| ~73,600-74,200 completion tokens per game for stock V14 (~83,094 was the carry75 arm; corrected 2026-09-12) | the decode budget; the cost gate for any port |

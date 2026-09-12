@@ -1619,3 +1619,99 @@ retained-reasoning result (13.3 → 38.3 %) from the subtraction side, on an ope
 
 Best possible remaining combination ≈**42.6 levels against a 48 bar.** The 3× budget result
 (56 levels, ft09 won outright) stays real and stays unreachable.
+
+---
+
+## CORRECTIONS 2026-09-12 — adversarial re-verification of every result above from 09-09 on (see `docs/research-2026-09-12/R-validation-audit-0912.md`)
+
+Method: one refuting verifier per claim recomputing from the raw wave directories, plus instrument and
+statistics skeptics; top-level spot checks reproduced the three highest-impact items. **Every level count
+and primary number above reproduces. No verdict flips direction.** The following framing does not survive
+and is retracted here rather than edited in place, so the record of what was believed stays intact.
+
+**Statistics (touches every "sd" headline since 09-08).** The "pooled six-draw base 39.33 (sd 2.34)" is
+`R-loss-ledger-3.md:3-5`: 36 (M1) / 40 (M4 = keith_retry, graft fired 5x) / 42 (Kaggle commit) / 41 (Y1) /
+40 (Y2) / 37 (Kaggle commit). Half the pool is yield900; two members have no per-game data on disk. The
+honest sd of a 25-game wave total, from per-game variance across the flat draws on disk, is **~3.2-3.5**
+(n=6 sd 2.34 has 95 % CI 1.46-5.74; the "~6" in the NOTES is a mis-derivation). At sd 3.5 one wave resolves
+±7.4 levels; two waves ±5.6; the 48 bar is +2.3 sd; the 45-47 band is inside noise; across ~15 arms
+P(one spurious step candidate) ≈ 21 %. Robust verdicts: budget 56 (+4.4 sd, paired t +3.5), ctx12 12
+(t −7.1), ctx16 21, nr16 20. Fragile: cadence 34 (−1.4 sd) and fx 35 (−1.2) are "not a step", NOT "worse
+than base"; probe/carry 41 are flat and indistinguishable from +10-15 %. "Elasticity decays 0.40 → 0.21"
+is a base-choice artifact: KV10 vs its own-session base 36 is 0.41 ± 0.32, vs the pool 0.20 ± 0.21; budget
+within-wave 0.17 ± 0.07. No decay is demonstrated.
+
+**Instrument.** (1) budget 3x: the container hit this rig's own 6 h lifetime cap at +297 min (it was 66 min
+old at wave start from the smoke); 215 s outage, 24× HTTP 500; the post-restart tail ran at median e2e
+104 s (below the 120 s cadence gate) → ~+156 surplus calls; `metrics_before.prom` is the smoke container so
+the VLLM row (661 requests, e2e 181.9 s) is a two-container subtraction and unreadable. Bias ≤ +0.5 level.
+(2) ctx12: the container DIED at +75-77 min (25 simultaneous HTTP 500, 398 s gap, new vLLM process at
++79.7 min; not the reaper, not idle scale-down; cause not in local files); ~464 s/game (5.9 %) lost; every
+VLLM number and "preemptions 0" cover only the post-restart 40 % of calls. 11 of 12 clears were in by +43 min.
+(3) ctx16 / nr16: 1,908 / 1,652 KV preemptions (0.9-1.1 per request vs 0.05-0.24 on every 32k wave) — a
+scheduler thrash specific to the 16k window under kv5/c8; ≈17 calls/game and ≈25 % decode inflation; not
+reported in either write-up. (4) The per-run VOID rule (request errors > 0, preemptions > 0) fires on 25/25
+runs of every Modal wave because "errors" are the runner's own end-of-clock ReadTimeouts; it is inoperable
+as written and has been waived by discretion (explicitly for cadence/fx/probe, silently for budget/ctx12/
+ctx16/nr16). Replacement: VOID on any HTTP 5xx, on a `process_start_time_seconds` change between
+before/after, on preemptions/request outside 0.02-0.35, or on any game's shim span < 0.99 × clock.
+
+**Per-result retractions.**
+* budget 3x: "first outright win in this campaign's rig history" is FALSE — ft09 won 6/6 in the KV10 wave
+  (line 369 above; 108 actions, 7,686 s, inside a 1x clock). The table mixes the pooled base (levels) with
+  the single lowest 09-02 draw (calls, actions, score, distributions): vs the Modal-pool means the ratios
+  are 3.18× calls, 4.95× actions, 1.75× score; 5+-level games 0/1/1/1 → 3. **41 of 56 clears landed by
+  7,920 s** (+0.71 sd; calls in the first 7,920 s = 53.0/game), so the base waves are consistent and the
+  extra clock bought ~15 levels on the same games in the same boot. 56 sits in the pre-registration's own
+  46-59 "partial" band; only 3 of the 12 never-passed walls fell (dc22, sb26, vc33).
+* ctx12: mechanism was wrong — the stock trimmer budgets chars/3 of the JSON payload INCLUDING the base64
+  image (`tool_agent.py:462-467`), so history room at 12k is ≈2,950 real tokens ≈ one turn, not 7,349; only
+  2 of 2,709 completions exceed 7,349; 16 % of mid-game calls were sent with zero history and acted 0 % of
+  the time. "base 20,061" is the mean prompt (median 21,421). Zero-level base is 1-7 across draws (mean
+  3.25), not 2.
+* ctx16: the "longest observed completion 10,439" premise was already false on disk (base 10,495, fx 10,673,
+  evid 11,685, carry-kill 13,800; ctx16 itself 12,942). "Smooth gradient / no safe window" is over-claimed:
+  actions/call is linear 32k→16k and collapses at 12k; three single draws cannot separate the shapes.
+* nr16: the "base (32,768)" row (prompt 21,738 / 1,297 / e2e 26.6 s / 56.8 calls / 2.74 actions per call)
+  is the 09-09 conc-6 CADENCE arm (34 levels) with 39.33 pasted in; the conc-28 base is e2e ≈145 s, median
+  prompt 21,421, 55.8 calls, 2.76 actions/call. The graft restored 3.32 vs 2.72 retained assistant turns
+  (not 12.5 vs 5.2); reasoning is ≈1/3 of a retained turn, not ≈60 %; "the trimmer always fills the
+  window" holds only in estimator units (real prompts ≈58 % of the window). Because turns were never
+  restored, "third pre-registered outcome: turn depth was NOT the cause" is unsupported — the arm is
+  uninformative on turn depth. Confirmed: +46 % completion tokens on 25/25 games → −28 % calls.
+* sizing: mixed anchors (calls from a modelled 50/game, levels from 55.8/39.33). Re-anchored, the best
+  live-legal stack is 44.0 levels (shortfall 4.0), or 42.7 with the KV^0.56 scaling KV10 actually showed;
+  "7.7 s / 2.6×" → 8.1-8.7 s / 2.3-2.5×; "the ceiling settles it" is false (perfect MTP-8 projects 48.8-52).
+  The closure holds at elasticity 0.2 and fails at 0.4; KV10 cannot tell them apart.
+* cadence: 24 of 25 games averaged 51.6 calls (tr87 ran alone in batch 5 at conc 1 with 181 calls); the
+  −5.33 is concentrated in batch 1 (6 games, 4 levels); `time_remaining_seconds` appears ≈29 times in 25
+  transcripts. "Throughput/cadence family closed as a step" was contradicted by budget 3x the next day.
+* fx: "24/25 games saw a 7+-line block" → 16/25; the model quotes the effect table in 7.0 % of turns
+  (thinking only, never in code); prompt cost +487 tokens/call vs +250 pre-registered.
+* A2 (docs/research-2026-09-09): counts stand (0/358 verifier calls, and 0/359 in the control; 24/24
+  length-capped inside `<think>`). "The failure is the LOOP, not the brain" does not stand: all 24 directed
+  requests were fresh 2-message contexts (n_messages=2, has_tools=False), and the live directed prompt
+  differed from the offline one (≈170- vs ≈600-word system, 12 vs 20 transitions, 60-cell lossy cap, 3 calls
+  with one-line feedback vs 20). Pass-1 prompts (8.1-18.9k / 13.9-24.7k) were already inside the claimed
+  Stage-1 window. Pass-2 GPU 5,857 s not 5,016. Cost denominator: one verified model = 88-89 % of a true
+  stock game's decode (83,094 tokens/game was the carry75 arm; stock is 73.6-74.2k).
+* R-what-our-agent-actually-does: ≥30 of the 2,047 calls forward-simulate with a hand-written transition
+  function (tu93, m0r0, lp85, lf52, dc22) and several verify the prediction; `build_corpus.py:154` aligns
+  calls to turn headers by index (wrong for the 35 % of turns with >1 call; 1,288 cleared-level calls dropped,
+  4,573 continuation calls excluded); the classifier was never committed. Weak form stands.
+* R-triage-family-bounded: AUC 0.94 is target leakage; on the incremental target no eval-legal feature beats
+  ≈0.52; the keep-top-N table has no code; at elasticity 0.21 the in-range rows read −6 % to +9 %.
+* PREREG-model-axis RESULT: 180.0 B params on disk (not 131 B); the 360 GB includes the 51.2 B-param PLE
+  table that serving CPU-offloads; the served NVFP4 checkpoint keeps every attention/linear-attention tensor
+  in bf16 (78 GiB non-PLE fits one 96 GB card); H100 is $3.95/h; a 2-4 GPU attention-only LoRA attempt is
+  ≈$40-100. The lane is blocked on unproven tooling and the calendar, not on scale; M1/M2 were never run.
+
+**Live.** Base draw #4 (sub 56133282, 09-10) = 2.73, in band; family n=6 mean 3.22 sd 0.78; identical-bytes
+v4 sd 0.35 (n=3), yield900 sd 1.00 (n=3). The yield900 3-draw "dead" was decided by 0.01 (3.59 vs 3.6; 95 %
+CI 2.68-4.50); the "118 = 118" off-Kaggle null cannot be recomputed (cache gone) and every same-regime
+comparison on disk points +0.1-0.2 lv/game. Sub 55543514 (08-16, 1.29) is missing from the ledger.
+
+**Hard-coded constants still carrying the old rule:** `offkaggle/run_regime_wave.py:313-315`
+(`base_levels_six_draws`, 39.33, 2.34) and `offkaggle/read_cadence_arm.py:17-19` (48/45/44). Left unchanged
+pending Ahmed's decision on the replacement rule (proposal: 8-draw flat mean 38.5, sd 3.5, two-wave mean
+≥45 = step candidate / ≤42 dead, mandatory counterbalanced redraw for any ENGAGED arm reading 31-46).
