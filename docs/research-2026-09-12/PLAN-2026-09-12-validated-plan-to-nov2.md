@@ -87,6 +87,13 @@ ahmedmobasher86/arc3-oracle-probe` first ($0). Only then port. Test: ≥3/5 ORAC
 within 100 moves, CONTROL ≤1/5. Kill: ORACLE <50 % ⇒ every "harness supplies dynamics, model plans"
 design is dead on this brain. Also define the success branch: if ORACLE passes, the effect-table planner
 (harness-run search over `graft_effects`' table) becomes step 5's first graft.
+**$0 check done 2026-09-12:** the never-recorded 08-29 27B run (`kaggle kernels output
+ahmedmobasher86/arc3-oracle-probe` → `scratchpad/oracle_probe_out/stdout.log`, 3.2 KB, truncated before
+the guided arm) shows the oracle solutions were computed (L1 28 actions, L2 201 actions by shipped A*) but
+**every clone made 0 moves** (oracle 8/10 at 0 moves, 2 at 3 moves; control 5/5 at 0) — the probe's
+action channel never delivered a move on the 27B either. The instrument is broken, not the brain read.
+Before any Flash-Next port: dump one clone's raw completion, fix the parser/action path, and re-run the
+guided arm as the positive control (it must win). Until that passes, 2a produces no read.
 2b. Prefix caching — but NOT alongside MTP. Standing law (`docs/RESEARCH-2026-08-21-bug-lever-hunt.md`,
 memory bug-lever-hunt): MTP ships only with `--no-enable-prefix-caching`; MTP + prefix cache corrupts on
 the GDN layers. The real arm is caching WITHOUT MTP (losing 2.80 tokens/forward): boot with
