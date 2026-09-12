@@ -310,9 +310,16 @@ GRAFT_FLAG_KEYS = RETRY_ENV_KEYS + EVID_ENV_KEYS + HYPO_ENV_KEYS + PROBE_ENV_KEY
 # loss-ledger-3 reference reads for the PROBE gate (docs/research-2026-09-08/R-loss-ledger-3.md, yield900 regime)
 LEDGER3_REFERENCE = {"turns_ge3_analysis_share": 0.15, "wall_actions_ratio_median": 0.72, "yields_per_draw": "27-30",
                      "analysis_call_share": 0.49,
-                     # PRIMARY comparator: the six 25-game draws of the two regimes pooled (Y1 41, Y2 40, YK 37, M1 36,
-                     # M4 40, K 42; loss-ledger-3 NOTES Q1) — levels are a null between the regimes
-                     "base_levels_six_draws": [41, 40, 37, 36, 40, 42], "base_levels_mean": 39.33, "base_levels_sd": 2.34,
+                     # PRIMARY comparator — CORRECTED 2026-09-12 (docs/research-2026-09-12/R-validation-audit-0912.md).
+                     # The old pool [41, 40, 37, 36, 40, 42] (39.33, sd 2.34) was half yield900 draws and two Kaggle commit
+                     # runs with no per-game data. New pool = every 25-game keith-family draw at the LIVE geometry
+                     # (conc 28, 7,920 s, 32k window) whose primary read was flat: keith 09-02 36, yield180 34, retry 40,
+                     # yield900 41, yield900-cb2 40, probe 41, carry75 41, fx 35 (offkaggle/results/*/results.json).
+                     # sd 3.5 is the per-game-variance estimate of a 25-game total (the sd of the 8 totals is 2.98).
+                     "base_levels_flat_draws": [36, 34, 40, 41, 40, 41, 41, 35], "base_levels_mean": 38.5, "base_levels_sd": 3.5,
+                     # two-wave rule (Ahmed 2026-09-12): two-wave mean >= 45 step candidate, <= 42 dead; ONE wave reading
+                     # 31-46 requires a counterbalanced second draw; one wave < 31 dead, > 46 redraw as a step candidate
+                     "verdict_rule": {"two_wave_step": 45, "two_wave_dead": 42, "one_wave_redraw_lo": 31, "one_wave_redraw_hi": 46},
                      # SAFETY comparators, yield900 regime (the arm's base): GAME_OVERs/run and live-cap score/game
                      "game_overs_per_run": 0.87, "live_cap_score_per_game": 8.42}
 # the 12 games whose modal wall was never passed in any of the six draws (loss-ledger-3 NOTES Q1/q7): the co-primary
@@ -1059,6 +1066,8 @@ def summarize_metrics(text: str | None) -> dict | None:
     out["request_success"] = sum(by_reason.values()) if by_reason else None
     out["model_names"] = sorted({lab.get("model_name") for series in prom.values()
                                  for lab, _ in series if lab.get("model_name")})
+    ps = prom.get("process_start_time_seconds")
+    out["process_start"] = max(v for _, v in ps) if ps else None
     return out
 
 
@@ -1096,6 +1105,12 @@ def metrics_delta(before: dict | None, after: dict | None, wall_s: float | None)
     d["mtp_accepted_per_draft"] = _div(d["spec_accepted_tokens"], d["spec_drafts"])
     d["prefix_cache_hit_rate"] = _div(d["prefix_hits"], d["prefix_queries"])
     d["after_gauges"] = {k: after.get(k) for k in _METRIC_GAUGES}
+    # CORRECTED 2026-09-12: a vLLM process restart between the snapshots (budget 3x hit the 6 h reaper at
+    # +297 min; ctx12's container died at +75 min) makes every counter delta a two-process subtraction.
+    b_ps, a_ps = before.get("process_start"), after.get("process_start")
+    d["restart"] = bool(b_ps is not None and a_ps is not None and abs(a_ps - b_ps) > 1.0)
+    d["process_start_before"], d["process_start_after"] = b_ps, a_ps
+    d["preemptions_per_request"] = _div(d.get("preemptions"), d["requests"])
     return d
 
 
@@ -1303,7 +1318,10 @@ def parse_transcript(text: str) -> dict:
             t["outcome"] = "error"
     retry_markers = {"retries_fired": len(_RETRY_MARK.findall(text)),
                      "retry_clears": len(_RETRY_CLEAR_MARK.findall(text))}
-    request_errors = sum(1 for t in turns if "request_error" in t["status_messages"])
+    # CORRECTED 2026-09-12: the runner shrinks the read timeout to the remaining clock, so "Read timed out"
+    # request_errors are end-of-clock artefacts on every wave, not server faults; they no longer count.
+    request_errors = sum(1 for t in turns if "request_error" in t["status_messages"]
+                         and "timed out" not in " | ".join(t["status_messages"]))
     aid_markers = {"evid_markers": sum(t["evid"] for t in turns),
                    "evid_level_flags": sum(t["evid_level_flags"] for t in turns),
                    "hypo_markers": sum(t["hypo"] for t in turns)}
@@ -1364,16 +1382,29 @@ _PROMPT_LEVEL_RE = re.compile(r"^Current state: step \d+, level (\d+)", re.M)
 _QUOTE_RE = re.compile(r"\[EVID\]|TRACE per action|\[HYPO\]|\b(?:MOVED|APPEARED)\b[^\n]{0,80}?\(\d+,\s?\d+\)")
 
 
+VOID_PREEMPTIONS_PER_REQUEST = 0.5   # 32k waves run 0.05-0.35; ctx16/nr16 thrashed at 0.93/1.12
+
+
 def wall_reads(turns: list[dict], *, wall_level: int | None, levels_completed: int | None, calls_budget: int | None,
-               request_errors: int, length_share: float | None, wave_preemptions: float | None) -> dict:
+               request_errors: int, length_share: float | None, wave_preemptions: float | None,
+               wave_requests: float | None = None, wave_restart: bool = False) -> dict:
     """Judge 09-06 instrument rules per run: VOID (errors / preemptions / truncation > 1 %), calls at the
     first level-2 turn, ATTEMPT (L2 reached with >= WALL_MIN_CALLS_LEFT_AT_L2 calls left), PASS (level 3
     reached = levels_completed >= 2), and UPTAKE (share of turns whose thinking/text quotes the aid)."""
     void_reasons = []
     if request_errors > 0:
         void_reasons.append(f"request_errors={request_errors}")
-    if wave_preemptions:
+    # CORRECTED 2026-09-12: preemptions are routine at 32k (59-386 per wave); only a per-request ratio above
+    # VOID_PREEMPTIONS_PER_REQUEST is a scheduler thrash. Without a request count the legacy any-preemption
+    # rule applies (unit tests), and a server restart between the metric snapshots always voids.
+    if wave_preemptions and wave_requests:
+        ratio = wave_preemptions / wave_requests
+        if ratio > VOID_PREEMPTIONS_PER_REQUEST:
+            void_reasons.append(f"preemptions_per_request={ratio:.2f}")
+    elif wave_preemptions:
         void_reasons.append(f"preemptions={wave_preemptions:g}")
+    if wave_restart:
+        void_reasons.append("server_restart")
     if length_share is not None and length_share > VOID_LENGTH_SHARE:
         void_reasons.append(f"length_finish_share={length_share:.3f}")
     total_calls = sum(t["calls"] for t in turns)
@@ -1564,6 +1595,7 @@ def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None
                        wallclock_s: float | None = None,
                        levels_completed: int | None = None, number_of_levels: int | None = None,
                        calls_budget: int | None = None, wave_preemptions: float | None = None,
+                       wave_requests: float | None = None, wave_restart: bool = False,
                        actions_per_level: list | None = None, baselines: list | None = None,
                        graft_counters: dict | None = None, game_overs: int | None = None,
                        carry_counters: dict | None = None, ws_counters: dict | None = None) -> dict:
@@ -1620,10 +1652,15 @@ def telemetry_for_game(transcript_text: str, *, actions_total: int | None = None
         "carry": carry_reads(parsed["carry_markers"], carry_counters),
         "ws": ws_reads(parsed["ws_markers"], levels_completed=levels_completed, graft_counters=ws_counters),
     }
-    client_errors = sum(1 for r in (shim_records or []) if r.get("error") or (r.get("status") or 0) >= 400)
+    # CORRECTED 2026-09-12: only HTTP 5xx are server faults; shim `error` rows are the runner's own end-of-clock
+    # ReadTimeouts (verified on every wave in the 09-12 audit) and 4xx never occurred.
+    client_errors = sum(1 for r in (shim_records or []) if (r.get("status") or 0) >= 500)
+    tel["server_errors"] = parsed["request_errors"] + client_errors
+    tel["client_timeouts"] = sum(1 for r in (shim_records or []) if r.get("error") and not r.get("status"))
     tel["wall"] = wall_reads(turns, wall_level=wall_level, levels_completed=levels_completed, calls_budget=calls_budget,
                              request_errors=parsed["request_errors"] + client_errors,
-                             length_share=tel["length_finish_share"], wave_preemptions=wave_preemptions)
+                             length_share=tel["length_finish_share"], wave_preemptions=wave_preemptions,
+                             wave_requests=wave_requests, wave_restart=wave_restart)
     first = [r["prompt_tokens"] for r in (shim_records or []) if r.get("n_messages") == 2 and r.get("status") == 200
              and r.get("prompt_tokens") is not None]
     tel["first_call_prompt_tokens"] = first[0] if first else None
@@ -1924,6 +1961,7 @@ _STEM_RE = re.compile(r"^(?P<gid>.+)_p(?P<draw>\d+)\.txt$")
 
 def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: list[dict], *,
                     calls_budget: int | None = None, wave_preemptions: float | None = None,
+                    wave_requests: float | None = None, wave_restart: bool = False,
                     graft_per_game: dict | None = None, carry_per_game: dict | None = None,
                     ws_per_game: dict | None = None) -> dict:
     """Per-run + pooled telemetry from <out>/transcripts/<gid>_p<draw>.txt, the
@@ -1955,6 +1993,7 @@ def build_telemetry(transcripts_dir: Path, game_rows: list[dict], shim_records: 
                                  levels_completed=row.get("levels_completed"),
                                  number_of_levels=row.get("number_of_levels"),
                                  calls_budget=calls_budget, wave_preemptions=wave_preemptions,
+                                 wave_requests=wave_requests, wave_restart=wave_restart,
                                  actions_per_level=row.get("actions_per_level"), baselines=row.get("baselines"),
                                  graft_counters=(graft_per_game or {}).get(stem),
                                  game_overs=game_overs_from_events(events_path) if events_path.is_file() else None,
@@ -2481,9 +2520,9 @@ def render_summary(result: dict, telemetry: dict) -> str:
         delta = pri.get("delta_vs_base")
         lines.append(
             f"  PROBE-PRIMARY levels {pri.get('levels_total')} over {pri.get('games')} runs / {pri.get('draws')} draw(s) = "
-            f"{_fmt(pri.get('levels_per_draw'), 1)}/draw vs pooled six-draw base {pri.get('base_levels_mean')} (sd {pri.get('base_levels_sd')}) "
+            f"{_fmt(pri.get('levels_per_draw'), 1)}/draw vs 8-draw flat base {pri.get('base_levels_mean')} (sd {pri.get('base_levels_sd')}) "
             f"-> delta {('%+.1f' % delta) if delta is not None else '-'} "
-            f"({('%+.2f' % (delta / pri['base_levels_sd'])) if delta is not None else '-'} sd; 25-game waves only; >= 52 step candidate, 45-51 redraw, < 45 dead) | "
+            f"({('%+.2f' % (delta / pri['base_levels_sd'])) if delta is not None else '-'} sd; 25-game waves only; two-wave rule: mean >= 45 step candidate, <= 42 dead; a single wave reading 31-46 REQUIRES a counterbalanced redraw) | "
             f"never-passed walls {pri.get('walls_passed_n')}/{pri.get('walls_total')} passed {pri.get('walls_passed')} "
             f"(present in wave: {len(pri.get('walls_present') or [])}; co-primary target >= 3)")
         lines.append(
@@ -2522,7 +2561,7 @@ def render_summary(result: dict, telemetry: dict) -> str:
         delta = pri.get("delta_vs_base")
         lines.append(
             f"  WS-PRIMARY levels {pri.get('levels_total')} over {pri.get('games')} runs / {pri.get('draws')} draw(s) = "
-            f"{_fmt(pri.get('levels_per_draw'), 1)}/draw vs pooled six-draw base {pri.get('base_levels_mean')} "
+            f"{_fmt(pri.get('levels_per_draw'), 1)}/draw vs 8-draw flat base {pri.get('base_levels_mean')} "
             f"(sd {pri.get('base_levels_sd')}) -> delta {('%+.1f' % delta) if delta is not None else '-'} "
             f"({('%+.2f' % (delta / pri['base_levels_sd'])) if delta is not None else '-'} sd; 25-game waves only; "
             f">= 48 step candidate, 45-47 redraw, <= 44 dead) | never-passed walls {pri.get('walls_passed_n')}/"
@@ -2561,9 +2600,9 @@ def render_summary(result: dict, telemetry: dict) -> str:
         delta = pri.get("delta_vs_base")
         lines.append(
             f"  CARRY-PRIMARY levels {pri.get('levels_total')} over {pri.get('games')} runs / {pri.get('draws')} draw(s) = "
-            f"{_fmt(pri.get('levels_per_draw'), 1)}/draw vs pooled six-draw base {pri.get('base_levels_mean')} (sd {pri.get('base_levels_sd')}) "
+            f"{_fmt(pri.get('levels_per_draw'), 1)}/draw vs 8-draw flat base {pri.get('base_levels_mean')} (sd {pri.get('base_levels_sd')}) "
             f"-> delta {('%+.1f' % delta) if delta is not None else '-'} "
-            f"({('%+.2f' % (delta / pri['base_levels_sd'])) if delta is not None else '-'} sd; 25-game waves only; >= 48 step candidate, 45-47 redraw, <= 44 dead) | "
+            f"({('%+.2f' % (delta / pri['base_levels_sd'])) if delta is not None else '-'} sd; 25-game waves only; two-wave rule: mean >= 45 step candidate, <= 42 dead; a single wave reading 31-46 REQUIRES a counterbalanced redraw) | "
             f"never-passed walls {pri.get('walls_passed_n')}/{pri.get('walls_total')} passed {pri.get('walls_passed')} "
             f"(present in wave: {len(pri.get('walls_present') or [])}; co-primary target >= 3)")
         lines.append(
@@ -2789,6 +2828,7 @@ class Wave:
         ws_per_game = (self.result["grafts"]["status"].get("graft_workspace") or {}).get("per_game")
         telemetry = build_telemetry(self.out_dir / "transcripts", rows, shim_records,
                                     calls_budget=self.max_calls, wave_preemptions=md.get("preemptions"),
+                                    wave_requests=md.get("requests"), wave_restart=bool(md.get("restart")),
                                     graft_per_game=probe_per_game, carry_per_game=carry_per_game,
                                     ws_per_game=ws_per_game)
         self.result["max_calls_stops"] = dict(_MAX_CALLS.get("stops") or {})

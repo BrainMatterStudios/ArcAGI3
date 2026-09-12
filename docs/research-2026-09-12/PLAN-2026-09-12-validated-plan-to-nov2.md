@@ -36,7 +36,22 @@ absorbable.
 | silent waivers of instrument faults | budget 3x and ctx12 both had mid-wave container replacements never mentioned |
 | 3x-clock waves as a level instrument | not live-legal; keep only as a trajectory generator |
 
-## 3. Decisions that need Ahmed (blocking)
+## 3. Decisions — ANSWERED by Ahmed 2026-09-12
+
+1. **Verdict rule: ADOPTED.** Base 38.5 / sd 3.5 / two-wave mean ≥45 step, ≤42 dead / mandatory
+   counterbalanced second draw for any ENGAGED arm reading 31-46 / VOID on HTTP 5xx or a process restart.
+   Applied to `offkaggle/run_regime_wave.py` and `offkaggle/read_cadence_arm.py` (see git).
+2. **Restart-at-the-wall graft: YES, kill test first — on Kaggle GPU quota ONLY, no Modal spend.**
+   Consequence: the kill test and any wave for this arm run as Kaggle GPU kernels (one session at a
+   time, 60 h/week shared), so the geometry is the Kaggle box's, not the rig's; budget them inside the
+   ≤10 h pre-Oct-1 quota cap and never inside the Sat Sept 26 → Fri Oct 2 reserve week.
+3. **yield900 draw #4: YES, one draw** (existing svid 347926973, no new commit, no quota).
+4. **Model-axis serving gate: YES — on Kaggle GPU quota, not Modal.** The round-trip checkpoint is
+   served and smoked in a Kaggle GPU kernel; count its ~3 h against the same pre-Oct-1 quota cap.
+
+(Original open questions kept below for the record.)
+
+### Original questions
 
 1. **Verdict rule.** Adopt the 8-draw flat mean 38.5 / sd 3.5, two-wave rule (mean ≥45 step candidate,
    ≤42 dead, mandatory counterbalanced second draw for any ENGAGED arm reading 31-46), and the rewritten

@@ -204,9 +204,11 @@ def test_arms_differ_on_exactly_the_window_keys():
     assert {k: rw.KEITH_PROBE_ENV[k] for k in rw.PROBE_ENV_KEYS} == {
         "PROBE_ENABLE": "1", "PROBE_MAX_ANALYSIS": "2", "PROBE_MAX_PROBE": "5", "PROBE_MAX_REFUSALS": "4", "PROBE_NOTE_LINES": "3"}
     assert set(rw.NEVER6_WALLS) == {"bp35", "dc22", "g50t", "lf52", "lp85", "ls20", "r11l", "sb26", "sp80", "tn36", "vc33", "wa30"}
-    assert rw.LEDGER3_REFERENCE["base_levels_mean"] == 39.33 and rw.LEDGER3_REFERENCE["base_levels_sd"] == 2.34
-    assert abs(statistics.mean(rw.LEDGER3_REFERENCE["base_levels_six_draws"]) - 39.33) < 0.01
-    assert abs(statistics.stdev(rw.LEDGER3_REFERENCE["base_levels_six_draws"]) - 2.34) < 0.01
+    # corrected 2026-09-12: 8 flat live-geometry draws, mean 38.5; sd 3.5 is the per-game-variance estimate
+    assert rw.LEDGER3_REFERENCE["base_levels_mean"] == 38.5 and rw.LEDGER3_REFERENCE["base_levels_sd"] == 3.5
+    assert abs(statistics.mean(rw.LEDGER3_REFERENCE["base_levels_flat_draws"]) - 38.5) < 0.01
+    assert len(rw.LEDGER3_REFERENCE["base_levels_flat_draws"]) == 8
+    assert rw.LEDGER3_REFERENCE["verdict_rule"] == {"two_wave_step": 45, "two_wave_dead": 42, "one_wave_redraw_lo": 31, "one_wave_redraw_hi": 46}
     assert rw.KEITH_PROBE_ENV["LOCAL_ANALYZER_YIELD_SECONDS"] == "900" and rw.KEITH_YIELD900_ENV["LOCAL_ANALYZER_YIELD_SECONDS"] == "900"
     assert "PROBE_" in rw.GRAFT_ENV_PREFIXES and set(rw.PROBE_ENV_KEYS) <= set(rw.GRAFT_FLAG_KEYS)
     # 09-06 arms: each differs from the keith base by exactly its own keys
@@ -1317,7 +1319,7 @@ def test_extractor_reads_probe_markers_and_ledger_call_types():
     assert abs(pb["wall_actions_ratio"]["median"] - (30 / 19 + 40 / 34) / 2) < 1e-9
     pri, saf = pb["primary"], pb["safety"]
     assert (pri["levels_total"], pri["draws"], pri["levels_per_draw"]) == (2, 2, 1.0)
-    assert abs(pri["delta_vs_base"] - (1.0 - 39.33)) < 1e-9 and pri["base_levels_sd"] == 2.34
+    assert abs(pri["delta_vs_base"] - (1.0 - 38.5)) < 1e-9 and pri["base_levels_sd"] == 3.5
     assert pri["walls_present"] == ["vc33"] and pri["walls_passed"] == [] and pri["walls_passed_n"] == 0 and pri["walls_total"] == 12
     assert (saf["game_overs_total"], saf["game_overs_per_run"], saf["game_overs_runs"]) == (2, 1.0, 2)
     assert saf["base_game_overs_per_run"] == 0.87 and saf["base_live_cap_score_per_game"] == 8.42
@@ -1393,7 +1395,7 @@ def test_dry_run_keith_probe_arm_end_to_end():
             g["probe"]["wall_baseline"] and g["probe"]["wall_actions_ratio"] is not None for g in tel["per_game"].values())
         pri, saf = pb["primary"], pb["safety"]
         assert pri["games"] == 3 and pri["draws"] == 1 and pri["walls_total"] == 12 and pri["walls_present"] == []   # none of the 3 games is a never-passed wall
-        assert abs(pri["delta_vs_base"] - (pri["levels_total"] - 39.33)) < 1e-9
+        assert abs(pri["delta_vs_base"] - (pri["levels_total"] - 38.5)) < 1e-9
         assert saf["game_overs_runs"] == 3 and saf["game_overs_per_run"] is not None and saf["live_cap_runs"] == 3
         assert all(g["probe"]["game_overs"] is not None and g["probe"]["live_cap_score"] is not None for g in tel["per_game"].values())
         assert all(g["baselines"] for g in res["games"])                                  # offline engine exposes baselines
@@ -1407,7 +1409,7 @@ def test_dry_run_keith_probe_arm_end_to_end():
             assert g["probe"]["graft"]["refusals"] == g["probe"]["refusals"]
         summary = (out / "summary.txt").read_text()
         assert "REGIME WAVE  arm=keith_probe" in summary and "PROBE  refusals" in summary
-        for line in ("PROBE-2ND spans >=3", "PROBE-PRIMARY levels", "vs pooled six-draw base 39.33 (sd 2.34)", "never-passed walls 0/12",
+        for line in ("PROBE-2ND spans >=3", "PROBE-PRIMARY levels", "vs 8-draw flat base 38.5 (sd 3.5)", "never-passed walls 0/12",
                      "PROBE-SAFETY GAME_OVERs", "yield900 base 0.87", "yield900 base 8.42/game", "ENGAGED = NO {refusals_per_game+, "
                      "acted_after_first_refusal+, wall_actions_ratio-}"):
             assert line in summary, line
@@ -1756,7 +1758,7 @@ def test_dry_run_keith_carry_arm_end_to_end():
         assert "REGIME WAVE  arm=keith_carry" in summary
         for line in ("CARRY  compactions", "ENGAGED = YES {compactions_per_game+, failure_share+, prompt_over_window+, calls_with_summary_share+}",
                      "CARRY-WINDOW prompt tok/call", "over 32768: 0 (gate 0)", "reasoning carried per request:",
-                     "CARRY-PRIMARY levels", "vs pooled six-draw base 39.33 (sd 2.34)", ">= 48 step candidate, 45-47 redraw, <= 44 dead",
+                     "CARRY-PRIMARY levels", "vs 8-draw flat base 38.5 (sd 3.5)", "two-wave rule: mean >= 45 step candidate, <= 42 dead",
                      "CARRY-SAFETY GAME_OVERs", "fit-the-clock: calls/game", "KNOB OVERRIDES (not the pinned arm env)"):
             assert line in summary, line
         assert "'CARRY_TARGET_FRACTION': '0.5'" in summary and "yield 900 s" in summary

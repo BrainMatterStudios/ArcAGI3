@@ -1711,7 +1711,10 @@ v4 sd 0.35 (n=3), yield900 sd 1.00 (n=3). The yield900 3-draw "dead" was decided
 CI 2.68-4.50); the "118 = 118" off-Kaggle null cannot be recomputed (cache gone) and every same-regime
 comparison on disk points +0.1-0.2 lv/game. Sub 55543514 (08-16, 1.29) is missing from the ledger.
 
-**Hard-coded constants still carrying the old rule:** `offkaggle/run_regime_wave.py:313-315`
-(`base_levels_six_draws`, 39.33, 2.34) and `offkaggle/read_cadence_arm.py:17-19` (48/45/44). Left unchanged
-pending Ahmed's decision on the replacement rule (proposal: 8-draw flat mean 38.5, sd 3.5, two-wave mean
-≥45 = step candidate / ≤42 dead, mandatory counterbalanced redraw for any ENGAGED arm reading 31-46).
+**Rule ADOPTED by Ahmed 2026-09-12 and applied in code** (`run_regime_wave.py` LEDGER3_REFERENCE, `wall_reads`,
+`metrics_delta`; `read_cadence_arm.py` constants): base = the 8 flat live-geometry draws [36, 34, 40, 41, 40, 41,
+41, 35] mean 38.5, sd 3.5; two-wave mean ≥45 = step candidate, ≤42 = dead; one wave reading 31-46 REQUIRES a
+counterbalanced redraw; VOID = any HTTP 5xx, a vLLM process restart between the metric snapshots, or
+preemptions/request > 0.5; end-of-clock ReadTimeouts no longer void. Ahmed's other decisions the same day:
+restart-at-the-wall graft YES (kill test first, Kaggle GPU quota only); yield900 draw #4 YES (one draw);
+model-axis serving gate YES (Kaggle GPU quota).

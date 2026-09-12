@@ -13,10 +13,15 @@ import statistics as st
 import sys
 from pathlib import Path
 
-# ---- pre-registered constants (do not edit after the wave lands) -------------
-POOLED_BASE_LEVELS = 39.33      # 25-game pooled base
-POOLED_BASE_SD = 2.34
-STEP, REDRAW_LO = 48, 45        # >=48 step candidate; 45-47 redraw; <=44 dead
+# ---- pre-registered constants -------------------------------------------------
+# CORRECTED 2026-09-12 after the validation audit (docs/research-2026-09-12/R-validation-audit-0912.md):
+# the cadence arm was READ under 39.33 / 2.34 / 48-45-44 (recorded in REGIME_WAVE_STATUS.md); the
+# constants below are the adopted rule for every read from 09-12 on. Base = 8 flat live-geometry draws
+# (mean 38.5); sd 3.5 from per-game variance; two-wave rule, single wave 31-46 = redraw required.
+POOLED_BASE_LEVELS = 38.5       # 25-game flat base, 8 draws
+POOLED_BASE_SD = 3.5
+STEP, REDRAW_LO = 47, 31        # ONE wave: > 46 step candidate (redraw to confirm); 31-46 redraw required; < 31 dead
+TWO_WAVE_STEP, TWO_WAVE_DEAD = 45, 42   # two-wave mean: >= 45 step candidate; <= 42 dead
 E2E_MAX = 60.0                  # the turn budget the arm must get under
 CALLS_PER_TURN_MIN = 1.5        # live base 1.02; conc-3 reference 1.66
 CALLS_PER_GAME_MIN = 40         # guards the underfed-GPU confound
@@ -88,7 +93,7 @@ def main(run_dir):
             present.append(stem)
             if g["levels_completed"] >= WALLS[stem]:
                 passed.append(f"{stem} L{WALLS[stem]}")
-    print(f"\nCO-PRIMARY — the 12 six-draw never-passed walls")
+    print(f"\nCO-PRIMARY — the 12 never-passed walls (six-draw census, loss-ledger-3)")
     print(f"  present in this wave: {len(present)}/12")
     print(f"  PASSED: {len(passed)}  (target >= {WALLS_TARGET})"
           + (f"  -> {', '.join(passed)}" if passed else ""))
@@ -112,14 +117,13 @@ def main(run_dir):
         print("VERDICT: **VOID** — the mechanism never ran. Not evidence about cadence.")
         print("         Pre-registered remedy: re-run at conc 4 or conc 3.")
     elif levels >= STEP:
-        print(f"VERDICT: **STEP CANDIDATE** ({levels} >= {STEP}).")
-        print("         Next per pre-registration: propose a live flight. AHMED'S GO REQUIRED.")
+        print(f"VERDICT: **STEP CANDIDATE, ONE WAVE** ({levels} >= {STEP}).")
+        print(f"         Counterbalanced redraw required; two-wave mean >= {TWO_WAVE_STEP} = step candidate. AHMED'S GO REQUIRED for a flight.")
     elif levels >= REDRAW_LO:
-        print(f"VERDICT: **POSITIVE, REDRAW** ({REDRAW_LO} <= {levels} <= {STEP - 1}).")
-        print("         Counterbalanced redraw in a fresh session before any claim.")
+        print(f"VERDICT: **UNRESOLVED, REDRAW REQUIRED** ({REDRAW_LO} <= {levels} <= {STEP - 1}; one wave resolves only +/-7 levels at sd {POOLED_BASE_SD}).")
+        print(f"         Two-wave mean >= {TWO_WAVE_STEP} = step candidate; <= {TWO_WAVE_DEAD} = dead.")
     else:
-        print(f"VERDICT: **DEAD by rule** ({levels} <= {STEP - 3}), engaged or not.")
-        print("         This would be the sixth engaged-and-flat replication.")
+        print(f"VERDICT: **DEAD by rule** ({levels} < {REDRAW_LO}), engaged or not.")
     print(f"         Co-primary walls {len(passed)}/{WALLS_TARGET} required for a step claim.")
     print("-" * 78)
     return 0
