@@ -195,9 +195,12 @@ KEITH_YIELD900_ENV = {**KEITH_ANALYZER_ENV, "LOCAL_ANALYZER_YIELD_SECONDS": "900
 # a level RESET + "FRESH MIND" prompt block once a level's action bucket reaches
 # K x its human baseline (ABS actions when the engine hides baselines), at most MAX
 # per level, COOLDOWN actions apart. Everything else identical to `keith`.
-RETRY_ENV_KEYS = ("RETRY_ENABLE", "RETRY_K", "RETRY_ABS", "RETRY_COOLDOWN", "RETRY_MAX")
+RETRY_ENV_KEYS = ("RETRY_ENABLE", "RETRY_K", "RETRY_ABS", "RETRY_COOLDOWN", "RETRY_MAX", "RETRY_CLEAR_HISTORY", "RETRY_MODE", "RETRY_TURNS")
 KEITH_RETRY_ENV = {**KEITH_ANALYZER_ENV, "RETRY_ENABLE": "1", "RETRY_K": "3", "RETRY_ABS": "200",
-                   "RETRY_COOLDOWN": "150", "RETRY_MAX": "2"}
+                   "RETRY_COOLDOWN": "150", "RETRY_MAX": "2",
+                   # 09-12: the graft grew RETRY_CLEAR_HISTORY / RETRY_MODE / RETRY_TURNS; pinned to the
+                   # 09-03 behaviour here so the keith_retry arm is unchanged (wipe mode is a separate arm)
+                   "RETRY_CLEAR_HISTORY": "0", "RETRY_MODE": "reset", "RETRY_TURNS": "0"}
 # 09-06 judge program item 1 (docs/research-2026-09-06/J-judge-0906.md): three single-lever arms
 # on the keith base for the 3-wall turn-capped instrument (cd82/dc22/lf52, --draws 2, --per-game-s 1500).
 #  (a) evidence-integrity aid — graft_evidence, flags read at call time

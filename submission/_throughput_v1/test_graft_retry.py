@@ -606,6 +606,81 @@ class RetryTests(unittest.TestCase):
         self._turn(agent, sess)
         self.assertEqual(seen, {"fires": {0: 1}, "anchor": {0: 61}, "counter": 1, "marker": True, "pending": True})
 
+    # ------------------------------------------------ 20 wipe mode (no RESET)
+    def test_20_wipe_mode_clears_history_without_engine_reset(self) -> None:
+        """RETRY_MODE=wipe (2026-09-12): the fresh mind is a history + note wipe with the board
+        left exactly where it is; no engine action of any kind is issued, so nothing lands in
+        the level's action bucket and RESET need not even be available."""
+        os.environ["RETRY_MODE"] = "wipe"
+        agent = self._agent()
+        agent._history_messages = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "old"}]
+        agent._summarized_knowledge = {"world_model": "walls block", "current_plan": "go up", "cross_level_notes": "keep"}
+        sess = self._session(baselines=(20, 30, 40))
+        sess.set_level_actions(0, 60)
+        sess.game.current_state.available_actions = [1, 2, 3, 4]       # RESET not offered: wipe fires anyway
+        captured = {}
+
+        def stock(s, sp, an, **k):  # noqa: ANN001
+            captured["action_num"] = an
+            captured["prompt"] = s._build_user_prompt(an, valid_actions=k.get("valid_actions"))
+            return self.agent_mod.AnalyzerTurnResult(step_executed=True, reasoning="ok")
+
+        self._turn(agent, sess, stock=stock)
+        self.assertEqual(sess.executed, [])                              # no engine action at all
+        self.assertEqual(self._resets(sess), [])
+        self.assertEqual(sess.game.game_run.actions_per_level[0], 60)    # bucket untouched
+        self.assertEqual(captured["action_num"], 60)                     # stock sees the unchanged count
+        self.assertEqual(agent._history_messages, [])                    # history wiped without the flag
+        self.assertEqual(agent._summarized_knowledge["world_model"], "")
+        self.assertEqual(agent._summarized_knowledge["cross_level_notes"], "keep")
+        self.assertIn("FRESH MIND", captured["prompt"])
+        self.assertIn("board is UNCHANGED", captured["prompt"])          # the wipe template, not the RESET one
+        self.assertNotIn("the harness RESET this level", captured["prompt"])
+        marker = self.transcript.read_text()
+        self.assertIn("[RETRY] game=tu93-test level=1 actions=60", marker)
+        self.assertIn("mode=wipe", marker)
+        self.assertEqual(tr._STATE["retries_fired"], 1)
+        self.assertEqual(tr._STATE["retry_log"][-1]["mode"], "wipe")
+        st = agent._retry
+        self.assertEqual(st.last_fire_actions[0], 60)                    # no RESET added to the bucket
+        # the same level cannot re-fire inside the cooldown
+        self._turn(agent, sess, stock=stock)
+        self.assertEqual(tr._STATE["retries_fired"], 1)
+
+    # ------------------------------------------- 21 turns-on-level trigger
+    def test_21_turns_trigger_fires_after_n_turns_on_a_level(self) -> None:
+        """RETRY_TURNS=N (2026-09-12): fire after N analyze() turns on the same level regardless
+        of the action bucket (the action-multiple trigger fired only 5 times in a 25-game wave);
+        the turn count restarts on a level change and after each fire."""
+        os.environ["RETRY_MODE"] = "wipe"
+        os.environ["RETRY_TURNS"] = "3"
+        os.environ["RETRY_MAX"] = "2"
+        agent = self._agent()
+        sess = self._session(baselines=(20, 30, 40))
+        sess.set_level_actions(0, 5)                                     # far below 3 x 20
+        for _ in range(2):
+            self._turn(agent, sess)
+        self.assertEqual(tr._STATE["retries_fired"], 0)
+        self._turn(agent, sess)
+        self.assertEqual(tr._STATE["retries_fired"], 1)                  # third turn on level 1
+        self.assertEqual(sess.executed, [])
+        for _ in range(2):
+            self._turn(agent, sess)
+        self.assertEqual(tr._STATE["retries_fired"], 1)                  # turns since the fire: 2
+        self._turn(agent, sess)
+        self.assertEqual(tr._STATE["retries_fired"], 2)                  # 3 more turns -> second fire
+        for _ in range(4):
+            self._turn(agent, sess)
+        self.assertEqual(tr._STATE["retries_fired"], 2)                  # RETRY_MAX=2 per level
+        sess.advance_level()
+        for _ in range(2):
+            self._turn(agent, sess)
+        self.assertEqual(tr._STATE["retries_fired"], 2)                  # new level: count restarts at 0
+        self._turn(agent, sess)
+        self.assertEqual(tr._STATE["retries_fired"], 3)
+        self.assertEqual(tr._STATE["retry_log"][-1]["level"], 2)
+        self.assertEqual(tr.status()["mode"], "wipe")
+
     # ---------------------------------------------------------------- 17 status
     def test_17_status_shape(self) -> None:
         os.environ["RETRY_K"] = "2"

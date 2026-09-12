@@ -52,6 +52,12 @@ MECHANISM (all flags read at call time; RETRY_ENABLE=0 is pure pass-through):
     (<= 1,200 chars, quoting the abandoned note in <= 600 chars) is appended
     to the user prompt exactly once. Optional RETRY_CLEAR_HISTORY=1 [0] also
     drops the carried chat history so the next turn starts from the frame.
+    2026-09-12 (validated plan step 4): RETRY_MODE=wipe [reset] is the
+    no-RESET dose — no engine action at all; the board stays where it is,
+    the chat history AND the level note are wiped, and the FRESH MIND block
+    says so. RETRY_TURNS=N [0 = off] replaces the action-multiple trigger
+    with "N analyze() turns on the same level since the last fire" (the
+    action trigger fired only 5 times in a 25-game wave).
  3. TELEMETRY: status() exposes retries_fired, levels_cleared_after_retry,
     the per-(game, level) retry log and the clear log; the transcript gets
     "[RETRY] game=.. level=.. actions=.." and "[RETRY-CLEAR] game=.. level=..
@@ -117,6 +123,19 @@ FRESH_MIND_BLOCK = (
 )
 
 
+FRESH_MIND_WIPE_BLOCK = (
+    "FRESH MIND (harness history wipe {n}/{max}): the harness cleared your carried chat history "
+    "and the world model for this level at action {at} because level {level} was not cleared "
+    "after {spent} actions ({budget}). The board is UNCHANGED — nothing was reset; `history` and "
+    "`transitions` still hold what happened. The hypothesis you were pursuing is now treated as "
+    "FAILED:\n<<<\n{quote}\n>>>\n"
+    "Do not resume it. State TWO alternative hypotheses that explain the transitions in "
+    "`history` differently (another goal, another meaning of the objects, another effect of "
+    "the actions), pick the cheapest to test, and test it with at most 5 actions in one "
+    "`action([...])` batch before committing to anything longer."
+)
+
+
 # ----------------------------------------------------------------- flags ---
 def _env(name: str, default: str) -> str:
     raw = os.environ.get(name)
@@ -159,6 +178,19 @@ def clear_history() -> bool:
     return _env("RETRY_CLEAR_HISTORY", "0").lower() not in _OFF
 
 
+def retry_mode() -> str:
+    """'reset' (engine level RESET, the 09-03 design) or 'wipe' (no engine action; 2026-09-12)."""
+    return "wipe" if _env("RETRY_MODE", "reset").lower() == "wipe" else "reset"
+
+
+def retry_turns() -> int:
+    """Turns-on-level trigger; 0 keeps the action-multiple trigger."""
+    try:
+        return max(0, int(_env("RETRY_TURNS", "0")))
+    except ValueError:
+        return 0
+
+
 def status() -> dict[str, Any]:
     with _LOCK:
         return {
@@ -169,6 +201,8 @@ def status() -> dict[str, Any]:
             "cooldown": retry_cooldown(),
             "max": retry_max(),
             "clear_history": clear_history(),
+            "mode": retry_mode(),
+            "turns": retry_turns(),
             "retries_fired": _STATE["retries_fired"],
             "levels_cleared_after_retry": _STATE["levels_cleared_after_retry"],
             "retry_log": [dict(r) for r in _STATE["retry_log"]],
@@ -188,6 +222,8 @@ class RetryState:
         self.runtime_dir: Any = None
         self.fires: dict[int, int] = {}          # level idx -> retries fired
         self.last_fire_actions: dict[int, int] = {}  # level idx -> bucket count after the RESET
+        self.turns_on_level: dict[int, int] = {}     # level idx -> analyze() turns seen (RETRY_TURNS trigger)
+        self.last_fire_turn: dict[int, int] = {}     # level idx -> turns_on_level at the last fire
         self.cleared: set[int] = set()           # level idx with a [RETRY-CLEAR] already logged
         self.fresh_pending: dict[str, Any] | None = None
         self.injected: dict[str, Any] | None = None  # parked copy of the block injected this turn
@@ -335,23 +371,32 @@ def should_fire(st: RetryState, sess: Any, arcengine: Any, should_stop: Any = No
             return None
     except Exception:  # noqa: BLE001
         return None
-    if getattr(sess, "last_engine_action", None) == "RESET":
+    mode = retry_mode()
+    if mode == "reset" and getattr(sess, "last_engine_action", None) == "RESET":
         return None                   # board already fresh (auto-reset or our own retry)
     idx = _level_index(sess)
     if idx is None:
         return None
+    st.turns_on_level[idx] = st.turns_on_level.get(idx, 0) + 1
     actions = _actions_on_level(sess, idx)
     if actions is None:
         return None
     baseline = _baseline(sess, idx)
-    limit = threshold_for(baseline)
-    if actions < limit:
-        return None
+    turns_trigger = retry_turns()
+    if turns_trigger > 0:
+        # turns-on-level trigger: N analyze() turns on this level since the last fire
+        limit = turns_trigger
+        if st.turns_on_level[idx] - st.last_fire_turn.get(idx, 0) < turns_trigger:
+            return None
+    else:
+        limit = threshold_for(baseline)
+        if actions < limit:
+            return None
     if st.fires.get(idx, 0) >= retry_max():
         _skip("max_retries")
         return None
     last = st.last_fire_actions.get(idx)
-    if last is not None and actions - last < retry_cooldown():
+    if turns_trigger <= 0 and last is not None and actions - last < retry_cooldown():
         _skip("cooldown")
         return None
     if should_stop is not None:
@@ -361,10 +406,11 @@ def should_fire(st: RetryState, sess: Any, arcengine: Any, should_stop: Any = No
                 return None
         except Exception:  # noqa: BLE001
             pass
-    if not _reset_available(sess, arcengine):
+    if mode == "reset" and not _reset_available(sess, arcengine):
         _skip("reset_unavailable")
         return None
     return {
+        "mode": mode,
         "game": _game_id(sess),
         "level": idx + 1,
         "level_index": idx,
@@ -397,7 +443,8 @@ def render_block(info: dict[str, Any]) -> str:
         budget = f"human baseline ~{baseline}, limit {info.get('k', retry_k()):g}x"
     else:
         budget = f"limit {info.get('threshold')} actions"
-    block = FRESH_MIND_BLOCK.format(
+    template = FRESH_MIND_WIPE_BLOCK if info.get("mode") == "wipe" else FRESH_MIND_BLOCK
+    block = template.format(
         n=info.get("retry"), max=info.get("max", retry_max()), at=info.get("action_num"),
         spent=info.get("actions"), budget=budget, level=info.get("level"), quote=info.get("quote"),
     )
@@ -422,8 +469,11 @@ def fire(agent: Any, st: RetryState, sess: Any, info: dict[str, Any], *, agent_m
     knowledge = getattr(agent, "_summarized_knowledge", None)
     idx = int(info["level_index"])
     actions = int(info["actions"])
+    wipe = info.get("mode") == "wipe"
     st.fires[idx] = st.fires.get(idx, 0) + 1
-    st.last_fire_actions[idx] = actions + 1          # the RESET lands in this level's bucket
+    # reset mode: the RESET lands in this level's bucket; wipe mode: nothing is added
+    st.last_fire_actions[idx] = actions if wipe else actions + 1
+    st.last_fire_turn[idx] = st.turns_on_level.get(idx, 0)
     info["action_num"] = None
     try:
         info["action_num"] = int(getattr(sess, "action_count", 0) or 0) + 1
@@ -436,7 +486,7 @@ def fire(agent: Any, st: RetryState, sess: Any, info: dict[str, Any], *, agent_m
     if isinstance(knowledge, dict):
         for key in _WIPED_FIELDS:
             knowledge[key] = ""
-    if clear_history():
+    if wipe or clear_history():
         try:
             agent._history_messages = []
         except Exception:  # noqa: BLE001
@@ -445,12 +495,15 @@ def fire(agent: Any, st: RetryState, sess: Any, info: dict[str, Any], *, agent_m
     st.injected = None
     marker = (f"[RETRY] game={info['game']} level={info['level']} actions={info['actions']} "
               f"baseline={info['baseline'] if info['baseline'] is not None else '-'} "
-              f"threshold={info['threshold']} retry={info['retry']}/{info['max']} action_num={info['action_num']}")
+              f"threshold={info['threshold']} retry={info['retry']}/{info['max']} action_num={info['action_num']} "
+              f"mode={info.get('mode', 'reset')}")
     _write_marker(agent_mod, transcript_path, marker)
     with _LOCK:
         _STATE["retries_fired"] += 1
-        _STATE["retry_log"].append({k: info[k] for k in ("game", "level", "actions", "baseline", "threshold",
-                                                            "retry", "action_num")})
+        _STATE["retry_log"].append({k: info.get(k) for k in ("game", "level", "actions", "baseline", "threshold",
+                                                                "retry", "action_num", "mode")})
+    if wipe:
+        return True                                  # no engine action: the board stays as it is
     action = arcengine.ActionInput(id=arcengine.GameAction.RESET, data={})
     try:
         sess._execute_action(action, batch_index=1, batch_size=1, generated_tokens=0)

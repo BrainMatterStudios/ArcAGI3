@@ -40,6 +40,8 @@ TOOLKIT = REPO / "reference/arc-agi-toolkit"
 JUNE_STOCK = REPO / "scratchpad/bundles/june_stock/src/ARC3-Inference"
 TAAF_PINNED = REPO / "scratchpad/taaf_scored_ref/src/tufa-arc-agi-framework/src"
 RETRY_ENV = {"RETRY_ENABLE": "1", "RETRY_K": "1", "RETRY_ABS": "15", "RETRY_COOLDOWN": "10", "RETRY_MAX": "2"}
+# --wipe (2026-09-12): the no-RESET dose on the turns trigger — 3 analyze() turns on a level, max 2 wipes/level
+WIPE_ENV = {**RETRY_ENV, "RETRY_MODE": "wipe", "RETRY_TURNS": "3"}
 # dry_run.MOCK_TOOL_CODE emits ACTION7 on sb26, which june_stock's action names
 # reject (0 actions in 240 s); this picker sticks to the model-facing names.
 MOCK_TOOL_CODE = (
@@ -54,7 +56,7 @@ MOCK_TOOL_CODE = (
 )
 
 
-def _retry_only() -> int:
+def _retry_only(wipe: bool = False) -> int:
     sys.path.insert(0, str(HERE))
     import dry_run  # noqa: PLC0415 - MockBrain + game list, no side effects at import
 
@@ -79,7 +81,7 @@ def _retry_only() -> int:
         "ARC_ENVIRONMENTS_DIR": str(REPO / "environment_files"),
         "RECORDINGS_DIR": str(workroot / "server_recording"),
         "LOCAL_ANALYZER_YIELD_SECONDS": "60", "LOCAL_ANALYZER_TOOL_STEPS": "8",
-        **RETRY_ENV,
+        **(WIPE_ENV if wipe else RETRY_ENV),
     })
 
     import arc_agi  # noqa: PLC0415
@@ -148,6 +150,25 @@ def _retry_only() -> int:
           f"[RETRY-CLEAR]={clear_lines} sections={section_lines} tool_posts={dry_run.MockBrain.tool_posts} wall={wall:.0f}s")
 
     fired = st["retries_fired"]
+    if wipe:
+        graft_resets = sum(1 for r in st["retry_log"] if r.get("mode") != "wipe")
+        checks = {
+            "3 games played": len(rows) == 3 and all(r["actions"] > 0 for r in rows),
+            "no crash": all(r["state"] != "crashed" for r in rows) and all("error" not in str(r["note"]) for r in rows),
+            "wipe fired in every game": fired >= 3 and {r["game"] for r in st["retry_log"]} == {r["game"] for r in rows},
+            "every fire was a wipe (no graft RESET)": graft_resets == 0 and all(r.get("mode") == "wipe" for r in st["retry_log"]),
+            "[RETRY] marker per wipe": marker_lines == fired and section_lines == marker_lines + clear_lines,
+            "FRESH MIND block once per wipe": counters["prompts_with_fresh_mind"] == fired,
+            "bucket invariant": all(sum(r["actions_per_level"]) == r["history_len"] for r in rows),
+            "turns trigger obeyed (threshold = RETRY_TURNS)": all(r["threshold"] == int(WIPE_ENV["RETRY_TURNS"]) for r in st["retry_log"]),
+            "max wipes per level": all(r["retry"] <= 2 for r in st["retry_log"]),
+        }
+        ok = True
+        for name, passed in checks.items():
+            print(("OK  " if passed else "FAIL"), name)
+            ok = ok and passed
+        print("[retry-dry] WIPE", "PASS" if ok else "FAIL", "artifacts under", workroot)
+        return 0 if ok else 1
     checks = {
         "3 games played": len(rows) == 3 and all(r["actions"] > 0 for r in rows),
         "no crash": all(r["state"] != "crashed" for r in rows) and all("error" not in str(r["note"]) for r in rows),
@@ -191,8 +212,10 @@ def _all_packs() -> int:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--mode", choices=("retry-only", "all-packs"), default="retry-only")
+    p.add_argument("--mode", choices=("retry-only", "all-packs", "wipe"), default="retry-only")
     args = p.parse_args()
+    if args.mode == "wipe":
+        return _retry_only(wipe=True)
     return _retry_only() if args.mode == "retry-only" else _all_packs()
 
 

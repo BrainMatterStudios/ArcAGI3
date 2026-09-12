@@ -158,9 +158,12 @@ def test_arms_differ_on_exactly_the_window_keys():
     # the retry arm differs from the keith base on exactly the graft's RETRY_* flags
     d3 = {k for k in set(rw.KEITH_ANALYZER_ENV) | set(rw.KEITH_RETRY_ENV)
           if rw.KEITH_ANALYZER_ENV.get(k) != rw.KEITH_RETRY_ENV.get(k)}
-    assert d3 == set(rw.RETRY_ENV_KEYS) == {"RETRY_ENABLE", "RETRY_K", "RETRY_ABS", "RETRY_COOLDOWN", "RETRY_MAX"}, d3
+    assert d3 == set(rw.RETRY_ENV_KEYS) == {"RETRY_ENABLE", "RETRY_K", "RETRY_ABS", "RETRY_COOLDOWN", "RETRY_MAX",
+                                            "RETRY_CLEAR_HISTORY", "RETRY_MODE", "RETRY_TURNS"}, d3
+    assert (rw.KEITH_RETRY_ENV["RETRY_MODE"], rw.KEITH_RETRY_ENV["RETRY_TURNS"]) == ("reset", "0")   # 09-03 arm unchanged
     assert {k: rw.KEITH_RETRY_ENV[k] for k in rw.RETRY_ENV_KEYS} == {
-        "RETRY_ENABLE": "1", "RETRY_K": "3", "RETRY_ABS": "200", "RETRY_COOLDOWN": "150", "RETRY_MAX": "2"}
+        "RETRY_ENABLE": "1", "RETRY_K": "3", "RETRY_ABS": "200", "RETRY_COOLDOWN": "150", "RETRY_MAX": "2",
+        "RETRY_CLEAR_HISTORY": "0", "RETRY_MODE": "reset", "RETRY_TURNS": "0"}
     assert rw.ARM_GRAFTS == {"keith_retry": ("graft_retry",), "keith_evid": ("graft_evidence",),
                              "keith_hypo": ("graft_hypo",), "keith_probe": ("graft_probe",),
                              "keith_carry": ("graft_carry",), "keith_ws": ("graft_workspace",),
