@@ -117,6 +117,12 @@ actions accumulate; the efficiency term is quadratic). $0 first: check in
 `scratchpad/human_replays/index_by_game.json` whether humans who clear the 12 walls use resets/retries.
 Waves: two-wave mean ≤42 or ≤2/12 walls ⇒ dead; ≥45 and ≥3/12 ⇒ step candidate → 3 live draws.
 LB +0.2 to +0.5 if it converts; P(step) ~15 %.
+**$0 check done 2026-09-12** (`scratchpad/human_replays/index_by_game.json`, 120 human sessions on the 12
+wall games): 86 % of humans who PASS a wall used ≥1 level RESET in that session (mean 6.1; bp35 12.2,
+wa30 13.0, g50t 10.8), vs 80 % / mean 3.2 among the 10 who failed. Humans reset the BOARD a lot on exactly
+these games, so the kill test must run BOTH doses side by side: `RETRY_MODE=reset` + history clear (the
+09-03 design, never run at that dose) and `RETRY_MODE=wipe` (board untouched). Built 09-12: wipe mode +
+turns trigger in `graft_retry.py`, real-engine dry run PASS.
 
 **Step 5 — loop-agnostic serving riders, flown only as a stack (Sept 13-24, ≤$12 + ~6 h quota).**
 (a) KV 6.0 then 6.5 GiB in a Kaggle COMMIT run of the byte copy (boundary is Kaggle-only: 81.8 GiB load

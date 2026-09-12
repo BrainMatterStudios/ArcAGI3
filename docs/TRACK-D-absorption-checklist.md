@@ -43,6 +43,11 @@ This pulls the kernel, writes a **byte-identical** copy under
 
 - [ ] Record `code_cell_sha256`. That is the identity to quote from here on. It
       ignores outputs and execution counts, so it survives a re-pull.
+- [ ] **License gate (added 2026-09-12).** Record the license the release ships under
+      (kernel page + any GitHub/HF source). Milestone-prize releases must be CC0/MIT-0
+      to claim the prize, but a GitHub-only or non-claiming release can ship under
+      anything, and OUR top-5 eligibility requires open-sourcing what we fly. A
+      non-permissive or missing license = do not stage; ask on the forum first.
 - [ ] **Pull immediately.** Version-specific pulls are refused (HTTP 403), so you
       can only ever get the LATEST version. If they push again you lose the bytes
       you were reading. `pulled_utc` is your only version anchor.
