@@ -17,7 +17,12 @@ Compute 102, Model axis 97; two of three ranked Absorption first.
   control 0/5 on wa30 L3 within the 100-move budget. The kill line fires: no harness-planner / effect-table
   planner is built. Optional 50-min follow-up with the budget lifted to separate "cannot" from "cannot within
   budget".
-* Slot 09-12 used: yield900 draw #4 (sub 56184013, pending).
+* Slot 09-12 used: yield900 draw #4 (sub 56184013) = 3.07.
+* **09-13:** KV 6.0 live draw 2.94 (in band, alive). APC + KV 10 GiB boots: 71.4 calls/game (+30 %), e2e 109 s,
+  38 levels, hit rate unchanged at 15.9 % → caching is not the lever, **MTP-off + big KV is**; it is the
+  highest-throughput live-legal config and flies next as a banked draw. Budget-lifted oracle probe (3 × 100
+  moves): guided 0/5, oracle 0/5, control 0/4 → the brain cannot execute a handed model even with 3× the
+  moves; the pre-registration's "dead by construction" branch fires for every information-in-context lane.
 
 ## 1. Verdict in one paragraph
 

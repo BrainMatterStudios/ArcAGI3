@@ -1761,3 +1761,32 @@ within budget" are not separated. Plan step 2a's kill line (ORACLE < 50 % ⇒ ev
 dynamics, model plans" design is dead on this brain) **fires**: no effect-table planner is built. Optional
 $0-slot / 50-min follow-up: the same kernel with the level budget lifted (ORACLE_PROBE_MAX_MOVES=250,
 engine budget bypassed) to separate the two readings — only if Ahmed wants the distinction.
+
+## RESULTS 2026-09-13 — KV 6.0 live draw, APC + KV 10 GiB commit, budget-lifted oracle probe
+
+### KV 6.0 rider, first live draw (sub 56195244) — **2.94, in band, alive**
+Boots and plays a full run on the scored box. v4 family 2.85 (n=3, sd 0.35); pooled base family n=8 mean 3.20.
+Not a lever read (+18 % calls ≈ +4 % levels at elasticity ~0.2, below one-draw resolution). Banked, composable.
+
+### `arc3-keith-apc-kv10` (prefix caching ON, MTP OFF, KV 10 GiB; 07:52→~12:40Z) — **BOOTS; best calls/game so far**
+Model loading 74.3 GiB + 10 GiB KV fits (the MTP head's 7.5 GiB paid for it). **38 levels**, score 6.91.
+**71.4 calls/game (+30 % vs 55; kv6 64.9; apc-kv5 59.9)**, e2e **109 s** (best of any Kaggle run; ref 142),
+queue 73 s, inference 35.3 s (no MTP), preemptions 0.00/request, actions/call 2.64.
+**Prefix hit rate 15.9 % — unchanged from 5 GiB (15.7 %)**, so the cache is workload-bound (per-turn image
++ non-repeating prompt), not KV-bound: the whole calls gain is the larger KV (more running sequences),
+not caching. Caching is therefore still not a lever; **"MTP off + big KV" is**, and it beats "MTP on +
+6 GiB" on calls (71.4 vs 64.9) and e2e (109 vs 120) in single draws. Live-legal (kernel v1 COMPLETE).
+Untested and cheap: the same 10 GiB KV with caching OFF (drops APC overhead; identical decode) and 12 GiB.
+Sizing: +30 % calls at elasticity ~0.2 ≈ +6 % levels ≈ +0.2 LB — still under one-draw resolution, so it flies
+as a BANKED draw of the highest-throughput live-legal config, not as a lever test.
+
+### `arc3-oracle-probe-fn2` (3 attempts × 100 moves with engine RESET; 12:45→15:03Z) — **NEGATIVE, budget excluded**
+Preflights pass; 14/15 clones valid (one control clone aborted as unparsable). Every valid clone used all 300
+moves across 3 attempts and delivered 2-3 of 5 blocks: **guided 0/5, oracle 0/5, control 0/4**. Lifting the
+move budget 3× changed nothing, so "cannot execute within budget" is excluded: **the served brain cannot turn
+a correct, engine-verified model — even per-turn instructions naming which block to move where — into a
+solution of wa30 L3.** This is the original pre-registration's decisive branch (`build_oracle_probe.py`):
+notes stores, digests, compaction, prompt knowledge and behaviour-shaping are dead BY CONSTRUCTION on this
+brain, because every one of them routes through "the model will act on information it holds"; only
+harness code that SELECTS ACTIONS, or a different brain, remains. It is the mechanism behind the six flat
+content arms and the seven single-draw nulls of the behaviour-shaping class.
