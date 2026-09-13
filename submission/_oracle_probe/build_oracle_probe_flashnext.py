@@ -31,8 +31,11 @@ HERE = Path(__file__).parent
 SUB = HERE.parent
 BASE_DIR = SUB / "_keith_copy" / "push_bothmounts"
 BASE_NB = BASE_DIR / "arc3-keith-copy.ipynb"
-OUT_DIR = HERE / "push_flashnext"
-KERNEL_SLUG = "arc3-oracle-probe-fn"
+import os as _os
+KERNEL_SLUG = _os.environ.get("PROBE_SLUG", "arc3-oracle-probe-fn")
+PROBE_ATTEMPTS = _os.environ.get("PROBE_ATTEMPTS", "1")
+PROBE_MAX_MOVES = _os.environ.get("PROBE_MAX_MOVES", "100")
+OUT_DIR = HERE / ("push_flashnext" if KERNEL_SLUG == "arc3-oracle-probe-fn" else "push_" + KERNEL_SLUG.replace("arc3-oracle-probe-", ""))
 
 BUNDLE_FILES = {
     "graft_explorer.py": SUB / "_explorer_floor" / "graft_explorer.py",
@@ -83,6 +86,8 @@ if str(_PROBE_DIR) not in _ps.path:
 
 _po.environ["ONLY_RESET_LEVELS"] = "true"   # LAW: before arcengine imports
 _po.environ.setdefault("ORACLE_PROBE_CLONES", "5")
+_po.environ["ORACLE_PROBE_ATTEMPTS"] = "__ATTEMPTS__"
+_po.environ["ORACLE_PROBE_MAX_MOVES"] = "__MAX_MOVES__"
 
 
 def _probe_env_dir():
@@ -182,7 +187,7 @@ def _probe_main():
         print(f"--- arm {_arm} ---", flush=True)
         for _c in range(clones):
             try:
-                _r = OP.one_clone(_c, _arm.strip(), _MODEL, 100, verbose=True)
+                _r = OP.one_clone(_c, _arm.strip(), _MODEL, int(_po.environ["ORACLE_PROBE_MAX_MOVES"]), verbose=True)
             except Exception as _exc:
                 _r = {"clone": _c, "arm": _arm.strip(), "error": f"{type(_exc).__name__}: {_exc}"}
             results.append(_r)
@@ -244,7 +249,7 @@ def main() -> int:
     assert a >= 0 and b > a, "run block not found — base notebook drifted"
     run_src = run_src[:a] + RUN_BLOCK_NEW + run_src[b:]
     nb["cells"][run_idx]["source"] = run_src.splitlines(keepends=True)
-    nb["cells"].insert(run_idx, code_cell(head + PROBE_CELL))
+    nb["cells"].insert(run_idx, code_cell(head + PROBE_CELL.replace("__ATTEMPTS__", PROBE_ATTEMPTS).replace("__MAX_MOVES__", PROBE_MAX_MOVES)))
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / f"{KERNEL_SLUG}.ipynb").write_text(json.dumps(nb, indent=1) + "\n")

@@ -266,6 +266,13 @@ def one_clone(clone: int, arm: str, model: str, max_moves: int,
     live = core.backend.env
     lc0 = live.observation_space.levels_completed
     budget = buds[2]
+    # 2026-09-13 budget-lifted variant: ORACLE_PROBE_ATTEMPTS=N lets a clone RESET the level
+    # after the engine's step budget kills it (wa30's own bar: GAME_OVER at 0 steps) and keep
+    # playing with its chat history, up to N attempts. Humans on this game average ~13 level
+    # RESETs per session (human replay index). Default 1 = the original single-attempt read.
+    attempts = max(1, int(os.environ.get("ORACLE_PROBE_ATTEMPTS", "1")))
+    attempts_used = 0
+    total_budget = budget * attempts
 
     system = {"oracle": ORACLE_WA30, "control": CONTROL_WA30,
               "guided": GUIDED_WA30}.get(arm, CONTROL_WA30) + (
@@ -277,14 +284,15 @@ def one_clone(clone: int, arm: str, model: str, max_moves: int,
     unparsed_sample = [None]
     unparsed_streak = 0
     t0 = time.time()
-    while moves < min(budget, max_moves) and turns < 40:
+    while moves < min(total_budget, max_moves) and turns < 40 * attempts:
         turns += 1
         msg = [{"role": "system", "content": system},
                {"role": "user", "content":
                 state_text(live, M)
                 + (next_goal_text(live, M) if arm == "guided" else "")
                 + (f"\n\nRecent moves you made: {history[-6:]}" if history else "")
-                + f"\n\nMoves used: {moves}/{budget}. Give your next actions."}]
+                + f"\n\nMoves used: {moves}/{total_budget} (attempt {attempts_used + 1}/{attempts}; "
+                  f"each attempt has {budget} moves before the level resets). Give your next actions."}]
         try:
             reply = ask(msg, model, 0.2 + 0.05 * (clone % 8))
         except Exception as exc:  # noqa: BLE001
@@ -314,13 +322,25 @@ def one_clone(clone: int, arm: str, model: str, max_moves: int,
             print(f"    c{clone} turn{turns}: {acts[:done]} -> {verdict} "
                   f"({moves}/{budget})", flush=True)
         if verdict == "win":
-            return {"clone": clone, "arm": arm, "won": True, "moves": moves,
+            return {"clone": clone, "arm": arm, "won": True, "moves": moves, "attempts_used": attempts_used + 1,
                     "turns": turns, "wall": round(time.time() - t0, 1)}
         if verdict == "dead":
-            break
+            attempts_used += 1
+            if attempts_used >= attempts:
+                break
+            # engine step budget exhausted: RESET the level (ONLY_RESET_LEVELS keeps the level)
+            # and let the clone continue with its history intact
+            from arcengine import GameAction
+            o = live.step(GameAction.RESET)
+            if o is None or o.levels_completed != lc0:
+                break
+            history.append(f"(level RESET after the {budget}-move attempt {attempts_used}; "
+                           f"board back to the start of the level)")
+            if verbose:
+                print(f"    c{clone} turn{turns}: level RESET (attempt {attempts_used + 1}/{attempts})", flush=True)
     g = M.game_of(live)
     un, oc = M.status(g)
-    return {"clone": clone, "arm": arm, "won": False, "moves": moves,
+    return {"clone": clone, "arm": arm, "won": False, "moves": moves, "attempts_used": min(attempts_used + 1, attempts),
             "turns": turns, "blocks_left": len(un), "delivered": len(oc),
             "wall": round(time.time() - t0, 1),
             "unparsed_sample": unparsed_sample[0]}
