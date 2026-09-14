@@ -1790,3 +1790,25 @@ notes stores, digests, compaction, prompt knowledge and behaviour-shaping are de
 brain, because every one of them routes through "the model will act on information it holds"; only
 harness code that SELECTS ACTIONS, or a different brain, remains. It is the mechanism behind the six flat
 content arms and the seven single-draw nulls of the behaviour-shaping class.
+
+## CLOSURE 2026-09-14 — the serving-throughput rider family, measured end to end on the Kaggle box
+
+| kernel (25 public games, commit run) | MTP | APC | KV | fits | calls/game | e2e | levels | live draw |
+|---|---|---|---|---|---|---|---|---|
+| keith V14 public commit (ref) | 3 | off | 5 | yes | 55.0 | 142 s | 36 | 3.25 / 2.58 / 2.73 |
+| arc3-keith-kv6 | 3 | off | 6 | yes | 64.9 | 120 s | 38 | **2.94** |
+| arc3-keith-apc (09-12) | 0 | on | 5 | yes | 59.9 | 130 s | 36 | — |
+| arc3-keith-apc-kv10 | 0 | on | 10 | yes | 71.4 | 109 s | 38 | **2.71** |
+| arc3-keith-kv10mtp0 | 0 | off | 10 | yes | 70.0 | 111 s | 40 | — |
+| arc3-keith-kv12mtp0 | 0 | off | 12 | yes | 72.8 | 107 s | 38 | — |
+
+Calls/game saturate at ~70-73 (+27-32 %) once MTP is off and KV ≥ 10 GiB; caching adds nothing (hit rate
+15.7-15.9 % regardless of KV); levels sit at 36-40 in every single draw (one-draw sd ≈ 3.5); the two live
+draws (2.94, 2.71) sit inside the identical-bytes band of the base (2.58-3.25). At elasticity ~0.2 the
+family is worth ≈ +0.2 LB at its best and is invisible live. **CLOSED. No further slots or quota go to
+serving riders.** Kept as the composable serving profile for an absorbed kernel: `kv10-bf16-mtp0-c8-cg32`
+(MTP off, caching off, 10 GiB) — the simplest of the equivalent configs.
+
+Slot accounting, stated once: three slots (09-12 yield900 3.07, 09-13 kv6 2.94, 09-14 apc-kv10 2.71) went
+to draws that were pre-registered as unable to show a lever. That was a poor use of slots; from here a slot
+is spent only on an arm that cleared the two-wave rig bar, or on the Oct-1 absorption.
