@@ -24,6 +24,13 @@ Compute 102, Model axis 97; two of three ranked Absorption first.
   moves): guided 0/5, oracle 0/5, control 0/4 → the brain cannot execute a handed model even with 3× the
   moves; the pre-registration's "dead by construction" branch fires for every information-in-context lane.
 
+* **09-14 (step 3 rehearsal, scope approved: Kaggle commit runs, no Modal):** `absorb_kernel.py` failed on its
+  first real foreign target because the target was a SCRIPT kernel — fixed (+test, 14/14). amanatar's
+  "hybrid REPL agent" = keith V14 as a script + post-run diagnostics with KV 16 GB + APC + MTP; its own
+  commit run OOMed (model 82.8 GiB on its docker image) → non-booting, not pushed. June milestone-winner
+  kernel staged as the "release on a weaker model" target (27B FP8, driessmit1 wheelhouse). Transplant kit
+  design: mount THEIR bundle for src/ + pickles and OUR keith smoke bundle for serving_setup.py + model.
+
 ## 1. Verdict in one paragraph
 
 We sit at ~3.2 because we fly the best public artifact (a byte copy of keith V14) and nothing public

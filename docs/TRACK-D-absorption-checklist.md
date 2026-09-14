@@ -34,6 +34,18 @@ end-to-end against the live Kaggle API on 09-09: it reproduces
 
 ## H+0 to H+1 — capture and attest (no GPU, no slot, ~10 min)
 
+**Added 2026-09-14 (rehearsal findings).** (1) Pull the source's own public output FIRST
+(`kaggle kernels output <slug> -p <dir>`, then delete `vllm-site-packages/`): a
+`vllm-setup-failure.json` means their commit never served (amanatar's "hybrid REPL agent" OOMed at
+16 GB KV + MTP and never played) — do NOT spend a commit run on it; the log also gives the cost gate
+(levels, calls, tokens) for free. (2) Script kernels (`kernel_type: script`, one `.py`) are supported by
+`absorb_kernel.py`; the copy keeps the `.py` suffix and the hash treats it as one cell. (3) Every
+TAAF-lineage release keeps its AGENT in the dataset bundle (`src/`, `deploy_target.pkl`,
+`benchmark_initial.pkl`) and its SERVING in the same bundle's `serving_setup.py`, launched by
+`setup_commands.json`; the notebook is a thin runner. Absorbing a harness therefore means mounting THEIR
+bundle; transplanting our serving means running OUR bundle's `serving_setup.py` instead (see the
+transplant kit).
+
 ```bash
 python3 offkaggle/absorb_kernel.py stage <owner>/<kernel> --as arc3-absorb-<name>
 ```
