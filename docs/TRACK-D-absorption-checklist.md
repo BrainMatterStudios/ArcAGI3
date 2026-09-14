@@ -79,8 +79,12 @@ python3 offkaggle/absorb_kernel.py diff \
       it looks.
 - [ ] If the regime changed, reproduce it on Modal and run the standard wave:
       `--games all --draws 1 --concurrency 28 --per-game-s 7920`. Read against
-      the pooled base **39.33 levels, sd 2.34**: >= 48 step candidate, 45-47
-      redraw, <= 44 dead.
+      the corrected base (2026-09-12 audit): **38.5 levels, wave sd ~3.5**; one
+      wave resolves only ±7 levels, so a copy reading 31-46 needs a second
+      counterbalanced wave; two-wave mean >= 45 step candidate, <= 42 dead.
+      The Kaggle commit run of the absorbed copy is itself a 25-public-game
+      read at the live geometry (used 09-12..09-14: 36-40 levels for the V14
+      family) and needs no Modal rig — prefer it when quota allows (~2.3 h).
 - [ ] **Pre-register the read before you look at it.** Write the gate into
       `offkaggle/REGIME_WAVE_STATUS.md` first. Every honest verdict this campaign
       produced came from doing this; three of five A2 runs failed on our own
