@@ -30,6 +30,8 @@ Compute 102, Model axis 97; two of three ranked Absorption first.
   commit run OOMed (model 82.8 GiB on its docker image) → non-booting, not pushed. June milestone-winner
   kernel staged as the "release on a weaker model" target (27B FP8, driessmit1 wheelhouse). Transplant kit
   design: mount THEIR bundle for src/ + pickles and OUR keith smoke bundle for serving_setup.py + model.
+  BUILT the same day: `offkaggle/transplant_serving.py` (+test); `arc3-transplant-june` commit run pushed as the
+  rehearsal (read: boots on Flash-Next under the June harness and plays; levels vs their own 27B run's 18).
 
 ## 1. Verdict in one paragraph
 
