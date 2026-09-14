@@ -31,7 +31,8 @@ Compute 102, Model axis 97; two of three ranked Absorption first.
   kernel staged as the "release on a weaker model" target (27B FP8, driessmit1 wheelhouse). Transplant kit
   design: mount THEIR bundle for src/ + pickles and OUR keith smoke bundle for serving_setup.py + model.
   BUILT the same day: `offkaggle/transplant_serving.py` (+test); `arc3-transplant-june` commit run pushed as the
-  rehearsal (read: boots on Flash-Next under the June harness and plays; levels vs their own 27B run's 18).
+  rehearsal → **39 levels on Flash-Next under the June harness** (their 27B run: 18; our base 36-40), 2 h 12 m,
+  both bundles resolved. Step 3 is DONE: the absorb + transplant path is rehearsed on a real foreign kernel.
 
 ## 1. Verdict in one paragraph
 

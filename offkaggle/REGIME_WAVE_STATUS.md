@@ -1812,3 +1812,18 @@ serving riders.** Kept as the composable serving profile for an absorbed kernel:
 Slot accounting, stated once: three slots (09-12 yield900 3.07, 09-13 kv6 2.94, 09-14 apc-kv10 2.71) went
 to draws that were pre-registered as unable to show a lever. That was a poor use of slots; from here a slot
 is spent only on an arm that cleared the two-wave rig bar, or on the Oct-1 absorption.
+
+## RESULT 2026-09-14 — Track D step 3 rehearsal: the June milestone-winner harness re-served on Flash-Next
+
+`arc3-transplant-june` = `submission/_absorb_june` (jeroencottaar/tufa-labs-duck-harness-june-30-milestone-winner,
+byte-identical copy, the June duck harness on Qwen3.6-27B-FP8) + `offkaggle/transplant_serving.py` (one bundle
+pin, one inserted serving cell, two substitutions; TRANSPLANT.json). Kaggle commit run 16:43→18:55Z (2 h 12 m):
+both bundles resolved (`agent bundle = …/jeroencottaar/taaf-kaggle-source-share`, `serving bundle =
+…/keithtyser/duck-qwen38-nvfp4-mtp-vllm-smoke-v1`), Flash-Next NVFP4 loaded (74.34 GiB, profile
+kv10-bf16-mtp0-c8-cg32), all 25 public games played: **39 levels** (their own 27B run: 18; our V14 family on this
+instrument: 36-40), 4,425 actions, 2.24 M generated tokens, offline mean score 8.11 (ft09 4/6, vc33 4/7, re86 4/8,
+tu93 3/9, lp85 3/8). **The transplant mechanism works end to end**: a release on a weaker model can be re-served
+on our regime in one commit run, and the June harness on Flash-Next lands in the same band as our own base —
+consistent with the campaign's finding that the harness deltas in this lineage do not score, the brain does.
+Time from "kernel slug known" to "25-game read on our serving" was ~4 h including the tool fixes; the
+checklist's H+0→H+8 path is now rehearsed on a real foreign kernel.

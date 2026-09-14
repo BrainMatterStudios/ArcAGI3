@@ -79,6 +79,11 @@ python3 offkaggle/absorb_kernel.py diff \
 
 ## H+1 to H+6 — read it, then measure it on Modal (no slot)
 
+**Rehearsed 2026-09-14 on the June milestone-winner kernel:** stage → (source output pulled; their 27B run
+made 18 levels) → `transplant_serving.py` → commit run 2 h 12 m → 39 levels on Flash-Next under their
+harness. If the release's regime differs, prefer the transplant + Kaggle commit run over a Modal
+reproduction; the tool's attestation lists exactly what changed (1 pin, 1 cell, 2 substitutions).
+
 - [ ] Read the notebook's code cells. You want three things and only three:
       **(a)** the loop shape (what the agent does per turn), **(b)** the serving
       regime (vLLM flags, KV, MTP, context, concurrency, per-game clock),
