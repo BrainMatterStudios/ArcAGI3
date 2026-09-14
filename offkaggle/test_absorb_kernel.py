@@ -3,7 +3,9 @@
 test_reproduces_keith_attestation: it proves the hashing convention here is the
 same one that produced submission/_keith_copy/ATTEST.json for our current live
 base, so an Oct-1 absorption is comparable to the 09-05 one."""
+import hashlib
 import json
+import types
 import shutil
 import sys
 import tempfile
@@ -128,6 +130,35 @@ class StageTests(unittest.TestCase):
         nb.write_bytes(nb.read_bytes() + b" ")
         v = ak.verify(self.tmp)
         self.assertFalse(v["file_sha256_matches"])
+
+    def test_stage_handles_a_script_kernel(self):
+        """09-14 rehearsal: amanatar/arc-agi-3-hybrid-repl-agent is a `kernel_type: script`
+        kernel (one .py, no .ipynb). The copy must be byte-identical with the same suffix and
+        the attestation must hash the script as a one-cell notebook."""
+        script = b"import os\nprint('hello')\n"
+
+        def runner(cmd, **kw):
+            dest = Path(cmd[cmd.index("-p") + 1])
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / "their-script.py").write_bytes(script)
+            (dest / "kernel-metadata.json").write_text(json.dumps({
+                "id": "k/s", "id_no": 7, "title": "s", "code_file": "their-script.py",
+                "language": "python", "kernel_type": "script", "is_private": False,
+                "enable_gpu": True, "dataset_sources": ["a/b"], "model_sources": ["m/n/1"],
+                "docker_image": "gcr.io/x@sha256:abc", "machine_shape": "NvidiaRtxPro6000"}))
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        att = ak.stage("k/s", "arc3-absorb-script", self.tmp, runner=runner, now="2026-09-14T18:00Z")
+        copy = self.tmp / "push" / "arc3-absorb-script.py"
+        self.assertTrue(copy.is_file() and copy.read_bytes() == script)
+        self.assertEqual(att["kernel_type"], "script")
+        self.assertEqual(att["n_code_cells"], 1)
+        self.assertEqual(att["code_cell_sha256"], hashlib.sha256(script).hexdigest())
+        meta = json.loads((self.tmp / "push" / "kernel-metadata.json").read_text())
+        self.assertEqual(meta["code_file"], "arc3-absorb-script.py")
+        self.assertEqual(meta["kernel_type"], "script")
+        v = ak.verify(self.tmp)
+        self.assertTrue(v["file_sha256_matches"] and v["code_cell_sha256_matches"])
 
     def test_pull_failure_is_loud(self):
         class R:

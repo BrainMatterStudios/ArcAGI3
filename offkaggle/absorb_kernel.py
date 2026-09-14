@@ -56,7 +56,13 @@ DROP_KEYS = ("id_no", "keywords")
 # ---------------------------------------------------------------- attestation
 
 def read_notebook(path: Path) -> tuple[bytes, dict]:
+    """Read a kernel's code file. A script kernel (.py, `kernel_type: script`) is
+    presented as a one-cell notebook so every hash and count below applies to both;
+    the 09-14 rehearsal (amanatar/arc-agi-3-hybrid-repl-agent) was a script kernel and
+    the notebook-only path found no .ipynb at all."""
     raw = path.read_bytes()
+    if path.suffix == ".py":
+        return raw, {"cells": [{"cell_type": "code", "source": raw.decode("utf-8")}], "script": True}
     return raw, json.loads(raw)
 
 
@@ -129,9 +135,9 @@ def kaggle_pull(slug: str, dest: Path, *, runner=subprocess.run) -> Path:
     if r.returncode != 0:
         raise RuntimeError(f"kaggle kernels pull failed rc={r.returncode}\n"
                            f"{r.stdout}\n{r.stderr}")
-    nbs = sorted(dest.glob("*.ipynb"))
+    nbs = sorted(dest.glob("*.ipynb")) + sorted(dest.glob("*.py"))
     if len(nbs) != 1:
-        raise RuntimeError(f"expected exactly one .ipynb in {dest}, found {[p.name for p in nbs]}")
+        raise RuntimeError(f"expected exactly one .ipynb or .py in {dest}, found {[p.name for p in nbs]}")
     return nbs[0]
 
 
@@ -152,7 +158,7 @@ def stage(slug: str, our_name: str, root: Path, *, runner=subprocess.run,
     src_meta = json.loads((src_dir / "kernel-metadata.json").read_text())
 
     push_dir.mkdir(parents=True, exist_ok=True)
-    our_nb = push_dir / f"{our_name}.ipynb"
+    our_nb = push_dir / f"{our_name}{nb_path.suffix}"     # .ipynb or .py, same as the source
     # copy2, not a re-serialised json.dump: re-serialising would change bytes.
     shutil.copy2(nb_path, our_nb)
 
@@ -174,6 +180,7 @@ def stage(slug: str, our_name: str, root: Path, *, runner=subprocess.run,
         "code_cell_sha256": a["code_cell_sha256"],
         "copy_kernel": our_id,
         "byte_identical_notebook": True,
+        "kernel_type": src_meta.get("kernel_type", "script" if nb_path.suffix == ".py" else "notebook"),
         "sources": {
             "datasets": src_meta.get("dataset_sources", []),
             "models": src_meta.get("model_sources", []),
@@ -192,7 +199,7 @@ def verify(root: Path) -> dict:
     graft, to prove exactly which hash changed and which did not."""
     root = Path(root)
     att = json.loads((root / "ATTEST.json").read_text())
-    push_nb = next((root / "push").glob("*.ipynb"))
+    push_nb = next(p for p in sorted((root / "push").iterdir()) if p.suffix in (".ipynb", ".py"))
     now = attest(push_nb)
     return {
         "file_sha256_matches": now["file_sha256"] == att["file_sha256"],
