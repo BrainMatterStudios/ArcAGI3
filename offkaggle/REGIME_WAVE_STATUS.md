@@ -1827,3 +1827,12 @@ on our regime in one commit run, and the June harness on Flash-Next lands in the
 consistent with the campaign's finding that the harness deltas in this lineage do not score, the brain does.
 Time from "kernel slug known" to "25-game read on our serving" was ~4 h including the tool fixes; the
 checklist's H+0→H+8 path is now rehearsed on a real foreign kernel.
+
+## RESULT 2026-09-15 — Track D LIVE rehearsal (sub 56241267): **3.21, the transplant path is live-legal**
+`arc3-transplant-june` v1 (June milestone-winner harness + OUR Flash-Next serving via `transplant_serving.py`)
+submitted 00:12Z, COMPLETE, public **3.21**. The scored rerun ran gateway mode with both bundles mounted, all
+110 games, inside the 9 h box — no error, no timeout. Pre-registered read: a score = the path is live-legal
+(the read of value); 2.0-4.7 was expected and carries no lever information. It lands at the top of the
+identical-bytes v4 band (2.58-3.25), exactly as the 39-level commit run predicted. **The Oct-1 absorption
+path is now rehearsed end to end on both instruments** (commit run and scored rerun). Nothing further to test
+on it before a real release lands.
